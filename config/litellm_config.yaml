@@ -16,6 +16,16 @@
 # `claude-litellm model refresh-capabilities`. Locally capped values must be marked
 # owned-policy and documented here; do not leave guessed numbers unlabeled.
 x-limits:
+  deepseek_v4_pro: &deepseek_v4_pro
+    max_input_tokens: 1048576
+    max_output_tokens: 384000
+    supports_reasoning: true
+    x_reasoning_efforts: []
+    x_input_confidence: provider
+    x_input_source: openrouter.top_provider.context_length
+    x_output_confidence: provider
+    x_output_source: openrouter.top_provider.max_completion_tokens
+
   kimi_k27_code: &kimi_k27_code
     max_input_tokens: 262144
     max_output_tokens: 262144
@@ -98,6 +108,12 @@ x-limits:
 model_list:
   # Raw provider-facing names (<Model>-<provider lowercase>). The real backend
   # is always visible in litellm_params.model.
+  - model_name: DeepSeek-V4-Pro-openrouter
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4-pro
+      api_key: os.environ/OPENROUTER_API_KEY
+    model_info: *deepseek_v4_pro
+
   - model_name: Kimi-K2.7-Code-openrouter
     litellm_params:
       model: openrouter/moonshotai/kimi-k2.7-code
