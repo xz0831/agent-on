@@ -71,6 +71,27 @@
       "observed_input_tokens": 673,
       "observed_output_tokens": 53,
       "evidence": "Qualifies 2026-08-23-huihui-qwen38-27b-reasoning-leak, which recorded the model as never emitting an answer. Re-measured on the same interpretation task with chat_template_kwargs.enable_thinking toggled: thinking-ON spent 476 output tokens, thinking-OFF answered in 53. Two abliterated 4-bit siblings that exhausted an 800-token budget with thinking ON answered in 45 with it OFF. The earlier run reached oMLX directly and therefore never received the flag the packaged routes inject. The failure is the missing enable_thinking=false, not the model. Note the packaged runtime globs that inject it matched 0 of 17 live models at the time (litellmParamsOverrides keyed Qwen3.5*/Qwen3.6* while every live id is a 3.8 or vendor-prefixed name), so no discovered route received it either."
+    },
+    {
+      "id": "2026-08-23-tokenizer-delta-was-mostly-thinking-template",
+      "timestamp": "2026-08-23T00:00:00Z",
+      "scope": "backend",
+      "model_name": "Huihui-Qwen3.8-27B-oQ4e-mtp-omlx",
+      "provider_model": "openai/Huihui-Qwen3.8-27B-oQ4e-mtp",
+      "status": "prior_observation_corrected",
+      "observed_input_tokens": 783,
+      "evidence": "Corrects 2026-08-23-local-tokenizer-delta-819-vs-768, which attributed the whole 819-vs-768 gap to a tokenizer difference. Most of it is a fixed thinking-template preamble. Measured on one short prompt: Huihui counts 77 prompt tokens with thinking ON and 37 with it OFF (+40 constant), while Qwen3-VL-32B-Instruct-4bit counts 33 either way -- it has no thinking template, so the flag is a no-op there. On the long interpretation prompt the same pair is 783 (thinking-OFF) vs 768, i.e. a real tokenizer spread near 2%, not 6.6%. This matters for adapterConfig.outputReservation.tokenizerHeadroom because a constant per-request offset and a percentage scale differently: the template overhead does not grow with prompt size, the tokenizer spread does."
+    },
+    {
+      "id": "2026-08-23-huihui-outranks-instruct-32b-on-quality",
+      "timestamp": "2026-08-23T00:00:00Z",
+      "scope": "backend",
+      "model_name": "Huihui-Qwen3.8-27B-oQ4e-mtp-omlx",
+      "provider_model": "openai/Huihui-Qwen3.8-27B-oQ4e-mtp",
+      "status": "healthy",
+      "observed_input_tokens": 783,
+      "observed_output_tokens": 412,
+      "evidence": "With enable_thinking=false the model completed the circuit-lab interpretation task in 10.3s and outranked Qwen3-VL-32B-Instruct-4bit on accuracy: it correctly separated a stuck-high failure mode from contention on the row the Instruct model misread, and got the boundary, operating-region and signature rows right. Supports promoting this route to the packaged haiku tier. Measured by the circuit-lab session; raw in ~/Projects/ls-sizing-study/results/smoke_c_arm/."
     }
   ]
 }
