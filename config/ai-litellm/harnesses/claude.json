@@ -52,6 +52,7 @@
       "CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK",
       "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
       "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+      "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
       "GOOGLE_API_KEY",
       "GEMINI_API_KEY",
       "OLLAMA_HOST",
@@ -102,6 +103,7 @@
     "tierDisplayNameEnvPrefix": "ANTHROPIC_DEFAULT",
     "autoCompactWindowEnv": "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
     "maxOutputTokensEnv": "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    "maxContextTokensEnv": "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
     "outputReservation": {
       "default": 32000,
       "tokenizerHeadroom": 8192,

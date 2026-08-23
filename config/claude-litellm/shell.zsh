@@ -499,6 +499,7 @@ _claude_litellm_launch_proxy() {
 
   local base_url_env auth_env discovery_env isolation_env tier_model_prefix tier_display_prefix
   local auto_compact_window_env max_output_tokens_env empty_api_key_env attribution_env
+  local max_context_tokens_env
   local loopback_no_proxy no_proxy_entry inherited_no_proxy
   local -a no_proxy_entries no_proxy_merged
   local -A no_proxy_seen
@@ -511,6 +512,7 @@ _claude_litellm_launch_proxy() {
   tier_display_prefix="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.tierDisplayNameEnvPrefix 2>/dev/null || printf 'ANTHROPIC_DEFAULT')"
   auto_compact_window_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.autoCompactWindowEnv 2>/dev/null || printf 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')"
   max_output_tokens_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.maxOutputTokensEnv 2>/dev/null || printf 'CLAUDE_CODE_MAX_OUTPUT_TOKENS')"
+  max_context_tokens_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.maxContextTokensEnv 2>/dev/null || printf 'CLAUDE_CODE_MAX_CONTEXT_TOKENS')"
   attribution_env="$(ai_litellm_harness_json "$CLAUDE_LITELLM_HARNESS" adapterConfig.attributionHeaderEnv 2>/dev/null || printf 'CLAUDE_CODE_ATTRIBUTION_HEADER')"
   # Preserve bypasses supplied in either conventional case. Both child
   # variables receive the same de-duplicated value so libraries choosing one
@@ -564,13 +566,18 @@ _claude_litellm_launch_proxy() {
   # Claude Code exposes process-global knobs for compact threshold and request
   # max_tokens. Shared-window providers count input + reserved output together,
   # so we inject a small reservation rather than the model's output capability.
-  local active_budget active_effective_input active_reservation
+  local active_budget active_effective_input active_reservation active_context
   active_budget="$(ai_litellm_harness_output_budget "$CLAUDE_LITELLM_HARNESS" "$claude_model_arg" "$target_model" 2>/dev/null || true)"
   if [[ -n "$active_budget" ]]; then
     active_effective_input="$(print -r -- "$active_budget" | jq -r '.effectiveInput // empty')"
     active_reservation="$(print -r -- "$active_budget" | jq -r '.reservation // empty')"
+    # The route's real input limit, told to Claude Code directly. Without it the
+    # binary assumes a 200000-token window and computes min(200000, configured),
+    # which silently discards the derived numbers on every larger route.
+    active_context="$(print -r -- "$active_budget" | jq -r '.context // empty')"
     [[ -n "$active_effective_input" ]] && env_assignments+=("${auto_compact_window_env}=$active_effective_input")
     [[ -n "$active_reservation" ]] && env_assignments+=("${max_output_tokens_env}=$active_reservation")
+    [[ -n "$active_context" ]] && env_assignments+=("${max_context_tokens_env}=$active_context")
   fi
 
   local reasoning_output

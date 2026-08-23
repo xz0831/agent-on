@@ -83,6 +83,9 @@
         "maxOutputTokensEnv": {
           "type": "string"
         },
+        "maxContextTokensEnv": {
+          "type": "string"
+        },
         "outputReservation": {
           "type": "object",
           "properties": {
