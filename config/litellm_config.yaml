@@ -25,6 +25,8 @@ x-limits:
     x_input_source: openrouter.top_provider.context_length
     x_output_confidence: provider
     x_output_source: openrouter.top_provider.max_completion_tokens
+    x_reasoning_confidence: provider
+    x_reasoning_source: openrouter.supported_parameters
 
   kimi_k27_code: &kimi_k27_code
     max_input_tokens: 262144
