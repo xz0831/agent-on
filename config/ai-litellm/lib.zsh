@@ -3805,7 +3805,7 @@ config = (YAML.load(clean, aliases: true) rescue YAML.load(clean))
 existing = Array(config["model_list"]).map { |entry| entry["model_name"] }.compact
 # Registry entries already serving the same upstream (model, api_base) make a
 # discovered route redundant even under a different name (e.g. a promoted
-# first-class entry like Qwen3.6-27B-oMLX).
+# first-class entry like Huihui-Qwen3.8-27B-oQ4e-mtp-omlx).
 existing_backends = {}
 Array(config["model_list"]).each do |entry|
   params = entry["litellm_params"] || {}

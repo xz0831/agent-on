@@ -417,7 +417,7 @@ if ai_litellm_model_reasoning_allowed_efforts Mimo-V2.5-openrouter >/dev/null 2>
   echo "FAIL: MiMo reasoning support was misclassified as configurable effort" >&2
   exit 1
 fi
-if ai_litellm_model_reasoning_allowed_efforts Qwen3.6-27B-omlx >/dev/null 2>&1; then
+if ai_litellm_model_reasoning_allowed_efforts Huihui-Qwen3.8-27B-oQ4e-mtp-omlx >/dev/null 2>&1; then
   echo "FAIL: non-reasoning local model accepted configurable effort" >&2
   exit 1
 fi
@@ -429,11 +429,11 @@ if ai_litellm_assert_rendered_path "__AI_LITELLM_HOME__/state/claude-litellm" "t
   exit 1
 fi
 ai_litellm_assert_rendered_path "$prefix/state/claude-litellm" "test"
-runtime_routes_dry="$(ai_litellm_runtime_routes_write omlx 1 MarkItDown Qwen3.6-27B-4bit)"
+runtime_routes_dry="$(ai_litellm_runtime_routes_write omlx 1 MarkItDown Huihui-Qwen3.8-27B-oQ4e-mtp)"
 [[ "$runtime_routes_dry" == *"MarkItDown-omlx -> openai/MarkItDown"* ]]
-# Qwen3.6-27B-omlx registry entry serves openai/Qwen3.6-27B-4bit, so the
+# Huihui-Qwen3.8-27B-oQ4e-mtp-omlx registry entry serves openai/Huihui-Qwen3.8-27B-oQ4e-mtp, so the
 # discovered route for it must be deduped (absent from the dry output).
-[[ "$runtime_routes_dry" != *"Qwen3.6-27B-4bit-omlx"* ]]
+[[ "$runtime_routes_dry" != *"Huihui-Qwen3.8-27B-oQ4e-mtp-omlx"* ]]
 # Robustness: a runtime that is reachable but whose /v1/models returns an
 # UNPARSEABLE body must NOT silently wipe existing discovered routes — discovery
 # failure (rc!=0) is distinct from a genuine empty model list and must skip the
@@ -489,10 +489,10 @@ date -u "+%Y-%m-%dT%H:%M:%SZ" > "$AI_LITELLM_PROXY_HOME/litellm.sync.lock/starte
 sync_busy="$(ai_litellm_sync --no-restart 2>&1 || true)"
 [[ "$sync_busy" == *"another sync is in progress"* ]]
 rm -f "$AI_LITELLM_PROXY_HOME/litellm.sync.lock/pid" "$AI_LITELLM_PROXY_HOME/litellm.sync.lock/started_at"; rmdir "$AI_LITELLM_PROXY_HOME/litellm.sync.lock"
-ai_litellm_runtime_routes_write omlx 0 "Qwen3.6-Test-27B" "PlainLocal" >/dev/null
-grep -A16 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
-grep -A16 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_input_tokens: 131072"
-grep -A16 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_output_tokens: 16384"
+ai_litellm_runtime_routes_write omlx 0 "Qwen3.8-Test-27B" "PlainLocal" >/dev/null
+grep -A16 "model_name: Qwen3.8-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
+grep -A16 "model_name: Qwen3.8-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_input_tokens: 131072"
+grep -A16 "model_name: Qwen3.8-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_output_tokens: 16384"
 grep -A8 "model_name: PlainLocal-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_input_tokens: 8192"
 # ── --json contract: proxy status ────────────────────────────────────────────
 json_check() {
@@ -728,9 +728,9 @@ params_settings_tmp="$HOME/omlx-params-test.json"
 test -n "$AI_LITELLM_SETTINGS" && test -f "$AI_LITELLM_SETTINGS"  # guard: never let jq fall back to stdin (would hang)
 # The shipped policy applies thinking-off to both Qwen generations. The
 # first-class routes carry the same setting even when discovery deduplicates
-# them, while generated Qwen3.6 routes receive it from the glob override.
-grep -A14 "model_name: Qwen3.6-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
-grep -A14 "model_name: Qwen3.6-35B-A3B-4bit-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
+# them, while generated Qwen3.8 routes receive it from the glob override.
+grep -A14 "model_name: Huihui-Qwen3.8-27B-oQ4e-mtp-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
+grep -A14 "model_name: Qwen3.8-27B-Uncensored-8-bit-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
 # P4-unrelated latent-bug fix: this filter previously used single quotes, which
 # (unlike the apostrophe-embedding trick elsewhere in this file) closed and
 # reopened the enclosing single-quoted zsh -fc string around SPACE-containing
@@ -741,9 +741,9 @@ grep -A14 "model_name: Qwen3.6-35B-A3B-4bit-omlx" "$AI_LITELLM_CONFIG" | grep -q
 # Escaped double quotes (same idiom already used for node -e "..." elsewhere in
 # this file) keep the filter, spaces included, as one argument end to end.
 jq ".runtimes.omlx.litellmParamsOverrides = {\"*Test-35B*\": {\"extra_body\": {\"chat_template_kwargs\": {\"enable_thinking\": false}}}}" < "$AI_LITELLM_SETTINGS" > "$params_settings_tmp"
-AI_LITELLM_SETTINGS="$params_settings_tmp" ai_litellm_runtime_routes_write omlx 0 "Qwen3.6-Test-35B" "Qwen3.6-Test-27B" >/dev/null
-grep -A12 "model_name: Qwen3.6-Test-35B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
-! grep -A12 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking"
+AI_LITELLM_SETTINGS="$params_settings_tmp" ai_litellm_runtime_routes_write omlx 0 "Qwen3.8-Test-35B" "Qwen3.8-Test-27B" >/dev/null
+grep -A12 "model_name: Qwen3.8-Test-35B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
+! grep -A12 "model_name: Qwen3.8-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking"
 ai_litellm_model_info_anchor_refs_ok
 for harness in "${(@f)$(ai_litellm_harness_names)}"; do
   ai_litellm_harness_validate "$harness"
@@ -1071,7 +1071,7 @@ test "$(_claude_litellm_resolve_model_arg openrouter/z-ai/glm-5.2)" = "GLM-5.2-o
   claude-litellm Qwen3.6-35B-omlx 2>&1 | grep -q "is not a selectable model"
   ! claude-litellm h35 >/dev/null 2>&1
   ! claude-litellm not-a-real-model >/dev/null 2>&1
-  test "$(claude-litellm Qwen3.6-27B-omlx)" = "proxy:Qwen3.6-27B-omlx"
+  test "$(claude-litellm Huihui-Qwen3.8-27B-oQ4e-mtp-omlx)" = "proxy:Huihui-Qwen3.8-27B-oQ4e-mtp-omlx"
 )
 echo "ok: proxy-only model selector guards"
 (
@@ -1254,8 +1254,8 @@ echo "ok: isolated Claude settings migrate once before shared linking"
   test -L "$prefix/state/claude-litellm/claude-config/settings.json"
 )
 echo "ok: stale proxy overlay path is canonicalized outside shared config"
-ai_litellm_model_limits Qwen3.6-27B-omlx >/dev/null
-runtime_routes_dedup="$(ai_litellm_runtime_routes_write omlx 1 Qwen3.6-27B-4bit)"
+ai_litellm_model_limits Huihui-Qwen3.8-27B-oQ4e-mtp-omlx >/dev/null
+runtime_routes_dedup="$(ai_litellm_runtime_routes_write omlx 1 Huihui-Qwen3.8-27B-oQ4e-mtp)"
 [[ -z "$runtime_routes_dedup" ]]  # dedup must yield NO route for an upstream a registry entry already serves
 "$HOME/.local/bin/claude-litellm" --status >/dev/null
 "$HOME/.local/bin/claude-litellm" status --json | jq -e \
@@ -1474,7 +1474,7 @@ managed_command="$(ps -ww -o command= -p "$managed_pid")"
 [[ "$managed_command" != *" -m ai_litellm_callbacks.proxy_bootstrap "* ]]
 ai_litellm_health
 proxy_models="$(ai_litellm_proxy_model_names)"
-[[ "$proxy_models" == *"Qwen3.6-27B-omlx"* ]]
+[[ "$proxy_models" == *"Huihui-Qwen3.8-27B-oQ4e-mtp-omlx"* ]]
 [[ "$proxy_models" == *"Grok-4.5-xai-oauth"* ]]
 [[ "$proxy_models" != *"GPT-5.4-chatgpt-oauth"* ]]
 test ! -e "$prefix/state/auth/chatgpt/auth.json"

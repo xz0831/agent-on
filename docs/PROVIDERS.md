@@ -37,7 +37,7 @@ the same Anthropic-to-OpenAI translation and tool-fidelity tests as cloud routes
 
 oMLX discovery is automatic on `sync`. The validated last-known-good discovery
 block is retained when oMLX is temporarily unavailable; a successful discovery
-atomically replaces it. Qwen3.5 and Qwen3.6 models must receive
+atomically replaces it. Qwen3.8 models (including the Huihui and abliterated variants, whose ids do not begin with `Qwen3`) must receive
 `litellm_params.extra_body.chat_template_kwargs.enable_thinking=false`. LiteLLM
 merges that `extra_body` value into the final OpenAI-compatible request, so oMLX
 receives top-level `chat_template_kwargs`. With default thinking, tested Qwen3.5

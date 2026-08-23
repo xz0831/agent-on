@@ -981,7 +981,7 @@ def main() -> int:
         model_ids = {row.get("id") for row in models_payload.get("data", [])}
         assert "GPT-5.4-chatgpt-oauth" in model_ids
         assert "Grok-4.5-xai-oauth" in model_ids
-        assert "Qwen3.6-27B-omlx" in model_ids
+        assert "Huihui-Qwen3.8-27B-oQ4e-mtp-omlx" in model_ids
 
         # Regression: LiteLLM 1.92 eagerly initializes chatgpt/* deployments
         # during raw proxy startup. With an empty token directory that invokes
@@ -1028,7 +1028,7 @@ def main() -> int:
             f"{sorted(expected_non_chatgpt_ids - unauthenticated_ids)}"
         )
         assert "Grok-4.5-xai-oauth" in unauthenticated_ids
-        assert "Qwen3.6-27B-omlx" in unauthenticated_ids
+        assert "Huihui-Qwen3.8-27B-oQ4e-mtp-omlx" in unauthenticated_ids
 
         interactive_markers = (
             "Sign in with ChatGPT using device code:",

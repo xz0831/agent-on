@@ -175,13 +175,12 @@ claude-litellm model qualify Qwen3.5-9B-MLX-8bit-omlx \
 ```
 
 The packaged runtime policy applies
-`extra_body.chat_template_kwargs.enable_thinking=false` to `Qwen3.5*` and
-`Qwen3.6*`. LiteLLM merges `extra_body` into the outgoing request, so the oMLX
+`extra_body.chat_template_kwargs.enable_thinking=false` to `*Qwen3.8*`. LiteLLM merges `extra_body` into the outgoing request, so the oMLX
 wire must contain top-level `chat_template_kwargs.enable_thinking=false`; an
 extra nested `extra_body` on that final wire is ineffective. Live tests found
 that default thinking exposed reasoning or returned text instead of a native
 forced tool call, while thinking-off produced structured tool calls. The
-packaged `Qwen3.6-27B-omlx` and `Qwen3.6-35B-A3B-4bit-omlx` routes carry the
+packaged `Huihui-Qwen3.8-27B-oQ4e-mtp-omlx` and `Qwen3.8-27B-Uncensored-8-bit-omlx` routes carry the
 same override directly.
 
 If a model is unloaded, run `sync` again. A durable tier alias may temporarily

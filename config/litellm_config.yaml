@@ -67,13 +67,13 @@ x-limits:
     x_output_source: openrouter-unpublished; conservative ceiling within current top-provider context
     x_reasoning_confidence: provider
     x_reasoning_source: openrouter.supported_parameters
-  qwen36_27b_local: &qwen36_27b_local
+  qwen38_27b_local: &qwen38_27b_local
     max_input_tokens: 131072
     max_output_tokens: 16384
     supports_reasoning: false
     x_reasoning_efforts: []
     x_input_confidence: owned-policy
-    x_input_source: native-262144-per-model-config-json; owned-policy-local-throughput-cap
+    x_input_source: omlx-/v1/models.max_model_len-262144; owned-policy-local-throughput-cap
     x_output_confidence: owned-policy
     x_output_source: owned-policy-local-output-cap
     x_reasoning_confidence: owned-policy
@@ -154,33 +154,36 @@ model_list:
 
   # Claude haiku-tier local model: first-class registry entry (not a discovered
   # route) so the tier survives reinstall/discovery and is anchor-checked.
-  - model_name: Qwen3.6-27B-omlx
+  # Name = the canonical discovered name, so this promoted entry and the
+  # sync-discovered route are one and the same (dedup keeps only this one).
+  - model_name: Huihui-Qwen3.8-27B-oQ4e-mtp-omlx
     litellm_params:
-      model: openai/Qwen3.6-27B-4bit
+      model: openai/Huihui-Qwen3.8-27B-oQ4e-mtp
       api_base: http://127.0.0.1:8000/v1
       api_key: none
       extra_body:
         chat_template_kwargs:
           enable_thinking: false
-    model_info: *qwen36_27b_local
+    model_info: *qwen38_27b_local
 
-  # Qwen3.6 35B-A3B MoE local route — Phase 0 replication arm (dense-vs-MoE under
-  # identical harness guidance). Same caps as the 27B route, hence the shared anchor.
-  # Name = the canonical discovered name (full model id, incl. A3B MoE marker +
-  # quant), so this promoted entry and the sync-discovered route are one and the
-  # same (dedup keeps only this one). Both packaged Qwen3.6 routes are qualified
-  # thinking-OFF: with thinking enabled the forced-tool probe returned reasoning
-  # text instead of a native tool call. extra_body.chat_template_kwargs is
+  # Second uncensored 3.8 arm at 8-bit for a quantization contrast under
+  # identical harness guidance. Same caps as the 27B route, hence the shared
+  # anchor. Both packaged routes are qualified thinking-OFF: with thinking
+  # enabled the forced-tool probe returned reasoning text instead of a native
+  # tool call. Measured 2026-08-23 on the same interpretation task: thinking-ON
+  # spent 476 and 636 output tokens respectively (and two abliterated 4-bit
+  # siblings exhausted an 800-token budget without answering at all), while
+  # thinking-OFF answered in 53 and 42. extra_body.chat_template_kwargs is
   # forwarded by LiteLLM to oMLX as top-level chat_template_kwargs.
-  - model_name: Qwen3.6-35B-A3B-4bit-omlx
+  - model_name: Qwen3.8-27B-Uncensored-8-bit-omlx
     litellm_params:
-      model: openai/Qwen3.6-35B-A3B-4bit
+      model: openai/Qwen3.8-27B-Uncensored-8-bit
       api_base: http://127.0.0.1:8000/v1
       api_key: none
       extra_body:
         chat_template_kwargs:
           enable_thinking: false
-    model_info: *qwen36_27b_local
+    model_info: *qwen38_27b_local
 
 # BEGIN claude-litellm discovered local routes
 # Managed by `claude-litellm sync`; generated from runtimes.omlx /v1/models.

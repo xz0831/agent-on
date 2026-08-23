@@ -18,9 +18,9 @@
       "discoverModels": true,
       "expectedModels": [],
       "recommendedModels": [
-        "Qwen3.6-27B-omlx",
-        "Qwen3.5-9B-MLX-8bit-omlx",
-        "Qwen3.5-27B-4bit-omlx",
+        "Huihui-Qwen3.8-27B-oQ4e-mtp-omlx",
+        "Qwen3.8-27B-Uncensored-8-bit-omlx",
+        "Qwen3-VL-32B-Instruct-4bit-omlx",
         "Qwen3-VL-8B-Instruct-4bit-omlx"
       ],
       "defaultModelInfo": {
@@ -41,17 +41,16 @@
           "max_output_tokens": 16384,
           "x_input_source": "native 262144 (model config.json); owned-policy local throughput cap",
           "x_output_source": "owned-policy local output cap"
+        },
+        "*Qwen3.8*": {
+          "max_input_tokens": 131072,
+          "max_output_tokens": 16384,
+          "x_input_source": "omlx /v1/models.max_model_len 262144; owned-policy local throughput cap",
+          "x_output_source": "owned-policy local output cap"
         }
       },
       "litellmParamsOverrides": {
-        "Qwen3.5*": {
-          "extra_body": {
-            "chat_template_kwargs": {
-              "enable_thinking": false
-            }
-          }
-        },
-        "Qwen3.6*": {
+        "*Qwen3.8*": {
           "extra_body": {
             "chat_template_kwargs": {
               "enable_thinking": false

@@ -71,7 +71,7 @@ short direct form are equivalent for one-session launch:
 claude-litellm use fable
 claude-litellm use GPT-5.4-chatgpt-oauth
 claude-litellm Grok-4.5-xai-oauth        # short form remains supported
-claude-litellm use Qwen3.6-27B-omlx
+claude-litellm use Huihui-Qwen3.8-27B-oQ4e-mtp-omlx
 ```
 
 Claude arguments pass through normally:
@@ -235,13 +235,14 @@ means genuinely no authentication, not OAuth.
 - `Kimi-K2.7-Code-openrouter`
 - `GLM-5.2-openrouter`
 - `Mimo-V2.5-openrouter`
-- `Qwen3.6-27B-omlx`
-- `Qwen3.6-35B-A3B-4bit-omlx`
+- `DeepSeek-V4-Pro-openrouter`
+- `Huihui-Qwen3.8-27B-oQ4e-mtp-omlx`
+- `Qwen3.8-27B-Uncensored-8-bit-omlx`
 - `GPT-5.4-chatgpt-oauth`
 - `Grok-4.5-xai-oauth`
 
 The packaged tier defaults are `fable` → Kimi, `opus` → GLM, `sonnet` → MiMo,
-and `haiku` → Qwen3.6-27B. Repository defaults are declared in
+and `haiku` → Huihui-Qwen3.8-27B (uncensored, thinking-off). Repository defaults are declared in
 `config/claude-litellm/settings.json`; installation publishes them as immutable
 `config/claude-litellm/settings.base.json`, while the historical
 `settings.json` path becomes generated effective state. Durable user choices
