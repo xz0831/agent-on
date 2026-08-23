@@ -60,6 +60,17 @@
       "status": "tokenizer_delta",
       "observed_input_tokens": 768,
       "evidence": "The identical prompt text counted 819 prompt_tokens on Huihui-Qwen3.8-27B-oQ4e-mtp and 768 on Qwen3-VL-32B-Instruct-4bit — a 6.6% spread between two models on the same local runtime. Relevant to adapterConfig.outputReservation.tokenizerHeadroom (8192), which exists to absorb exactly this class of mismatch; this is the first measured local datapoint for it. Raw: same directory, compare prompt_tokens across smoke_20260823.json and smoke_20260823_attempt4.json"
+    },
+    {
+      "id": "2026-08-23-huihui-reasoning-leak-is-thinking-flag-not-model",
+      "timestamp": "2026-08-23T00:00:00Z",
+      "scope": "backend",
+      "model_name": "Huihui-Qwen3.8-27B-oQ4e-mtp-omlx",
+      "provider_model": "openai/Huihui-Qwen3.8-27B-oQ4e-mtp",
+      "status": "prior_observation_qualified",
+      "observed_input_tokens": 673,
+      "observed_output_tokens": 53,
+      "evidence": "Qualifies 2026-08-23-huihui-qwen38-27b-reasoning-leak, which recorded the model as never emitting an answer. Re-measured on the same interpretation task with chat_template_kwargs.enable_thinking toggled: thinking-ON spent 476 output tokens, thinking-OFF answered in 53. Two abliterated 4-bit siblings that exhausted an 800-token budget with thinking ON answered in 45 with it OFF. The earlier run reached oMLX directly and therefore never received the flag the packaged routes inject. The failure is the missing enable_thinking=false, not the model. Note the packaged runtime globs that inject it matched 0 of 17 live models at the time (litellmParamsOverrides keyed Qwen3.5*/Qwen3.6* while every live id is a 3.8 or vendor-prefixed name), so no discovered route received it either."
     }
   ]
 }
