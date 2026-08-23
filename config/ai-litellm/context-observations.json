@@ -28,6 +28,38 @@
       "status": "lower_bound",
       "observed_input_tokens": 204800,
       "evidence": "Earlier OpenRouter boundary probe accepted 1 input token plus max_tokens=204799. Current provider-authoritative cap remains 202752, so enforcement stays conservative."
+    },
+    {
+      "id": "2026-08-23-huihui-qwen38-27b-reasoning-leak",
+      "timestamp": "2026-08-23T00:00:00Z",
+      "scope": "backend",
+      "model_name": "Huihui-Qwen3.8-27B-oQ4e-mtp-omlx",
+      "provider_model": "openai/Huihui-Qwen3.8-27B-oQ4e-mtp",
+      "status": "policy_assumption_refuted",
+      "observed_input_tokens": 819,
+      "observed_output_tokens": 6000,
+      "evidence": "Escalating output budget across three runs against 127.0.0.1:8000 directly: 819/700 (11.5s), 823/2200 with an explicit /no_think in the prompt (35.5s), 819/6000 (92.2s). All three consumed 100% of the output budget as chain-of-thought and never emitted a final answer; /no_think was ignored. Reasoning surfaces in content rather than a separate channel. This refutes the blanket default that `claude-litellm sync` assigns to every discovered omlx route (supports_reasoning=false, x_reasoning_efforts=[], x_reasoning_source=local-runtime-no-reasoning-routing). Raw: ~/Projects/ls-sizing-study/results/smoke_c_arm/{smoke_20260823,smoke_20260823_retry2,smoke_20260823_attempt3}.json"
+    },
+    {
+      "id": "2026-08-23-qwen3-vl-32b-text-baseline",
+      "timestamp": "2026-08-23T00:00:00Z",
+      "scope": "backend",
+      "model_name": "Qwen3-VL-32B-Instruct-4bit-omlx",
+      "provider_model": "openai/Qwen3-VL-32B-Instruct-4bit",
+      "status": "healthy",
+      "observed_input_tokens": 768,
+      "observed_output_tokens": 347,
+      "evidence": "Same small interpretation task completed normally in 20.1s (6.1s of it model load), no reasoning leakage, answer emitted. Serves as the local text-task baseline and the contrast case for the Huihui variant measured the same day. Raw: ~/Projects/ls-sizing-study/results/smoke_c_arm/smoke_20260823_attempt4.json"
+    },
+    {
+      "id": "2026-08-23-local-tokenizer-delta-819-vs-768",
+      "timestamp": "2026-08-23T00:00:00Z",
+      "scope": "backend",
+      "model_name": "Qwen3-VL-32B-Instruct-4bit-omlx",
+      "provider_model": "openai/Qwen3-VL-32B-Instruct-4bit",
+      "status": "tokenizer_delta",
+      "observed_input_tokens": 768,
+      "evidence": "The identical prompt text counted 819 prompt_tokens on Huihui-Qwen3.8-27B-oQ4e-mtp and 768 on Qwen3-VL-32B-Instruct-4bit — a 6.6% spread between two models on the same local runtime. Relevant to adapterConfig.outputReservation.tokenizerHeadroom (8192), which exists to absorb exactly this class of mismatch; this is the first measured local datapoint for it. Raw: same directory, compare prompt_tokens across smoke_20260823.json and smoke_20260823_attempt4.json"
     }
   ]
 }
