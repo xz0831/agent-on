@@ -180,7 +180,7 @@ wire must contain top-level `chat_template_kwargs.enable_thinking=false`; an
 extra nested `extra_body` on that final wire is ineffective. Live tests found
 that default thinking exposed reasoning or returned text instead of a native
 forced tool call, while thinking-off produced structured tool calls. The
-packaged `Huihui-Qwen3.8-27B-oQ4e-mtp-omlx` and `Qwen3.8-27B-Uncensored-8-bit-omlx` routes carry the
+packaged `root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx` and `Qwen3.8-27B-Uncensored-8bit-omlx` routes carry the
 same override directly.
 
 If a model is unloaded, run `sync` again. A durable tier alias may temporarily

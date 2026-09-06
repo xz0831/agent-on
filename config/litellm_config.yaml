@@ -156,9 +156,9 @@ model_list:
   # route) so the tier survives reinstall/discovery and is anchor-checked.
   # Name = the canonical discovered name, so this promoted entry and the
   # sync-discovered route are one and the same (dedup keeps only this one).
-  - model_name: Huihui-Qwen3.8-27B-oQ4e-mtp-omlx
+  - model_name: root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx
     litellm_params:
-      model: openai/Huihui-Qwen3.8-27B-oQ4e-mtp
+      model: openai/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp
       api_base: http://127.0.0.1:8000/v1
       api_key: none
       extra_body:
@@ -175,9 +175,9 @@ model_list:
   # siblings exhausted an 800-token budget without answering at all), while
   # thinking-OFF answered in 53 and 42. extra_body.chat_template_kwargs is
   # forwarded by LiteLLM to oMLX as top-level chat_template_kwargs.
-  - model_name: Qwen3.8-27B-Uncensored-8-bit-omlx
+  - model_name: Qwen3.8-27B-Uncensored-8bit-omlx
     litellm_params:
-      model: openai/Qwen3.8-27B-Uncensored-8-bit
+      model: openai/Qwen3.8-27B-Uncensored-8bit
       api_base: http://127.0.0.1:8000/v1
       api_key: none
       extra_body:

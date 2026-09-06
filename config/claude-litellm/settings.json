@@ -4,12 +4,12 @@
     "fable": "Kimi-K2.7-Code-openrouter",
     "opus": "GLM-5.2-openrouter",
     "sonnet": "Mimo-V2.5-openrouter",
-    "haiku": "Huihui-Qwen3.8-27B-oQ4e-mtp-omlx"
+    "haiku": "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx"
   },
   "displayNames": {
     "fable": "Kimi-K2.7-Code (openrouter)",
     "opus": "GLM-5.2 (openrouter)",
     "sonnet": "Mimo-V2.5 (openrouter)",
-    "haiku": "Huihui-Qwen3.8-27B (omlx)"
+    "haiku": "Huihui-Qwen3.8-27B abliterated (omlx)"
   }
 }

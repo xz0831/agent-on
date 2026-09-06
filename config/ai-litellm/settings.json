@@ -18,10 +18,9 @@
       "discoverModels": true,
       "expectedModels": [],
       "recommendedModels": [
-        "Huihui-Qwen3.8-27B-oQ4e-mtp-omlx",
-        "Qwen3.8-27B-Uncensored-8-bit-omlx",
-        "Qwen3-VL-32B-Instruct-4bit-omlx",
-        "Qwen3-VL-8B-Instruct-4bit-omlx"
+        "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx",
+        "Qwen3.8-27B-Uncensored-8bit-omlx",
+        "mlx-community--Qwen3-VL-32B-Instruct-4bit-omlx"
       ],
       "defaultModelInfo": {
         "max_input_tokens": 8192,

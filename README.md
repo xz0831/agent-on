@@ -71,7 +71,7 @@ short direct form are equivalent for one-session launch:
 claude-litellm use fable
 claude-litellm use GPT-5.4-chatgpt-oauth
 claude-litellm Grok-4.5-xai-oauth        # short form remains supported
-claude-litellm use Huihui-Qwen3.8-27B-oQ4e-mtp-omlx
+claude-litellm use root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx
 ```
 
 Claude arguments pass through normally:
@@ -236,8 +236,8 @@ means genuinely no authentication, not OAuth.
 - `GLM-5.2-openrouter`
 - `Mimo-V2.5-openrouter`
 - `DeepSeek-V4-Pro-openrouter`
-- `Huihui-Qwen3.8-27B-oQ4e-mtp-omlx`
-- `Qwen3.8-27B-Uncensored-8-bit-omlx`
+- `root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx`
+- `Qwen3.8-27B-Uncensored-8bit-omlx`
 - `GPT-5.4-chatgpt-oauth`
 - `Grok-4.5-xai-oauth`
 
