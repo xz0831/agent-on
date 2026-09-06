@@ -784,17 +784,24 @@ grep -A14 "model_name: Qwen3.8-27B-Uncensored-8bit-omlx" "$AI_LITELLM_CONFIG" | 
 # Packaged local routes name a runtime-published model id verbatim, and oMLX has
 # renamed its published ids repeatedly (Qwen3.6 -> 3.8, then an org-prefix
 # republish of the same artifact). Each rename silently turns a packaged route
-# into a 404 that STILL advertises itself at the proxy's /v1/models, so nothing
+# into a 404 that STILL appears in the proxy /v1/models listing, so nothing
 # downstream notices -- the haiku tier sat bricked this way and was only found
 # sideways while answering an unrelated question. When the runtime is reachable,
 # assert every packaged local model id is really served. Skipped, not failed,
 # when it is not, so the gate stays runnable with no local runtime.
-omlx_served="$(curl -fsS --max-time 5 http://127.0.0.1:8000/v1/models 2>/dev/null | jq -r '.data[].id' 2>/dev/null)"
+# NOTE: no apostrophes and no single quotes below -- single-quoted zsh -fc block
+# (see the IMPORTANT banner above). An awk filter here silently truncated the
+# rest of the battery until it was rewritten with double quotes.
+omlx_served="$(curl -fsS --max-time 5 http://127.0.0.1:8000/v1/models 2>/dev/null | jq -r ".data[].id" 2>/dev/null)"
 if [[ -n "$omlx_served" ]]; then
-  for _packaged_id in ${(f)"$(awk '/^# BEGIN claude-litellm discovered/{exit} /model: openai\//{sub(/.*model: openai\//,""); print}' "$AI_LITELLM_CONFIG")"}; do
+  test -n "$AI_LITELLM_CONFIG" && test -f "$AI_LITELLM_CONFIG"
+  packaged_head="$(sed -n "1,/BEGIN claude-litellm discovered/p" "$AI_LITELLM_CONFIG")"
+  packaged_ids="$(print -r -- "$packaged_head" | grep -o "model: openai/.*" | sed "s|model: openai/||")"
+  test -n "$packaged_ids"
+  for _packaged_id in ${(f)packaged_ids}; do
     print -r -- "$omlx_served" | grep -Fxq -- "$_packaged_id" || {
-      echo "FAIL: packaged local route model '$_packaged_id' is not served by the omlx runtime" >&2
-      echo "      runtime serves: $(print -r -- "$omlx_served" | tr '\n' ' ')" >&2
+      echo "FAIL: packaged local route model $_packaged_id is not served by the omlx runtime" >&2
+      echo "      runtime serves: $(print -r -- "$omlx_served" | tr "\n" " ")" >&2
       exit 1
     }
   done
