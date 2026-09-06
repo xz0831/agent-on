@@ -417,7 +417,7 @@ if ai_litellm_model_reasoning_allowed_efforts Mimo-V2.5-openrouter >/dev/null 2>
   echo "FAIL: MiMo reasoning support was misclassified as configurable effort" >&2
   exit 1
 fi
-if ai_litellm_model_reasoning_allowed_efforts Huihui-Qwen3.8-27B-oQ4e-mtp-omlx >/dev/null 2>&1; then
+if ai_litellm_model_reasoning_allowed_efforts root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx >/dev/null 2>&1; then
   echo "FAIL: non-reasoning local model accepted configurable effort" >&2
   exit 1
 fi
@@ -429,11 +429,11 @@ if ai_litellm_assert_rendered_path "__AI_LITELLM_HOME__/state/claude-litellm" "t
   exit 1
 fi
 ai_litellm_assert_rendered_path "$prefix/state/claude-litellm" "test"
-runtime_routes_dry="$(ai_litellm_runtime_routes_write omlx 1 MarkItDown Huihui-Qwen3.8-27B-oQ4e-mtp)"
+runtime_routes_dry="$(ai_litellm_runtime_routes_write omlx 1 MarkItDown root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp)"
 [[ "$runtime_routes_dry" == *"MarkItDown-omlx -> openai/MarkItDown"* ]]
-# Huihui-Qwen3.8-27B-oQ4e-mtp-omlx registry entry serves openai/Huihui-Qwen3.8-27B-oQ4e-mtp, so the
+# root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx registry entry serves openai/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp, so the
 # discovered route for it must be deduped (absent from the dry output).
-[[ "$runtime_routes_dry" != *"Huihui-Qwen3.8-27B-oQ4e-mtp-omlx"* ]]
+[[ "$runtime_routes_dry" != *"root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx"* ]]
 # Robustness: a runtime that is reachable but whose /v1/models returns an
 # UNPARSEABLE body must NOT silently wipe existing discovered routes — discovery
 # failure (rc!=0) is distinct from a genuine empty model list and must skip the
@@ -729,8 +729,30 @@ test -n "$AI_LITELLM_SETTINGS" && test -f "$AI_LITELLM_SETTINGS"  # guard: never
 # The shipped policy applies thinking-off to both Qwen generations. The
 # first-class routes carry the same setting even when discovery deduplicates
 # them, while generated Qwen3.8 routes receive it from the glob override.
-grep -A14 "model_name: Huihui-Qwen3.8-27B-oQ4e-mtp-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
-grep -A14 "model_name: Qwen3.8-27B-Uncensored-8-bit-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
+grep -A14 "model_name: root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
+grep -A14 "model_name: Qwen3.8-27B-Uncensored-8bit-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
+
+# Packaged local routes name a runtime-published model id verbatim, and oMLX has
+# renamed its published ids repeatedly (Qwen3.6 -> 3.8, then an org-prefix
+# republish of the same artifact). Each rename silently turns a packaged route
+# into a 404 that STILL advertises itself at the proxy's /v1/models, so nothing
+# downstream notices -- the haiku tier sat bricked this way and was only found
+# sideways while answering an unrelated question. When the runtime is reachable,
+# assert every packaged local model id is really served. Skipped, not failed,
+# when it is not, so the gate stays runnable with no local runtime.
+omlx_served="$(curl -fsS --max-time 5 http://127.0.0.1:8000/v1/models 2>/dev/null | jq -r '.data[].id' 2>/dev/null)"
+if [[ -n "$omlx_served" ]]; then
+  for _packaged_id in ${(f)"$(awk '/^# BEGIN claude-litellm discovered/{exit} /model: openai\//{sub(/.*model: openai\//,""); print}' "$AI_LITELLM_CONFIG")"}; do
+    print -r -- "$omlx_served" | grep -Fxq -- "$_packaged_id" || {
+      echo "FAIL: packaged local route model '$_packaged_id' is not served by the omlx runtime" >&2
+      echo "      runtime serves: $(print -r -- "$omlx_served" | tr '\n' ' ')" >&2
+      exit 1
+    }
+  done
+  echo "ok: every packaged local route model id is served by the live runtime"
+else
+  echo "ok: packaged local route liveness skipped (omlx runtime unreachable)"
+fi
 # P4-unrelated latent-bug fix: this filter previously used single quotes, which
 # (unlike the apostrophe-embedding trick elsewhere in this file) closed and
 # reopened the enclosing single-quoted zsh -fc string around SPACE-containing
@@ -1071,7 +1093,7 @@ test "$(_claude_litellm_resolve_model_arg openrouter/z-ai/glm-5.2)" = "GLM-5.2-o
   claude-litellm Qwen3.6-35B-omlx 2>&1 | grep -q "is not a selectable model"
   ! claude-litellm h35 >/dev/null 2>&1
   ! claude-litellm not-a-real-model >/dev/null 2>&1
-  test "$(claude-litellm Huihui-Qwen3.8-27B-oQ4e-mtp-omlx)" = "proxy:Huihui-Qwen3.8-27B-oQ4e-mtp-omlx"
+  test "$(claude-litellm root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx)" = "proxy:root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx"
 )
 echo "ok: proxy-only model selector guards"
 (
@@ -1254,8 +1276,8 @@ echo "ok: isolated Claude settings migrate once before shared linking"
   test -L "$prefix/state/claude-litellm/claude-config/settings.json"
 )
 echo "ok: stale proxy overlay path is canonicalized outside shared config"
-ai_litellm_model_limits Huihui-Qwen3.8-27B-oQ4e-mtp-omlx >/dev/null
-runtime_routes_dedup="$(ai_litellm_runtime_routes_write omlx 1 Huihui-Qwen3.8-27B-oQ4e-mtp)"
+ai_litellm_model_limits root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx >/dev/null
+runtime_routes_dedup="$(ai_litellm_runtime_routes_write omlx 1 root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp)"
 [[ -z "$runtime_routes_dedup" ]]  # dedup must yield NO route for an upstream a registry entry already serves
 "$HOME/.local/bin/claude-litellm" --status >/dev/null
 "$HOME/.local/bin/claude-litellm" status --json | jq -e \
@@ -1474,7 +1496,7 @@ managed_command="$(ps -ww -o command= -p "$managed_pid")"
 [[ "$managed_command" != *" -m ai_litellm_callbacks.proxy_bootstrap "* ]]
 ai_litellm_health
 proxy_models="$(ai_litellm_proxy_model_names)"
-[[ "$proxy_models" == *"Huihui-Qwen3.8-27B-oQ4e-mtp-omlx"* ]]
+[[ "$proxy_models" == *"root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx"* ]]
 [[ "$proxy_models" == *"Grok-4.5-xai-oauth"* ]]
 [[ "$proxy_models" != *"GPT-5.4-chatgpt-oauth"* ]]
 test ! -e "$prefix/state/auth/chatgpt/auth.json"
