@@ -1,6 +1,6 @@
 # claude-on — an agent-operated model-source layer for Claude Code
 
-Status: DRAFT rev 4 for owner review · 2026-09-07 · reinstates the conclusion
+Status: DRAFT rev 5 for owner review · 2026-09-07 · reinstates the conclusion
 of the 2026-08-20 verdict "Does claude-litellm Need LiteLLM?" (no), and on
 landing replaces `docs/ARCHITECTURE.md`.
 
@@ -23,6 +23,16 @@ declared value as an applied one: settings-file limits (§7 `configured` /
 (`last_check` / `last_gate_run`), a two-file "atomic" write (§6, §7.1),
 the first request's `input_tokens` as the harness baseline (§7, §12), and
 qualification currency by HEAD (§8 fingerprint).
+
+Rev 5 applies the owner's second review (four P2s on the rev-4 diff): the
+context formula let a `verified` probe *lift* a declared operator cap
+(§7 — now `min(declared, verified)`); the qualification fingerprint hashed
+the route entry alone and so missed a changed source URL or inherited limit
+(§8 — now the effective, source-merged configuration); concurrent `add`s
+could lose an addition invisibly (§7.1 — now a checkout-keyed lock with
+re-read); and the session read-back had lost whole-session totals in the
+baseline fix (§11 — `first_request`, `this_run`, `session_total`). D9 is
+confirmed.
 
 ## 0. One paragraph
 
@@ -194,9 +204,9 @@ feature of `claude-on`; it is a property of a source's `base_url` (§5).
 
 ## 3. Decisions
 
-Settled with the owner on 2026-09-06/07 unless marked *default*. ⟲ marks a
-decision amended by the rev-3 adversarial review; ⟲⟲ one amended again by
-the owner's rev-4 review.
+All thirteen are settled with the owner (2026-09-06/07); D9 was the one
+default and was confirmed on 2026-09-07. ⟲ marks a decision amended by the
+rev-3 adversarial review; ⟲⟲ one amended again by the owner's rev-4 review.
 
 | # | decision | rationale |
 |---|---|---|
@@ -208,11 +218,11 @@ the owner's rev-4 review.
 | D6 | **Inform, don't gate.** Qualification results, cost models and liveness are shown; they do not block a launch. | Owner: operated by competent agents. The current launch gates produced false confidence without preventing any observed failure. |
 | D7 ⟲ | **Tier aliases are not user configuration.** The launcher binds Claude Code's four tier slots and the subagent slot to the launch route. `--sonnet <route>` / `--haiku <route>` override one slot with a route **on the same source**; `--sonnet` matters only under `--permission-mode auto`, where the classifier resolves through it. | Owner: agents invoke `claude-on <route>` directly. The slots must still be *set* — subagents and the classifier resolve through them. History for `decisions.jsonl`: the per-tier map was added 2026-06-07 so `haiku` could be a free local model for background calls (only possible behind a proxy), and pinned off on 2026-07-13 (`38ce3f0`). Residual: the auto-mode classifier consults a server-supplied feature config before the SONNET slot; not verifiable offline. |
 | D8 ⟲ | **Gateway model discovery is OFF by default**; `--discover` opts in. | §1.1b: the binary filters discovery to `/(claude\|anthropic)/i`; on local sources it lists nothing, on OpenRouter only paid Anthropic models. Rev 2 and the owner's preference rested on the doc's description, which the measurement contradicts. The filter is seeded into `traps.jsonl` so it is not rediscovered. |
-| D9 ⟲ | **No installed copy.** The checkout is the installation: `install` links `~/.local/bin/claude-on` to `<checkout>/bin/claude-on`, creates the state directory, and checks the interpreter. Drift detection is `git status --porcelain` plus "does the shim point here". The fingerprint chain, shim digest pin and symlink walks are deleted (*default* — owner has not yet answered on the chain specifically). | This kills R2 at the root instead of detecting it: there is nothing to drift between. `ARCHITECTURE.md` says the chain "is not a security boundary against the owner of the Unix account"; `git log` shows it never caught anything; it bricked the install (F7). Its main object, the venv, disappears with D4. |
+| D9 ⟲ | **No installed copy.** The checkout is the installation: `install` links `~/.local/bin/claude-on` to `<checkout>/bin/claude-on`, creates the state directory, and checks the interpreter. Drift detection is `git status --porcelain` plus "does the shim point here". The fingerprint chain, shim digest pin and symlink walks are deleted — **confirmed by the owner 2026-09-07** as the sole owner-choice item, default kept. | This kills R2 at the root instead of detecting it: there is nothing to drift between. `ARCHITECTURE.md` says the chain "is not a security boundary against the owner of the Unix account"; `git log` shows it never caught anything; it bricked the install (F7). Its main object, the venv, disappears with D4. |
 | D10 | **Route names are `<source>/<model>`.** Optional short aliases live in `routes.toml`. | The source is then visible in the name (half of Q3 by convention); retires the `-openrouter`/`-omlx` suffix idiom. |
 | D11 | **Strangler migration**, decomposed into five plans (§14). | `55e17e3` deleted direct mode *and its rationale* in one commit; irreversible big steps have failed here twice. |
 | D12 ⟲ | **Thinking on a local model is whatever the source's template does; `claude-on` measures and reports its cost and does not pretend to control it.** There is no `thinking:` field in `routes.toml`. `qualify` records whether a `thinking` block appeared and whether the answer completed. The controls that exist are the source's own server/template default and `CLAUDE_CODE_MAX_OUTPUT_TOKENS`. | §1.1a. Rev 2's "cost hint passed through by the launcher" was unimplementable: no per-request field reaches a non-Anthropic model. The cost is real (1.9–3.3K thinking tokens on a five-sentence task; >6,000 on the 2026-08-23 run) and is what the cost model shows. |
-| D13 | **Machine-written state lives in one place, outside git.** `$XDG_STATE_HOME/claude-on/` (default `~/.local/state/claude-on/`) holds `routes.discovered.toml`, `observed.json` (+ `observed.lock`), `run/<launch-id>/` (per-launch files under a launcher-minted id, removed on exit — §7.1), the isolated Claude config dir, and the 0600 `env` file. `knowledge/` and `routes.toml` live in the checkout and are git-tracked. `CLAUDE_ON_STATE` overrides the state root for scratch runs. Storage rules: §7.1. | The review's day-one gap: rev 2 never said where the three machine-written files live or which copy owns them. With D9 there is one copy; with this rule there is one state root. `sync` never dirties a tracked file; `learn` and `add` produce diffs the agent can commit. |
+| D13 | **Machine-written state lives in one place, outside git.** `$XDG_STATE_HOME/claude-on/` (default `~/.local/state/claude-on/`) holds `routes.discovered.toml`, `observed.json`, `locks/` (`observed.lock` and the per-checkout `add` lock — §7.1), `run/<launch-id>/` (per-launch files under a launcher-minted id, removed on exit — §7.1), the isolated Claude config dir, and the 0600 `env` file. `knowledge/` and `routes.toml` live in the checkout and are git-tracked. `CLAUDE_ON_STATE` overrides the state root for scratch runs. Storage rules: §7.1. | The review's day-one gap: rev 2 never said where the three machine-written files live or which copy owns them. With D9 there is one copy; with this rule there is one state root. `sync` never dirties a tracked file; `learn` and `add` produce diffs the agent can commit. |
 
 ## 4. The tower
 
@@ -391,18 +401,21 @@ schema rejects a missing key. `status` prints it beside L1.
         "input":  { "configured": 131072, "advertised": 262144, "verified": null, "checked": "2026-09-07T00:12:03Z" },
         "output": { "configured": 32768,  "advertised": null,   "verified": null, "checked": "2026-09-07T00:12:03Z" }
       },
-      "cost_model": { "context": 131072, "context_basis": "configured",
+      "cost_model": { "context": 131072, "context_basis": "declared",
                       "harness_baseline_tokens": { "value": 48312, "measured_by": "qualify --baseline", "claude_code": "2.1.263", "at": "2026-09-07T00:41:10Z" },
                       "tok_s": 63, "usd_per_mtok": { "input": 0, "output": 0, "cache_read": 0, "cache_write": 0 },
                       "caching": true, "concurrency": 1,
                       "thinking": { "observed": true, "tokens_on_probe": 2600 }, "checked": "2026-09-07T00:40:00Z" },
       "last_qualification": { "pass": true, "gates": 6, "thinking_block_seen": true, "completed": true, "at": "2026-09-07T00:40:00Z",
-                              "fingerprint": { "route_config_sha": "3f9a1c2e", "wire_model": "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp",
+                              "fingerprint": { "effective_route_sha": "3f9a1c2e", "wire_model": "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp",
                                                "source_identity": "omlx 0.6.4 / owned_by=omlx", "claude_code": "2.1.263" } },
-      "last_session": { "id": "9026404c-f7ea-4d3f-96cf-4f05bd2cd358", "at": "2026-09-06T14:30:00Z",
-                        "first_request_input_tokens_total": 48312,
-                        "usage": { "input_tokens": 48312, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 1 },
-                        "duration_ms": 138845, "effort": "xhigh", "permission_mode": null, "claude_code": "2.1.263" }
+      "last_session": { "id": "b41e7c02-5d3a-4f9e-9c1b-2a6f8e0d7a55", "at": "2026-09-07T01:05:12Z",
+                        "first_request": { "input_tokens_total": 51880,
+                                           "usage": { "input_tokens": 3568, "cache_read_input_tokens": 48312, "cache_creation_input_tokens": 0, "output_tokens": 412 } },
+                        "this_run":      { "turns": 3, "usage": { "input_tokens": 9714, "cache_read_input_tokens": 144936, "cache_creation_input_tokens": 0, "output_tokens": 1204 }, "cost_usd": 0.0 },
+                        "session_total": { "turns": 3, "usage": { "input_tokens": 9714, "cache_read_input_tokens": 144936, "cache_creation_input_tokens": 0, "output_tokens": 1204 }, "cost_usd": 0.0 },
+                        "scope_note": "fresh session; this_run == session_total",
+                        "duration_ms": 41200, "effort": "xhigh", "permission_mode": null, "claude_code": "2.1.263" }
     }
   },
   "last_check":    { "at": "2026-09-07T01:02:00Z", "commit": "1eeb9ed", "result": "pass", "skipped": ["source.reachable:omlx-tp2"] },
@@ -422,12 +435,12 @@ How each field is measured:
 | `routes.*.limits.*.configured` | `sync`: the source's settings file (local only) | free |
 | `routes.*.limits.*.advertised` | `sync`: catalog `max_model_len` / `context_length` — what the running server *says* | free |
 | `routes.*.limits.*.verified` | `qualify --limits`: a request sized just under and just over the smaller of configured/advertised; the boundary the server actually enforces. Absent until run. **Configured and advertised are not applied limits** — a settings edit the server has not reloaded, or a second endpoint started with other settings, differ from what a request meets; recording either as "measured" is R1 again | local free; cloud ~ one long prompt |
-| `cost_model.context`, `context_basis` | `verified` when present, else min(L1 declared, configured, advertised) — the declared `owned-policy` cap participates so an operator can still cap below what a server allows — with `context_basis` naming which bound won | — |
+| `cost_model.context`, `context_basis` | **`min(L1 declared, verified)`** when `verified` is present, else `min(L1 declared, configured, advertised)`. The L1 declared cap participates in *both* branches — a 32K `owned-policy` cap on a route whose probe finds 128K yields 32K, because the operator set it; `verified` only ever lowers, never lifts. `context_basis` names which bound won; on a tie it names `declared`, because the operator's cap is the reason the number is what it is | — |
 | `cost_model.tok_s`, `concurrency` | `qualify`: short timed completion, then two concurrent | local free; cloud ~$0.001 |
 | `cost_model.caching` | `qualify`: two-turn probe reading `cache_read_input_tokens` → `true` / `false`; **`unknown` until the probe has run** — a missing price is not a measurement | as above |
 | `cost_model.thinking` | `qualify`: `thinking` block present? `stop_reason == end_turn` and answer non-truncated? thinking tokens counted | as above |
 | `cost_model.harness_baseline_tokens` | `qualify --baseline`: a fixed minimal prompt (`-p 'Reply with exactly: OK'`) on this route, first request's `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`, with the Claude Code version. **Not** taken from ordinary sessions — their first request carries the task, and `input_tokens` excludes cache tokens, so a well-cached session would report a *smaller* baseline | free locally; ~48K input tokens on cloud |
-| `routes.*.last_session` | the launch: read from Claude Code's session `.jsonl` after exit (§11) — `first_request_input_tokens_total` (all three input fields summed) and the raw `usage`; recorded on every launch that persisted a session, latest wins | free |
+| `routes.*.last_session` | the launch: read from Claude Code's session `.jsonl` after exit (§11) — `first_request` (all three input fields summed, plus raw usage), `this_run` and `session_total` (turn counts, summed usage, `cost_usd` from L1 price); recorded on every launch that persisted a session, latest wins | free |
 | `routes.*.last_qualification` | `qualify`: the six fidelity gates against the route's real endpoint, plus the **fingerprint** it was valid for (§8 `qualification.current`) | cloud ~$0.01 |
 | `last_check` | `status --check`: invariants only | — |
 | `last_gate_run` | the gate runner only: unit tests + verifiers + invariants. `status --check` never writes it, so a failed gate is never masked by a later invariant-only pass (Q4) | — |
@@ -440,16 +453,22 @@ Several processes write state: `sync`, `qualify`, `status --check`, the gate,
 and every launch's read-back — and two launches can end at the same moment.
 
 - **`observed.json`**: read-modify-write under an exclusive `fcntl.flock` on
-  `$STATE/observed.lock`, held for the whole update; the writer merges its
+  `$STATE/locks/observed.lock`, held for the whole update; the writer merges its
   fields into the *freshly re-read* document (never a copy loaded earlier),
   writes `observed.json.tmp.<pid>`, `fsync`, `rename`. A reader ignores `.tmp.*`
   files. The lock is advisory and dies with the process, so a crash leaves at
   worst a stale `.tmp.*`, which the next writer deletes.
 - **`routes.discovered.toml`**: written only by `sync`, same temp+rename, under
   the same lock (it is state, and `sync` also writes `observed.json`).
-- **`routes.toml`**: written only by `add`, temp+rename in the checkout; it is
-  git-tracked, so the agent sees the diff. No lock — two concurrent `add`s are
-  a user error the diff makes visible.
+- **`routes.toml`**: written only by `add`, under an exclusive `flock` on
+  `$STATE/locks/<sha256 of the checkout path>.lock` (in state, so the lock
+  never dirties the tree); `add` re-reads `routes.toml` *after* taking the
+  lock, applies its change to that fresh content, writes a temp file in the
+  checkout, `fsync`, `rename`. Two concurrent `add`s therefore serialise and
+  both survive. Without the lock the second rename would silently discard the
+  first addition and the final `git diff` would show only the survivor — a
+  loss the diff cannot reveal, which is why "the diff makes it visible" was
+  wrong.
 - **`knowledge/*.jsonl`**: append with `O_APPEND` of one complete line; the
   POSIX guarantee for small appends is enough, and each record carries its
   own `id`.
@@ -463,7 +482,8 @@ and every launch's read-back — and two launches can end at the same moment.
 
 Claude Code's own transcript is the single most valuable truth source the
 current system ignores (Q1). Verified fields per assistant turn:
-`message.model`, `message.usage.{input_tokens,output_tokens,cache_read_input_tokens,cache_creation_input_tokens}`;
+`message.model`, `message.usage.{input_tokens,output_tokens,cache_read_input_tokens,cache_creation_input_tokens}`,
+a per-line `timestamp` (RFC 3339 — what the `this_run` split in §11 rests on);
 session-level `version`; `effort` and `permissionMode` exist as top-level keys
 and are populated when Claude Code sets them (both were null in a `-p` run,
 so they are recorded *when present*). `total_cost_usd` is **never** copied:
@@ -505,7 +525,7 @@ def route_served(ctx, route):
 | `knowledge.typed` | every knowledge record validates against its kind's schema | F13 |
 | `schema.complete` | every field contract lives in the schema; no validator emits a rule the schema lacks (lint) | F14 |
 | `cost.not_copied` | no L2 field is ever sourced from Claude Code's `total_cost_usd` (unit test over the read-back) | F11 |
-| `qualification.current` | the route's last qualification **fingerprint** still matches: `route_config_sha` (the route's own entry in L1, not HEAD — a docs commit must not expire it), `wire_model`, `source_identity` (server version / `owned_by` from the catalog when published), and the Claude Code version; any mismatch → `stale` naming the field (warn, D6) | F10 |
+| `qualification.current` | the route's last qualification **fingerprint** still matches: `effective_route_sha` — the hash of the route's entry **merged with its source's entry** (`base_url`, `auth_env`, `catalog`, inherited `limits`), i.e. the resolved configuration a request actually uses, not HEAD (a docs commit must not expire it) and not the route entry alone (a changed `sources.omlx.base_url` or an inherited limit must) — plus `wire_model`, `source_identity` (server version / `owned_by` from the catalog when published), and the Claude Code version; any mismatch → `stale` naming the field (warn, D6) | F10 |
 
 F3 (the truncated quoted battery) has no predicate: its element is D4 —
 there is no quoted shell string to truncate. F15 is spike S1.
@@ -555,7 +575,7 @@ agent with a file reader.
 | `observations.jsonl` | `{id, ts, route, kind: tokens\|throughput\|quality\|liveness\|cost, values{}, evidence, session}` | `learn`, `qualify`, the launch |
 | `decisions.jsonl` | `{id, ts, decision, rationale, supersedes?, by}` | `learn` |
 | `traps.jsonl` | `{id, ts, trap, mechanism, avoid, evidence, found_by, applies_to[]}` | `learn` |
-| `qualifications.jsonl` | `{id, ts, route, fingerprint{route_config_sha, wire_model, source_identity, claude_code}, gates{name: pass\|fail}, thinking_block_seen, completed, tok_s, concurrency, caching, commit}` — `commit` is provenance only; currency is judged by `fingerprint` (§8) | `qualify` |
+| `qualifications.jsonl` | `{id, ts, route, fingerprint{effective_route_sha, wire_model, source_identity, claude_code}, gates{name: pass\|fail}, thinking_block_seen, completed, tok_s, concurrency, caching, commit}` — `commit` is provenance only; currency is judged by `fingerprint` (§8) | `qualify` |
 | `gate-runs.jsonl` | `{id, ts, commit, result, tests, verifiers, invariants{id: pass\|fail\|skip}, skipped_reasons[], mock_port}` — the durable twin of `last_gate_run` | the gate |
 | `tasks.jsonl` | event-sourced: `{id, ts, task_id, event: created\|handoff\|launched\|completed, …}`; current state is the fold | `learn task …` |
 
@@ -593,12 +613,15 @@ becomes `route.served` at launch. The Orca/dispatcher paragraph in
 
      Threat model, stated plainly: the key is in a file the same Unix user can read, so a model that *deliberately* runs `cat` on that path gets it — exactly as it could run `security find-generic-password` today. What this flow prevents is what rev 2 measured: *accidental* propagation into every Bash child, hook, MCP server and the transcript. Adversarial containment is a separate OS account, as `ARCHITECTURE.md` already says.
    - `ANTHROPIC_DEFAULT_{FABLE,OPUS,SONNET,HAIKU}_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL` — the route's `wire_model` (D7), with `--sonnet` / `--haiku` overrides
-   - `CLAUDE_CODE_MAX_CONTEXT_TOKENS` — `cost_model.context` (§7: `verified` when present, else min(L1 declared, configured, advertised); `context_basis` names which)
+   - `CLAUDE_CODE_MAX_CONTEXT_TOKENS` — `cost_model.context` (§7: `min(L1 declared, verified)` when verified, else `min(L1 declared, configured, advertised)`; the declared cap is never exceeded; `context_basis` names which)
    - `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` only with `--discover` (D8)
    - `CLAUDE_CODE_ATTRIBUTION_HEADER=0` — meaningful with no proxy, where the cache prefix it protects is reachable
    - scrub: **every** source's `auth_env` — including the active one — is removed from the child environment; the launch's own unit test spawns `printenv` and asserts it (`credential.not_in_child_env`)
 3. **The shared-settings routing lint** (`harness.env.clean`) with the current broad denylist.
-4. **Session read-back.** After the child exits, if a session was persisted (§9 session rules), read `$STATE/claude-config/projects/<slug>/<session-id>.jsonl` and record `last_session`: the raw first-turn `usage` and `first_request_input_tokens_total` = `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. This is **not** the harness baseline — the first request carries the user's task, and Anthropic's `input_tokens` excludes cached tokens, so a well-cached session would understate it. The baseline is measured separately by `qualify --baseline` (§7).
+4. **Session read-back.** After the child exits, if a session was persisted (§9 session rules), read `$STATE/claude-config/projects/<slug>/<session-id>.jsonl` and record `last_session` with three keys:
+   - `first_request`: the raw first-turn `usage` and `input_tokens_total` = `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. This is **not** the harness baseline — the first request carries the user's task, and Anthropic's `input_tokens` excludes cached tokens, so a well-cached session would understate it. The baseline is measured separately by `qualify --baseline` (§7).
+   - `this_run` and `session_total`, same shape: `turns`, `usage` summed over every assistant turn (four fields), and `cost_usd` = Σ field × the route's L1 price (never Claude Code's own cost figure — F11). These answer Q1. For a fresh session they are equal. For a resumed or continued session the file holds earlier launches' turns too: `this_run` counts turns whose per-line `timestamp` (a verified transcript field, §7) falls after this launch's start, `session_total` counts the whole file, and `scope_note` says which one the launch added; `status` shows both.
+   - When no session was persisted, `last_session` is `{ "skipped": "<reason>" }` — the observed schema admits this shape alongside the full one.
 5. **Pass-through.** Claude arguments pass unchanged. `--model`, `--settings` and `--fallback-model` are no longer refused (D6); a user `--settings` is merged after the helper file.
 
 Deleted from the binding: the four budget derivations and their
@@ -612,7 +635,7 @@ Every route's `observed.cost_model`:
 
 | field | meaning | origin |
 |---|---|---|
-| `context` | usable input tokens, with `context_basis` = `verified` \| `configured` \| `advertised` naming what it rests on | §7 limits tiers |
+| `context` | usable input tokens = the L1 declared cap bounded by the best observed tier (§7); `context_basis` = `declared` \| `verified` \| `configured` \| `advertised` names which bound won | §7 limits tiers |
 | `harness_baseline_tokens` | tokens Claude Code sends before task content on this route, measured with a fixed minimal prompt and tagged with the Claude Code version (48,312 on `omlx/…Huihui…` at 2.1.263; 37% of 131,072) | `qualify --baseline` |
 | `tok_s` | output tokens per second at short context | `qualify` |
 | `usd_per_mtok` | `{input, output, cache_read, cache_write}`; 0 for local. Cache write is priced separately by every provider that caches (Anthropic: 1.25× input for 5-minute, 2× for 1-hour; OpenRouter passes the provider's rates), so a session's cost is `Σ usage_field × its price` over all four fields | L1 `price` |
@@ -673,7 +696,7 @@ commit series, is verified before the next starts, and records a
 
 | plan | steps | build | delete | verify |
 |---|---|---|---|---|
-| **0** | spec amendment (this rev) | — | — | owner approves rev 4 |
+| **0** | spec amendment (this rev) | — | — | owner approves rev 5 |
 | **A** | 1–3 | `claude_on/` package; `routes.toml` + schema; `sync` → `observed.json`; `status` declared beside observed; invariant registry; the new gate with the mock source; `copy.*`. Runs beside `claude-litellm`. | **nothing** | `status --json` lists the checkout's routes minus the OAuth/xAI ones (D3, recorded); `route.served` fails on a planted dead `wire_model` (the old guard stays until D); every F1–F14 except F3/F11 has a predicate that fails on a reproduction, F11 by unit test; a deliberate skip prints `skip`; `spend.openrouter` exercised for the first time |
 | **B** | 4–5, S2 | `harness.py`: parent-resolved credential file + helper, env injection, spawn + read-back, cost line; direct launch for `omlx` (free lane) then `openrouter`; `qualify --baseline` and `--limits` | **nothing** — the old launcher, its budget/overlay/permission code and the LiteLLM callbacks stay untouched, because `litellm_config.yaml` and the old gate still reference them and the old path must keep working until D | `credential.not_in_child_env` passes (child `printenv` empty) with the key supplied *only* by environment variable and, separately, only by `$STATE/env`; `huihui` launch completes a Read-tool loop; `harness_baseline_tokens` recorded by `qualify --baseline`; six gates direct per packaged OpenRouter route; `qualify` has run its two-turn cache probe on every packaged route and recorded `true` or `false` — never `false` inferred from a missing price; `unknown` remains only where the probe could not run, and that is reported, not hidden; both launchers coexist and `claude-litellm` still launches |
 | **C** | 6 | `knowledge/` + `learn`; seeds; memory-note migration; the skill; `status` shows traps for the action in hand | **nothing** | a peer session answers Q1, Q3–Q6, Q8, Q10 from `status --json` and `knowledge/` alone |
@@ -688,7 +711,7 @@ verifiable on its own and reversible by revert.
 
 | # | answered by |
 |---|---|
-| Q1 | `status` → `routes.*.last_session`, from Claude Code's own transcript |
+| Q1 | `status` → `routes.*.last_session.{this_run, session_total}` — turns, summed usage and `cost_usd` from the route's own price, read from Claude Code's transcript; `first_request` shown beside them |
 | Q2 | moot after Plan D: nothing runs between Claude Code and the source; `copy.*` answers the rest |
 | Q3 | route name `<source>/<model>` + `status` → `routes.*.served` |
 | Q4 | `status` → `last_gate_run` (written only by the gate runner) and `knowledge/gate-runs.jsonl`; `last_check` is shown beside it and never confused with it |
@@ -703,7 +726,6 @@ verifiable on its own and reversible by revert.
 
 - **OpenRouter's disclaimer** (§5, quoted in full). Measured 30/30 and a real session. If it becomes enforcement, the OpenRouter source dies and nothing else changes; there is no translator to fall back to, by design. That is the one bet this architecture makes.
 - **Thinking on local models is uncontrolled from the harness** (D12 ⟲). A future discovered model whose thinking template emits textual `<tool_call>` (as Qwen3.5 did) will launch thinking-on with no per-request switch and only `qualify` to notice. Per-turn thinking cost on the direct wire is unbounded (>6,000 tokens once). The mitigations are the source's own defaults and `CLAUDE_CODE_MAX_OUTPUT_TOKENS`; `qualify` reports it.
-- **D9 chain deletion is a default.** If the owner wants the integrity chain, Plan D keeps it and `copy.single` gains a content hash.
 - **Auto-mode classifier residual** (D7 ⟲): a server-supplied feature config may name a model before the SONNET slot is consulted; unverifiable offline.
 - **`omlx-tp2`, `omlx@morty`, exo are unmeasured** (S3–S5).
 - **The GPT routes packaged on 2026-09-06** are deleted in Plan D; `00b3fa5` and this reversal are both recorded.
