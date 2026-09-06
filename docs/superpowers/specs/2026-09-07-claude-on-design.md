@@ -1,14 +1,28 @@
 # claude-on — an agent-operated model-source layer for Claude Code
 
-Status: DRAFT rev 3 for owner review · 2026-09-07 · reinstates the conclusion
+Status: DRAFT rev 4 for owner review · 2026-09-07 · reinstates the conclusion
 of the 2026-08-20 verdict "Does claude-litellm Need LiteLLM?" (no), and on
 landing replaces `docs/ARCHITECTURE.md`.
 
-Rev 3 incorporates an adversarial review (4 refutations, 7 claim
+Rev 3 incorporated an adversarial review (4 refutations, 7 claim
 verifications, 1 completeness critique; workflow `wf_05884356-4c8`). Every
-decision below that the review refuted *as written* is marked ⟲ with what
-changed. Three of the review's findings were measurements that overturned
-claims in rev 2; they are stated plainly in §1.1.
+decision the review refuted *as written* is marked ⟲ with what changed.
+Three of its findings were measurements that overturned claims in rev 2;
+they are stated plainly in §1.1.
+
+Rev 4 incorporates the owner's review of rev 3 (seven findings, three quick
+fixes; the owner verified TOML parsing, the installed CLI's options, and
+environment inheritance with synthetic keys). Two were P1: the helper-based
+credential binding could not see a key supplied only by environment
+variable, because the helper inherits the *scrubbed* child environment
+(D2 ⟲⟲, §11); and Plan B deleted callbacks the still-running old path
+references (§14 — Plans A–C are now purely additive). Five were the same
+finding in different places — rev 3 was still treating a configured or
+declared value as an applied one: settings-file limits (§7 `configured` /
+`advertised` / `verified`), `status --check` writing the gate record
+(`last_check` / `last_gate_run`), a two-file "atomic" write (§6, §7.1),
+the first request's `input_tokens` as the harness baseline (§7, §12), and
+qualification currency by HEAD (§8 fingerprint).
 
 ## 0. One paragraph
 
@@ -108,7 +122,11 @@ was echoed into the on-disk transcript. Today only the worthless local
 LiteLLM master key reaches the child; the OpenRouter key is scrubbed. The fix
 is also measured: `apiKeyHelper` in a per-launch 0600 settings file puts the
 key on the wire (`authorization: Bearer …`, `x-api-key: …` observed on a local
-listener) while `env | grep` in the child finds nothing. See D2 ⟲, §11.
+listener) while `env | grep` in the child finds nothing. That measurement used the
+rev-3 helper form; the owner's rev-4 review found its environment-only case
+broken (the helper inherits the scrubbed environment), so the wire path is
+the same but the key now travels through a parent-written file. See D2 ⟲⟲,
+§11.
 
 Ten questions an agent in the driver's seat cannot answer today. They are
 the acceptance test for §7 — each must be answerable from `status`:
@@ -161,8 +179,8 @@ Code. It is wrong about one thing and silent about two:
   setting that process's environment before it starts; no code running inside
   the process can do it. That is the one irreducible reason `claude-on` is a
   command.
-- A skill improvises; it does not accumulate. The route table with measured
-  limits, the observed liveness and cost, and the knowledge files are what let
+- A skill improvises; it does not accumulate. The route table with its limit
+  tiers, the observed liveness and cost, and the knowledge files are what let
   the *next* session start from what the last one learned instead of
   re-deriving it. That is the accretive property, and a per-session skill
   cannot carry it.
@@ -177,12 +195,13 @@ feature of `claude-on`; it is a property of a source's `base_url` (§5).
 ## 3. Decisions
 
 Settled with the owner on 2026-09-06/07 unless marked *default*. ⟲ marks a
-decision amended by the rev-3 review.
+decision amended by the rev-3 adversarial review; ⟲⟲ one amended again by
+the owner's rev-4 review.
 
 | # | decision | rationale |
 |---|---|---|
 | D1 | **Rename to `claude-on`.** Binary, repo, config dir, state dir. No compatibility shim beyond a one-time `mv` note. | The current name encodes an implementation. The previous rename's compatibility code is 1,100 vestigial lines; do it once, cleanly. `claude-on kimi` reads as English and the commonest action is the shortest. |
-| D2 ⟲ | **No proxy. Nothing runs between Claude Code and the source**, and **no source credential is ever placed in the child environment.** The key reaches the wire through `apiKeyHelper` in a per-launch 0600 settings file; every source's `auth_env` — including the active one — is scrubbed from the child. | Every surviving source speaks `/v1/messages` natively (§5). Routing through LiteLLM cost prompt caching on every route, put 13 monkeypatches in every path and pinned a version across 14 files. Rev 2's binding leaked the real key to the model (§1.1c); the helper binding was measured to work in `-p` and keeps ~10 lines of the settings overlay rev 2 had deleted. |
+| D2 ⟲⟲ | **No proxy. Nothing runs between Claude Code and the source**, and **no source credential is ever placed in the child environment.** The *launcher* resolves the key (environment, else `$STATE/env`), writes it to a per-launch 0600 file under `$STATE/run/<launch-id>/`, and the `apiKeyHelper` in the per-launch settings file reads that file; every source's `auth_env` — including the active one — is scrubbed from the child. §11 has the full flow and cleanup. | Every surviving source speaks `/v1/messages` natively (§5). Routing through LiteLLM cost prompt caching on every route, put 13 monkeypatches in every path and pinned a version across 14 files. Rev 2's binding leaked the real key to the model (§1.1c). Rev 3's helper read the key from the environment — but the helper runs as a child of Claude Code and inherits the *scrubbed* environment, so a key supplied only by environment variable never reached it, and "environment wins over file" could not hold. The parent must choose and hand over the key. |
 | D3 | **The ChatGPT OAuth lane is dropped.** The four `GPT-*-chatgpt-oauth` routes packaged on 2026-09-06 are deleted in Plan D. | Owner, 2026-09-07: "gpt는 안하면 그만 … 실제로 굳이 필요없었는데 litellm으로 붙일 수 있다고 하니까 했던거." It was the only source needing a translator. GPT is used through Codex. This reverses 2026-09-06, which reversed 2026-08-20; all three turns and their reasons go into `decisions.jsonl`. |
 | D4 ⟲ | **One implementation language, zero dependencies.** One package, `claude_on/`, Python ≥ 3.11 from `PATH`, standard library only. Declarations are TOML (`tomllib`). zsh survives as a ≤20-line shim. | An agent modifying the system should hold one language. `python3` on this machine is 3.14.7 and `import yaml` fails there today — a dependency is F7's territory. TOML removes it. |
 | D5 | **One home per fact.** Versions are read from the runtime. Route names live only in `routes.toml`; tests and docs derive from it. Constants live once. | R3. The "replication as drift guard" pattern existed only because there were four implementations. |
@@ -193,7 +212,7 @@ decision amended by the rev-3 review.
 | D10 | **Route names are `<source>/<model>`.** Optional short aliases live in `routes.toml`. | The source is then visible in the name (half of Q3 by convention); retires the `-openrouter`/`-omlx` suffix idiom. |
 | D11 | **Strangler migration**, decomposed into five plans (§14). | `55e17e3` deleted direct mode *and its rationale* in one commit; irreversible big steps have failed here twice. |
 | D12 ⟲ | **Thinking on a local model is whatever the source's template does; `claude-on` measures and reports its cost and does not pretend to control it.** There is no `thinking:` field in `routes.toml`. `qualify` records whether a `thinking` block appeared and whether the answer completed. The controls that exist are the source's own server/template default and `CLAUDE_CODE_MAX_OUTPUT_TOKENS`. | §1.1a. Rev 2's "cost hint passed through by the launcher" was unimplementable: no per-request field reaches a non-Anthropic model. The cost is real (1.9–3.3K thinking tokens on a five-sentence task; >6,000 on the 2026-08-23 run) and is what the cost model shows. |
-| D13 | **Machine-written state lives in one place, outside git.** `$XDG_STATE_HOME/claude-on/` (default `~/.local/state/claude-on/`) holds `routes.discovered.toml`, `observed.json`, the isolated Claude config dir, and the 0600 `env` file. `knowledge/` and `routes.toml` live in the checkout and are git-tracked. `CLAUDE_ON_STATE` overrides the state root for scratch runs. | The review's day-one gap: rev 2 never said where the three machine-written files live or which copy owns them. With D9 there is one copy; with this rule there is one state root. `sync` never dirties a tracked file; `learn` and `add` produce diffs the agent can commit. |
+| D13 | **Machine-written state lives in one place, outside git.** `$XDG_STATE_HOME/claude-on/` (default `~/.local/state/claude-on/`) holds `routes.discovered.toml`, `observed.json` (+ `observed.lock`), `run/<launch-id>/` (per-launch files under a launcher-minted id, removed on exit — §7.1), the isolated Claude config dir, and the 0600 `env` file. `knowledge/` and `routes.toml` live in the checkout and are git-tracked. `CLAUDE_ON_STATE` overrides the state root for scratch runs. Storage rules: §7.1. | The review's day-one gap: rev 2 never said where the three machine-written files live or which copy owns them. With D9 there is one copy; with this rule there is one state root. `sync` never dirties a tracked file; `learn` and `add` produce diffs the agent can commit. |
 
 ## 4. The tower
 
@@ -205,7 +224,7 @@ below it. `X` in the current system — 3,969 lines that cut across every layer
 L5  KNOWLEDGE   knowledge/*.jsonl              typed, git-tracked, stable ids       read by: status, peers, skill
 L4  ACTIONS     claude-on <verb>               7 commands, idempotent, --json        read: L1-L3  write: L2, L5
 L3  INVARIANTS  claude_on/invariants.py        named predicates over a context       read: L1, L2, tree, home
-L2  TRUTH       $STATE/observed.json           per-route measurements, timestamped   written by: sync, launch, qualify
+L2  TRUTH       $STATE/observed.json           per-route measurements, timestamped   written by: sync, launch, qualify, status --check, the gate
 L1  ROUTES      routes.toml + $STATE/routes.discovered.toml   the only declarations
 L0  SOURCES     openrouter · omlx · omlx@<tailnet-host> · omlx-tp2 · exo
 ────────────────────────────────────────────────────────────────────────────────────
@@ -224,7 +243,7 @@ does not speak `/v1/messages` is not a source of this system (D2, D3).
 | source | endpoint | auth | catalog | discovery | measured |
 |---|---|---|---|---|---|
 | `openrouter` | `https://openrouter.ai/api` | `OPENROUTER_API_KEY` via `apiKeyHelper` | `GET /api/v1/models` (limits, `supported_parameters`, pricing) | on request (`add`) | 30/30 gates direct 2026-08-20; real 2-turn session 2026-09-07 with `cache_read_input_tokens` 21,440 — but two standalone identical requests cached 0, so caching is measured per route, not assumed |
-| `omlx` | `http://127.0.0.1:8000` — `/v1/messages`, `/v1/messages/count_tokens` (200, `{"input_tokens":53}`) | none | `GET /v1/models` (ids, `max_model_len`); server caps in `~/.omlx/settings.json` `sampling.max_context_window` 131072 / `max_tokens` 32768 | automatic on `sync` | 6/6 gates direct, thinking on, 2026-09-07; real session `cache_read` 20,480 |
+| `omlx` | `http://127.0.0.1:8000` — `/v1/messages`, `/v1/messages/count_tokens` (200, `{"input_tokens":53}`) | none | `GET /v1/models` (ids, `max_model_len`); configured caps (settings file, `confidence = "configured"`) in `~/.omlx/settings.json` `sampling.max_context_window` 131072 / `max_tokens` 32768 | automatic on `sync` | 6/6 gates direct, thinking on, 2026-09-07; real session `cache_read` 20,480 |
 | `omlx@<host>` | `http://<tailnet-host>:8000` — the same oMLX on another tailnet machine (today: `mortys-mac-studio`, 100.77.98.96, MagicDNS) | none | same | automatic on `sync` when reachable | **not yet** — morty has an oMLX install per the cluster docs; S5 |
 | `omlx-tp2` | `http://127.0.0.1:8003` — oMLX serving one model tensor-parallel across rick↔morty over Thunderbolt-5 RDMA | none | `GET /v1/models` | automatic on `sync` | **not reachable on 2026-09-07** from any rick address; the cluster orchestrator's report of a live TP2 endpoint was stale at review time. S4 |
 | `exo` | `http://127.0.0.1:52415` — `/v1/messages` per README | none | `GET /v1/models` | automatic on `sync` when reachable | **not yet** — S3; §5.1 |
@@ -282,9 +301,12 @@ catalog  = "https://openrouter.ai/api/v1/models"        # absolute: used verbati
 base_url = "http://127.0.0.1:8000"
 catalog  = "/v1/models"                                  # relative: urljoin(base_url, catalog)
 discover = true
-[sources.omlx.limits]
-input = 131072; output = 32768
-confidence = "measured"; source = "~/.omlx/settings.json sampling.max_context_window / sampling.max_tokens"
+
+[sources.omlx.limits]                                    # applies to every discovered omlx route
+input      = 131072
+output     = 32768
+confidence = "configured"                                # what the settings file says, not what the server applied
+source     = "~/.omlx/settings.json sampling.max_context_window / sampling.max_tokens"
 
 [sources."omlx@morty"]
 base_url = "http://mortys-mac-studio:8000"
@@ -303,14 +325,26 @@ discover = true
 
 [routes."openrouter/z-ai/glm-5.2"]
 wire_model = "z-ai/glm-5.2"
-aliases = ["glm"]
+aliases    = ["glm"]
+
 [routes."openrouter/z-ai/glm-5.2".limits]
-input = 1048576; output = 32768; confidence = "provider"; source = "openrouter.top_provider"
+input = 1048576
+output = 32768
+confidence = "provider"
+source = "openrouter.top_provider"
+
 [routes."openrouter/z-ai/glm-5.2".reasoning]
-efforts = ["low", "medium", "high"]; provider_efforts = ["xhigh", "high"]
-confidence = "provider"; source = "openrouter.supported_parameters"
+efforts = ["low", "medium", "high"]
+provider_efforts = ["xhigh", "high"]
+confidence = "provider"
+source = "openrouter.supported_parameters"
+
 [routes."openrouter/z-ai/glm-5.2".price]
-input_usd_per_mtok = 0.60; output_usd_per_mtok = 2.20; cache_read_usd_per_mtok = 0.06; source = "openrouter.pricing"
+input_usd_per_mtok = 0.60
+output_usd_per_mtok = 2.20
+cache_read_usd_per_mtok = 0.06
+cache_write_usd_per_mtok = 0.75
+source = "openrouter.pricing"
 
 [routes."omlx/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"]
 wire_model = "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"
@@ -321,17 +355,20 @@ Rules the schema enforces — and the schema (`claude_on/schemas/routes.py`)
 is the only place they are stated:
 
 - Route name = `<source>/<model>`; the source must exist; `wire_model` defaults to the part after the first `/`.
-- Every numeric limit carries `confidence = "provider" | "owned-policy" | "measured"` and a `source`. `measured` values are written by `sync`/`qualify` into L2 and copied into L1 only by `add`.
+- Every numeric limit carries a `confidence` and a `source`. In L1 the allowed confidences are `provider` (the provider's published figure), `owned-policy` (a cap we chose), and `configured` (read from a source's settings file — what the file says, not what the server applied). `advertised` and `verified` are L2 tiers written only by `sync`/`qualify` (§7); `add` may copy an `advertised` value into L1 as `provider`, never as `verified`.
 - `reasoning.provider_efforts` may be present without `efforts` (advertised but not selectable). No ceiling field: with no translator there is no transport ceiling.
-- A packaged route in a `discover = true` source is deduped against discovered ids **by `wire_model`**. `add omlx/<id>` writes the packaged entry and removes the discovered duplicate in one atomic write (the F4 path). A packaged route whose `wire_model` the source no longer serves is reported `orphaned`, never deleted.
+- Duplicates between the two files are resolved **at read time, packaged wins**, keyed by `(source, wire_model)`. `add omlx/<id>` therefore writes only `routes.toml` (one file, one atomic temp+rename); the discovered twin is shadowed immediately and dropped from `routes.discovered.toml` at the next `sync`. No write ever spans the two files — they may sit on different filesystems, and a two-file "atomic" update is not one (the F4 path, done honestly). A packaged route whose `wire_model` the source no longer serves is reported `orphaned`, never deleted.
 - Source-level `limits` apply to every discovered route of that source. No globs.
 - A relative `catalog` is `urljoin(base_url, catalog)`; an absolute one is used verbatim.
 
 ## 7. L2 — Truth: `$STATE/observed.json`
 
 What has been measured, by what, when. Written only by actions; validated
-against `claude_on/schemas/observed.py`; every `checked` is RFC 3339 UTC;
-an absent field means never measured. `status` prints it beside L1.
+against `claude_on/schemas/observed.py`; every `checked` is RFC 3339 UTC.
+Never-measured is always explicit, never implied by absence: a numeric or
+boolean field that has not been measured is `null`; `caching` is the string
+`"unknown"` because it is three-valued (`true` / `false` / `unknown`). The
+schema rejects a missing key. `status` prints it beside L1.
 
 ```json
 {
@@ -341,8 +378,8 @@ an absent field means never measured. `status` prints it beside L1.
   "sources": {
     "openrouter": { "reachable": true, "checked": "2026-09-07T00:12:03Z", "catalog_count": 430,
                     "catalog": { "z-ai/glm-5.2": { "context_length": 1048576, "pricing": { "prompt": 0.0000006 } } } },
-    "omlx":       { "reachable": true, "checked": "2026-09-07T00:12:03Z", "catalog": ["root4k--Huihui…"],
-                    "server_limits": { "input": 131072, "output": 32768 } },
+    "omlx":       { "reachable": true, "checked": "2026-09-07T00:12:03Z", "catalog": ["root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"],
+                    "configured_limits": { "input": 131072, "output": 32768, "source": "~/.omlx/settings.json", "read_at": "2026-09-07T00:12:03Z" } },
     "omlx@morty": { "reachable": false, "checked": "2026-09-07T00:12:04Z", "error": "connect refused mortys-mac-studio:8000" },
     "omlx-tp2":   { "reachable": false, "checked": "2026-09-07T00:12:04Z", "error": "connect refused 127.0.0.1:8003" },
     "exo":        { "reachable": false, "checked": "2026-09-07T00:12:04Z", "error": "connect refused 127.0.0.1:52415" }
@@ -350,18 +387,27 @@ an absent field means never measured. `status` prints it beside L1.
   "routes": {
     "omlx/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp": {
       "served": true, "checked": "2026-09-07T00:12:03Z",
-      "limits_measured": { "input": 131072, "model_max": 262144, "output": 32768, "checked": "2026-09-07T00:12:03Z" },
-      "cost_model": { "context": 131072, "harness_baseline_tokens": 48312, "tok_s": 63,
-                      "usd_per_mtok": { "input": 0, "output": 0 }, "caching": true, "concurrency": 1,
-                      "thinking": { "observed": true, "tokens_on_five_sentence_task": 2600 }, "checked": "2026-09-07T00:40:00Z" },
-      "last_qualification": { "commit": "1eeb9ed", "pass": true, "gates": 6, "thinking_block_seen": true,
-                              "completed": true, "at": "2026-09-07T00:40:00Z" },
-      "last_session": { "id": "9026404c…", "input_tokens": 48312, "output_tokens": 1, "duration_ms": 138845,
-                        "effort": "xhigh", "permission_mode": null, "claude_code": "2.1.263", "at": "2026-09-06T14:30:00Z" }
+      "limits": {
+        "input":  { "configured": 131072, "advertised": 262144, "verified": null, "checked": "2026-09-07T00:12:03Z" },
+        "output": { "configured": 32768,  "advertised": null,   "verified": null, "checked": "2026-09-07T00:12:03Z" }
+      },
+      "cost_model": { "context": 131072, "context_basis": "configured",
+                      "harness_baseline_tokens": { "value": 48312, "measured_by": "qualify --baseline", "claude_code": "2.1.263", "at": "2026-09-07T00:41:10Z" },
+                      "tok_s": 63, "usd_per_mtok": { "input": 0, "output": 0, "cache_read": 0, "cache_write": 0 },
+                      "caching": true, "concurrency": 1,
+                      "thinking": { "observed": true, "tokens_on_probe": 2600 }, "checked": "2026-09-07T00:40:00Z" },
+      "last_qualification": { "pass": true, "gates": 6, "thinking_block_seen": true, "completed": true, "at": "2026-09-07T00:40:00Z",
+                              "fingerprint": { "route_config_sha": "3f9a1c2e", "wire_model": "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp",
+                                               "source_identity": "omlx 0.6.4 / owned_by=omlx", "claude_code": "2.1.263" } },
+      "last_session": { "id": "9026404c-f7ea-4d3f-96cf-4f05bd2cd358", "at": "2026-09-06T14:30:00Z",
+                        "first_request_input_tokens_total": 48312,
+                        "usage": { "input_tokens": 48312, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 1 },
+                        "duration_ms": 138845, "effort": "xhigh", "permission_mode": null, "claude_code": "2.1.263" }
     }
   },
-  "gate":  { "at": "2026-09-07T00:50:00Z", "commit": "1eeb9ed", "result": "pass",
-             "skipped": ["source.reachable:omlx@morty", "source.reachable:omlx-tp2", "source.reachable:exo"], "mock_port": 51873 },
+  "last_check":    { "at": "2026-09-07T01:02:00Z", "commit": "1eeb9ed", "result": "pass", "skipped": ["source.reachable:omlx-tp2"] },
+  "last_gate_run": { "at": "2026-09-07T00:50:00Z", "commit": "1eeb9ed", "result": "pass", "tests": 31, "verifiers": 3,
+                     "skipped": ["source.reachable:omlx@morty", "source.reachable:omlx-tp2", "source.reachable:exo"], "mock_port": 51873 },
   "spend": { "openrouter": { "usd_used": 4.21, "usd_limit": null, "source": "openrouter GET /api/v1/auth/key", "checked": "2026-09-07T00:12:03Z" } }
 }
 ```
@@ -371,17 +417,49 @@ How each field is measured:
 | field | measured by | cost |
 |---|---|---|
 | `sources.*.reachable`, `catalog` | `sync`: `GET catalog`. For OpenRouter only entries for declared routes plus `catalog_count` are kept | free |
-| `sources.omlx*.server_limits` | `sync`: read the source host's `~/.omlx/settings.json` when local — the origin of the "131072 owned-policy" number | free |
+| `sources.omlx*.configured_limits` | `sync`: read the source host's `~/.omlx/settings.json` when local — what the file says, not what the server applied; the same numbers appear per route as `limits.*.configured` | free |
 | `routes.*.served` | `sync`: `wire_model ∈ catalog` — the check that would have caught F1 the day it happened | free |
-| `routes.*.limits_measured` | `sync`: catalog `max_model_len` / `context_length`, capped by server limits | free |
+| `routes.*.limits.*.configured` | `sync`: the source's settings file (local only) | free |
+| `routes.*.limits.*.advertised` | `sync`: catalog `max_model_len` / `context_length` — what the running server *says* | free |
+| `routes.*.limits.*.verified` | `qualify --limits`: a request sized just under and just over the smaller of configured/advertised; the boundary the server actually enforces. Absent until run. **Configured and advertised are not applied limits** — a settings edit the server has not reloaded, or a second endpoint started with other settings, differ from what a request meets; recording either as "measured" is R1 again | local free; cloud ~ one long prompt |
+| `cost_model.context`, `context_basis` | `verified` when present, else min(L1 declared, configured, advertised) — the declared `owned-policy` cap participates so an operator can still cap below what a server allows — with `context_basis` naming which bound won | — |
 | `cost_model.tok_s`, `concurrency` | `qualify`: short timed completion, then two concurrent | local free; cloud ~$0.001 |
-| `cost_model.caching` | `qualify`: two-turn probe reading `cache_read_input_tokens`; on a route whose catalog pricing lists no cache-read price the answer is `false` and that is the recorded truth | as above |
-| `cost_model.thinking` | `qualify`: `thinking` block present in the response? `stop_reason == end_turn` and answer non-truncated? thinking tokens counted | as above |
-| `cost_model.harness_baseline_tokens`, `routes.*.last_session` | the launch: read from Claude Code's session `.jsonl` after exit (§11) — recorded on every launch, latest wins | free |
-| `routes.*.last_qualification` | `qualify`: the six fidelity gates against the route's real endpoint | cloud ~$0.01 |
-| `gate.*` | the gate writes it on every run (Q4) | — |
+| `cost_model.caching` | `qualify`: two-turn probe reading `cache_read_input_tokens` → `true` / `false`; **`unknown` until the probe has run** — a missing price is not a measurement | as above |
+| `cost_model.thinking` | `qualify`: `thinking` block present? `stop_reason == end_turn` and answer non-truncated? thinking tokens counted | as above |
+| `cost_model.harness_baseline_tokens` | `qualify --baseline`: a fixed minimal prompt (`-p 'Reply with exactly: OK'`) on this route, first request's `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`, with the Claude Code version. **Not** taken from ordinary sessions — their first request carries the task, and `input_tokens` excludes cache tokens, so a well-cached session would report a *smaller* baseline | free locally; ~48K input tokens on cloud |
+| `routes.*.last_session` | the launch: read from Claude Code's session `.jsonl` after exit (§11) — `first_request_input_tokens_total` (all three input fields summed) and the raw `usage`; recorded on every launch that persisted a session, latest wins | free |
+| `routes.*.last_qualification` | `qualify`: the six fidelity gates against the route's real endpoint, plus the **fingerprint** it was valid for (§8 `qualification.current`) | cloud ~$0.01 |
+| `last_check` | `status --check`: invariants only | — |
+| `last_gate_run` | the gate runner only: unit tests + verifiers + invariants. `status --check` never writes it, so a failed gate is never masked by a later invariant-only pass (Q4) | — |
 | `spend.openrouter` | `sync`: `GET /api/v1/auth/key` — documented by OpenRouter to return usage and limit; **not yet exercised here** (the key is in Keychain, which the verifier could not read); confirmed in Plan A | free |
 | `copy.*` | every command: `__file__`, `git status --porcelain`, the shim's target, `sys.executable` | free |
+
+### 7.1 Storage rules
+
+Several processes write state: `sync`, `qualify`, `status --check`, the gate,
+and every launch's read-back — and two launches can end at the same moment.
+
+- **`observed.json`**: read-modify-write under an exclusive `fcntl.flock` on
+  `$STATE/observed.lock`, held for the whole update; the writer merges its
+  fields into the *freshly re-read* document (never a copy loaded earlier),
+  writes `observed.json.tmp.<pid>`, `fsync`, `rename`. A reader ignores `.tmp.*`
+  files. The lock is advisory and dies with the process, so a crash leaves at
+  worst a stale `.tmp.*`, which the next writer deletes.
+- **`routes.discovered.toml`**: written only by `sync`, same temp+rename, under
+  the same lock (it is state, and `sync` also writes `observed.json`).
+- **`routes.toml`**: written only by `add`, temp+rename in the checkout; it is
+  git-tracked, so the agent sees the diff. No lock — two concurrent `add`s are
+  a user error the diff makes visible.
+- **`knowledge/*.jsonl`**: append with `O_APPEND` of one complete line; the
+  POSIX guarantee for small appends is enough, and each record carries its
+  own `id`.
+- **`$STATE/run/<launch-id>/`**: created by a launch under a **launcher-chosen
+  `launch-id`** (a ULID minted before spawn — the session id is *not* used
+  as the name because under `--resume`/`--continue` the launcher does not
+  know it until Claude Code exits; the session id, once known, is recorded
+  inside the directory), removed when its child exits; a launch first sweeps
+  any `run/*` directory whose recorded pid is dead (crash recovery, and the
+  credential file goes with it).
 
 Claude Code's own transcript is the single most valuable truth source the
 current system ignores (Q1). Verified fields per assistant turn:
@@ -415,9 +493,9 @@ def route_served(ctx, route):
 | id | statement | catches |
 |---|---|---|
 | `route.served` | every route's `wire_model` is in its source's live catalog | F1 |
-| `route.unique` | no two routes share a name; discovered ids dedup against packaged by `wire_model` | F4 |
-| `source.limits.applied` | every discovered route of a source carries the source limits — verified by reading the route | F2, F12 |
-| `limits.declared_vs_measured` | declared input ≤ measured (server cap, model max); declared > measured fails | R1 |
+| `route.unique` | no two routes share a name; discovered routes dedup against packaged by `(source, wire_model)` at read time | F4 |
+| `source.limits.propagated` | every discovered route of a source carries the source limits — checked by reading the route (propagation only; whether the server applies them is the `verified` tier) | F2, F12 |
+| `limits.declared_vs_observed` | declared input ≤ `verified` when present, else ≤ min(configured, advertised) and the result is reported `unverified`; declared > the bound fails | R1 |
 | `copy.single` | the shim resolves to this checkout and the tree is clean (`dirty` is reported, not failed) | F7, F8, R2 |
 | `credential.not_in_child_env` | a launched child's environment contains no source `auth_env` value (asserted by a unit test that spawns `printenv`) | §1.1c |
 | `harness.env.clean` | `~/.claude/settings.json` sets none of the routing denylist — the **current broad list** (`ANTHROPIC_*`, `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_MAX_*`, `*_PROXY`, `apiKeyHelper`, `model`), because a shared `env` block measurably overrides the launcher's process env | (kept; rev 2 had narrowed it to three keys) |
@@ -427,7 +505,7 @@ def route_served(ctx, route):
 | `knowledge.typed` | every knowledge record validates against its kind's schema | F13 |
 | `schema.complete` | every field contract lives in the schema; no validator emits a rule the schema lacks (lint) | F14 |
 | `cost.not_copied` | no L2 field is ever sourced from Claude Code's `total_cost_usd` (unit test over the read-back) | F11 |
-| `qualification.current` | a route's last qualification commit == HEAD, else `stale` (warn, D6) | F10 |
+| `qualification.current` | the route's last qualification **fingerprint** still matches: `route_config_sha` (the route's own entry in L1, not HEAD — a docs commit must not expire it), `wire_model`, `source_identity` (server version / `owned_by` from the catalog when published), and the Claude Code version; any mismatch → `stale` naming the field (warn, D6) | F10 |
 
 F3 (the truncated quoted battery) has no predicate: its element is D4 —
 there is no quoted shell string to truncate. F15 is spike S1.
@@ -436,8 +514,8 @@ Invariants replace: `check.zsh`'s battery, the seven `doctor` sub-batteries,
 the Ruby YAML validator, and the three "is the string present in the YAML"
 checks. The gate becomes: unit tests (including an in-process mock
 `/v1/messages` source on an ephemeral port for harness and sync tests), each
-verifier as a process, every invariant, then `gate.*` to L2 and a record to
-`knowledge/gate-runs.jsonl`.
+verifier as a process, every invariant, then `last_gate_run` to L2 and a
+record to `knowledge/gate-runs.jsonl`.
 
 ## 9. L4 — Actions
 
@@ -447,11 +525,11 @@ command prints `copy.*`.
 
 | command | does | reads | writes | invariants first |
 |---|---|---|---|---|
-| `claude-on <route\|alias> [claude args…]` | bind Claude Code to the route and **spawn** it as a child (inherited stdio, SIGINT/SIGTERM forwarded, exit status propagated, `--session-id <uuid>` passed); after exit, read that transcript and record the session summary | L1 L2 | L2 | `route.served` (re-probed with one ≤2 s GET; unreachable → skip + warning, launch proceeds — D6), `harness.env.clean`, `credential.not_in_child_env` |
-| `claude-on status [--check]` | print L1 beside L2 and the last N observations and applicable traps for the selected route; with `--check`, evaluate every invariant | L1 L2 L5 | L2 (`gate` if `--check`) | all |
-| `claude-on sync` | probe every source; refresh catalogs, served flags, measured limits, spend; rewrite `routes.discovered.toml`; report orphans | L0 L1 | `$STATE/routes.discovered.toml`, L2 | `route.unique` after write |
-| `claude-on add <source>/<model> [--alias a]` | declare a packaged route in `routes.toml`; for OpenRouter fill limits, efforts and price from the catalog with `confidence = "provider"`; remove the discovered duplicate atomically | L0 L1 | `routes.toml` | `route.served`, `route.unique` |
-| `claude-on qualify <route>` | six fidelity gates + throughput / concurrency / caching / thinking probes | L1 L2 | L2 L5 (`qualifications.jsonl`) | `route.served` |
+| `claude-on <route\|alias> [claude args…]` | bind Claude Code to the route and **spawn** it as a child (inherited stdio, SIGINT/SIGTERM forwarded, exit status propagated); after exit, read the session transcript when one exists and record the session summary. Session rules: the launcher passes `--session-id <uuid>` unless the user passed `--session-id` (theirs is used) or `--resume`/`--continue` (the resumed session's file is read); if the user passed `--no-session-persistence` there is no transcript and `last_session` is recorded as `{ "skipped": "no-session-persistence" }` — read-back is best-effort, never a reason to refuse arguments | L1 L2 | L2 | `route.served` (re-probed with one ≤2 s GET; unreachable → skip + warning, launch proceeds — D6), `harness.env.clean`, `credential.not_in_child_env` |
+| `claude-on status [--check]` | print L1 beside L2 and the last N observations and applicable traps for the selected route; with `--check`, evaluate every invariant and write **`last_check`** — never `last_gate_run`, which only the gate runner writes | L1 L2 L5 | L2 (`last_check` if `--check`) | all |
+| `claude-on sync` | probe every source; refresh catalogs, served flags, `configured` and `advertised` limits (never `verified` — that is `qualify --limits`), spend; rewrite `routes.discovered.toml`; report orphans | L0 L1 | `$STATE/routes.discovered.toml`, L2 | `route.unique` after write |
+| `claude-on add <source>/<model> [--alias a]` | declare a packaged route in `routes.toml`; for OpenRouter fill limits, efforts and price from the catalog with `confidence = "provider"`; a discovered twin is shadowed at read time (packaged wins, §6) and dropped by the next `sync` | L0 L1 | `routes.toml` | `route.served`, `route.unique` |
+| `claude-on qualify <route> [--baseline] [--limits]` | six fidelity gates + throughput / concurrency / caching / thinking probes, recorded with the fingerprint (§8); `--baseline` measures `harness_baseline_tokens` with the fixed minimal prompt; `--limits` finds the enforced input boundary (`verified`) | L1 L2 | L2 L5 (`qualifications.jsonl`) | `route.served` |
 | `claude-on learn <kind> --json '<record>'` (or stdin) | validate and append to `knowledge/<kind>.jsonl`; assigns `id = <kind>-<ULID>` and `ts`; validates `supersedes` | — | L5 | `knowledge.typed` |
 | `claude-on install` | link the shim, create the state root, check `python3 ≥ 3.11`, record `copy.*` | checkout | shim, state | `copy.single` |
 
@@ -477,8 +555,8 @@ agent with a file reader.
 | `observations.jsonl` | `{id, ts, route, kind: tokens\|throughput\|quality\|liveness\|cost, values{}, evidence, session}` | `learn`, `qualify`, the launch |
 | `decisions.jsonl` | `{id, ts, decision, rationale, supersedes?, by}` | `learn` |
 | `traps.jsonl` | `{id, ts, trap, mechanism, avoid, evidence, found_by, applies_to[]}` | `learn` |
-| `qualifications.jsonl` | `{id, ts, route, commit, gates{name: pass\|fail}, thinking_block_seen, completed, tok_s, concurrency, caching}` | `qualify` |
-| `gate-runs.jsonl` | `{id, ts, commit, result, invariants{id: pass\|fail\|skip}, skipped_reasons[], mock_port}` | the gate |
+| `qualifications.jsonl` | `{id, ts, route, fingerprint{route_config_sha, wire_model, source_identity, claude_code}, gates{name: pass\|fail}, thinking_block_seen, completed, tok_s, concurrency, caching, commit}` — `commit` is provenance only; currency is judged by `fingerprint` (§8) | `qualify` |
+| `gate-runs.jsonl` | `{id, ts, commit, result, tests, verifiers, invariants{id: pass\|fail\|skip}, skipped_reasons[], mock_port}` — the durable twin of `last_gate_run` | the gate |
 | `tasks.jsonl` | event-sourced: `{id, ts, task_id, event: created\|handoff\|launched\|completed, …}`; current state is the fold | `learn task …` |
 
 Seed content on landing: the tokenizer-vs-template observation, the
@@ -507,14 +585,20 @@ becomes `route.served` at launch. The Orca/dispatcher paragraph in
    (required by `apiKeyHelper`; measured to work in `-p`).
 2. **Env injection**, computed from the route:
    - `ANTHROPIC_BASE_URL` — the source's `base_url`
-   - `ANTHROPIC_API_KEY=""`; `ANTHROPIC_AUTH_TOKEN` is **never** the source key. For a source with `auth_env` the key travels through `apiKeyHelper` in a per-launch, 0600, `mktemp`'d `--settings` file whose helper prints the key from `$STATE/env` or the environment. For a keyless source `ANTHROPIC_AUTH_TOKEN=claude-on` (a fixed non-empty placeholder — Claude Code prompts for login on an empty one).
+   - `ANTHROPIC_API_KEY=""`; `ANTHROPIC_AUTH_TOKEN` is **never** the source key. For a keyless source `ANTHROPIC_AUTH_TOKEN=claude-on` (a fixed non-empty placeholder — Claude Code prompts for login on an empty one). For a source with `auth_env`, the **credential flow** is:
+     1. The launcher (the parent, running in the *unscrubbed* environment) resolves the key: `$<auth_env>` from its own environment if set, else the line for it in `$STATE/env`. The environment wins — decided here, once, where both are visible.
+     2. It writes the key to `$STATE/run/<launch-id>/key`, mode 0600, and a per-launch settings file `$STATE/run/<launch-id>/settings.json` containing `{"apiKeyHelper": "cat $STATE/run/<launch-id>/key"}`, passed as `--settings` (merged before any user `--settings`).
+     3. It scrubs every source's `auth_env` from the child environment, including the active one. The helper runs as a child of Claude Code and inherits that scrubbed environment — which is why it must read a file the parent wrote, not an environment variable the parent removed (rev 3's defect).
+     4. When the child exits — normally or by signal — the launcher removes `$STATE/run/<launch-id>/`. On start, every launch sweeps `run/*` directories whose recorded pid is dead (§7.1), so a crash never leaves a key behind for longer than the next launch.
+
+     Threat model, stated plainly: the key is in a file the same Unix user can read, so a model that *deliberately* runs `cat` on that path gets it — exactly as it could run `security find-generic-password` today. What this flow prevents is what rev 2 measured: *accidental* propagation into every Bash child, hook, MCP server and the transcript. Adversarial containment is a separate OS account, as `ARCHITECTURE.md` already says.
    - `ANTHROPIC_DEFAULT_{FABLE,OPUS,SONNET,HAIKU}_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL` — the route's `wire_model` (D7), with `--sonnet` / `--haiku` overrides
-   - `CLAUDE_CODE_MAX_CONTEXT_TOKENS` — `cost_model.context` = min(declared input, measured input when present)
+   - `CLAUDE_CODE_MAX_CONTEXT_TOKENS` — `cost_model.context` (§7: `verified` when present, else min(L1 declared, configured, advertised); `context_basis` names which)
    - `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` only with `--discover` (D8)
    - `CLAUDE_CODE_ATTRIBUTION_HEADER=0` — meaningful with no proxy, where the cache prefix it protects is reachable
    - scrub: **every** source's `auth_env` — including the active one — is removed from the child environment; the launch's own unit test spawns `printenv` and asserts it (`credential.not_in_child_env`)
 3. **The shared-settings routing lint** (`harness.env.clean`) with the current broad denylist.
-4. **Session read-back.** After the child exits, read `$STATE/claude-config/projects/<slug>/<session-id>.jsonl`; record `last_session` and `harness_baseline_tokens` (first turn's `input_tokens`) on every launch.
+4. **Session read-back.** After the child exits, if a session was persisted (§9 session rules), read `$STATE/claude-config/projects/<slug>/<session-id>.jsonl` and record `last_session`: the raw first-turn `usage` and `first_request_input_tokens_total` = `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. This is **not** the harness baseline — the first request carries the user's task, and Anthropic's `input_tokens` excludes cached tokens, so a well-cached session would understate it. The baseline is measured separately by `qualify --baseline` (§7).
 5. **Pass-through.** Claude arguments pass unchanged. `--model`, `--settings` and `--fallback-model` are no longer refused (D6); a user `--settings` is merged after the helper file.
 
 Deleted from the binding: the four budget derivations and their
@@ -528,11 +612,11 @@ Every route's `observed.cost_model`:
 
 | field | meaning | origin |
 |---|---|---|
-| `context` | usable input tokens | min(L1 declared, L2 measured) |
-| `harness_baseline_tokens` | tokens Claude Code sends before task content on this route (48,312 on `omlx/…Huihui…`; 37% of 131,072) | launch read-back |
+| `context` | usable input tokens, with `context_basis` = `verified` \| `configured` \| `advertised` naming what it rests on | §7 limits tiers |
+| `harness_baseline_tokens` | tokens Claude Code sends before task content on this route, measured with a fixed minimal prompt and tagged with the Claude Code version (48,312 on `omlx/…Huihui…` at 2.1.263; 37% of 131,072) | `qualify --baseline` |
 | `tok_s` | output tokens per second at short context | `qualify` |
-| `usd_per_mtok` | `{input, output, cache_read}`; 0 for local | L1 `price` |
-| `caching` | `cache_read_input_tokens > 0` on the two-turn probe | `qualify` |
+| `usd_per_mtok` | `{input, output, cache_read, cache_write}`; 0 for local. Cache write is priced separately by every provider that caches (Anthropic: 1.25× input for 5-minute, 2× for 1-hour; OpenRouter passes the provider's rates), so a session's cost is `Σ usage_field × its price` over all four fields | L1 `price` |
+| `caching` | `true` / `false` from the two-turn probe; `unknown` until run | `qualify` |
 | `concurrency` | parallel requests before serialisation (oMLX: 1; 26% worse than serial) | `qualify` |
 | `thinking` | `{observed, tokens_on_probe}` — what the source's template did, not a setting | `qualify` |
 
@@ -542,13 +626,17 @@ The launch prints one line before spawning:
 claude-on omlx/root4k--Huihui…  ctx 131072 (48312 baseline = 37%) · 63 tok/s · $0 · cache ✓ · serial · thinking on (~2.6K tok/probe)
 ```
 
+Rendering: `cache ✓` for `true`, `cache ✗` for `false`, `cache ?` for
+`unknown`; a `null` `tok_s` or baseline renders as `?` too. The line never
+invents a value the probe did not produce.
+
 ## 13. What is deleted, and the size target
 
 | lines | subsystem | replaced by |
 |---|---|---|
 | ~3,500 | LiteLLM runtime: hash-locked venv, requirements lock, runtime fingerprint, lifecycle, `proxy_bootstrap` | nothing runs |
 | ~2,400 | OAuth lanes: `oauth_guard.py`, `chatgpt_stream_compat.py`, `oauth.py`, `verify_oauth_adapters.py`, `auth`, the GPT and xAI routes | D3 |
-| ~1,100 | budget derivation ×4, differential test, output clamp, cost guardrail, pre-call context check | `CLAUDE_CODE_MAX_CONTEXT_TOKENS`; providers reject oversized prompts |
+| ~1,100 | the LiteLLM callback layer (`config/ai_litellm_callbacks/`): budget derivation ×4, differential test, output clamp, cost guardrail, pre-call context check — the layer `litellm_config.yaml:271` references, deleted in Plan D | `CLAUDE_CODE_MAX_CONTEXT_TOKENS`; providers reject oversized prompts |
 | ~1,352 | `check.zsh` battery | invariant registry + verifier processes |
 | ~2,200 | `lib.zsh` doctors, matrices, registry readers in Ruby/Node | `status` |
 | ~1,100 | legacy migration | one-time `mv` note |
@@ -569,7 +657,7 @@ ledger), tests ~1,000, `routes.toml` + knowledge seeds + docs ~800 —
 **~5,300 lines; hard gate ≤ 6,000**, from 25,294. Rev 2's "~3,000" counted
 only new code against a baseline that counted everything.
 
-## 14. Migration — five plans, four spikes
+## 14. Migration — five plans, five spikes
 
 Each plan is one implementation plan (`writing-plans`), lands as its own
 commit series, is verified before the next starts, and records a
@@ -585,14 +673,16 @@ commit series, is verified before the next starts, and records a
 
 | plan | steps | build | delete | verify |
 |---|---|---|---|---|
-| **0** | spec amendment (this rev) | — | — | owner approves rev 3 |
-| **A** | 1–3 | `claude_on/` package; `routes.toml` + schema; `sync` → `observed.json`; `status` declared beside observed; invariant registry; the new gate with the mock source; `copy.*`. Runs beside `claude-litellm`. | nothing | `status --json` lists the checkout's routes minus the OAuth/xAI ones (D3, recorded); `route.served` fails on a planted dead `wire_model` and the old guard is retired; every F1–F14 except F3/F11 has a predicate that fails on a reproduction, F11 by unit test; a deliberate skip prints `skip`; `spend.openrouter` exercised for the first time |
-| **B** | 4–5, S2 | `harness.py`: helper-file credential binding, env injection, spawn + read-back, cost line; direct launch for `omlx` (free lane) then `openrouter` | budget subsystem, overlay, permission subsystem, callback layer | `credential.not_in_child_env` passes (child `printenv` empty); `huihui` launch completes a Read-tool loop; `harness_baseline_tokens` recorded; six gates direct per packaged OpenRouter route; on a route whose pricing lists a cache-read price, a 10-turn session shows `cache_read_input_tokens > 0` |
-| **C** | 6 | `knowledge/` + `learn`; seeds; memory-note migration; the skill; `status` shows traps for the action in hand | context/reasoning ledgers, `model-qualifications.json` | a peer session answers Q1, Q3–Q6, Q8, Q10 from `status --json` and `knowledge/` alone |
-| **D** | 7–8, S4, S5 | `install` as shim + state root; rename to `claude-on`; docs generated from `routes.toml`; `omlx-tp2` and `omlx@morty` qualified when reachable | LiteLLM runtime, venv, OAuth code and routes, integrity chain, `lib.zsh`, `shell.zsh`, `check.zsh`, `harnesses/`, all vestigial | a fresh clone + `install` launches every reachable route with stdlib Python only; no hit for `litellm` under `claude_on/`, `bin/`, `routes.toml`, `tests/`; Q2/Q7/Q9 moot and the peer check re-run; line count ≤ 6,000; gate green |
+| **0** | spec amendment (this rev) | — | — | owner approves rev 4 |
+| **A** | 1–3 | `claude_on/` package; `routes.toml` + schema; `sync` → `observed.json`; `status` declared beside observed; invariant registry; the new gate with the mock source; `copy.*`. Runs beside `claude-litellm`. | **nothing** | `status --json` lists the checkout's routes minus the OAuth/xAI ones (D3, recorded); `route.served` fails on a planted dead `wire_model` (the old guard stays until D); every F1–F14 except F3/F11 has a predicate that fails on a reproduction, F11 by unit test; a deliberate skip prints `skip`; `spend.openrouter` exercised for the first time |
+| **B** | 4–5, S2 | `harness.py`: parent-resolved credential file + helper, env injection, spawn + read-back, cost line; direct launch for `omlx` (free lane) then `openrouter`; `qualify --baseline` and `--limits` | **nothing** — the old launcher, its budget/overlay/permission code and the LiteLLM callbacks stay untouched, because `litellm_config.yaml` and the old gate still reference them and the old path must keep working until D | `credential.not_in_child_env` passes (child `printenv` empty) with the key supplied *only* by environment variable and, separately, only by `$STATE/env`; `huihui` launch completes a Read-tool loop; `harness_baseline_tokens` recorded by `qualify --baseline`; six gates direct per packaged OpenRouter route; `qualify` has run its two-turn cache probe on every packaged route and recorded `true` or `false` — never `false` inferred from a missing price; `unknown` remains only where the probe could not run, and that is reported, not hidden; both launchers coexist and `claude-litellm` still launches |
+| **C** | 6 | `knowledge/` + `learn`; seeds; memory-note migration; the skill; `status` shows traps for the action in hand | **nothing** | a peer session answers Q1, Q3–Q6, Q8, Q10 from `status --json` and `knowledge/` alone |
+| **D** | 7–8, S4, S5 | `install` as shim + state root; rename to `claude-on`; docs generated from `routes.toml`; `omlx-tp2` and `omlx@morty` qualified when reachable | **everything old, in one plan**: LiteLLM runtime, venv, OAuth code and routes, integrity chain, `lib.zsh`, `shell.zsh`, `check.zsh`, `harnesses/`, the budget/overlay/permission/callback layers, the context/reasoning ledgers, `model-qualifications.json`, all vestigial | a fresh clone + `install` launches every reachable route with stdlib Python only; no hit for `litellm` under `claude_on/`, `bin/`, `routes.toml`, `tests/`; Q2/Q7/Q9 moot and the peer check re-run; line count ≤ 6,000; gate green. Until this plan lands, `git revert` of any A–C commit restores the old path intact |
 | **E** | 9, S3 | `exo` | — | six gates direct on :52415 |
 
-Plan B is ordered free-before-paid deliberately.
+Plan B is ordered free-before-paid deliberately. Plans A–C add and never
+delete: the old path keeps every file it references until D, so each plan is
+verifiable on its own and reversible by revert.
 
 ## 15. Answers to the ten questions
 
@@ -601,7 +691,7 @@ Plan B is ordered free-before-paid deliberately.
 | Q1 | `status` → `routes.*.last_session`, from Claude Code's own transcript |
 | Q2 | moot after Plan D: nothing runs between Claude Code and the source; `copy.*` answers the rest |
 | Q3 | route name `<source>/<model>` + `status` → `routes.*.served` |
-| Q4 | `status` → `gate.*` and `knowledge/gate-runs.jsonl` |
+| Q4 | `status` → `last_gate_run` (written only by the gate runner) and `knowledge/gate-runs.jsonl`; `last_check` is shown beside it and never confused with it |
 | Q5 | one copy (D9); `CLAUDE_ON_STATE=<dir>` for a scratch state root; `copy.*` on every command |
 | Q6 | `status` → `spend.openrouter` (confirmed in Plan A) |
 | Q7 | moot after Plan D |
