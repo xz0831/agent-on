@@ -11,6 +11,75 @@ This project wraps Claude Code only. It does not replace native `claude`, modify
 native `~/.claude`, or wrap Codex. Removing the Codex compatibility layer keeps
 the product on one stable protocol: Anthropic Messages into LiteLLM.
 
+## Architecture at a glance
+
+```mermaid
+flowchart TB
+    Operator["User or automation"]
+    Orca["External scheduler<br/>Orca or another dispatcher"]
+
+    subgraph Control["claude-litellm control plane"]
+        direction LR
+        CLI["claude-litellm CLI"]
+        Catalog["Route catalog, limits,<br/>qualification evidence"]
+        Renderer["Validated config renderer"]
+        Ledger["Task ledger<br/>goal, decisions, commit, tests"]
+        Lifecycle["Proxy and session lifecycle"]
+
+        CLI --> Catalog
+        CLI --> Ledger
+        Catalog --> Renderer
+        Renderer --> Lifecycle
+        Ledger -. "handoff selects route and host" .-> Lifecycle
+    end
+
+    subgraph Session["One model-pinned Claude session"]
+        direction LR
+        Claude["Claude Code process<br/>one concrete route"]
+        Proxy["Managed LiteLLM proxy<br/>single process on localhost"]
+
+        Claude -->|"Anthropic Messages + master key"| Proxy
+    end
+
+    subgraph Providers["Provider and runtime data plane"]
+        direction LR
+        OpenRouter["OpenRouter and<br/>API-key providers"]
+        ChatGPT["ChatGPT OAuth"]
+        Grok["xAI OAuth"]
+        OMLX["Local oMLX runtime<br/>Gemma, Qwen, and others"]
+    end
+
+    PrivateState["Private local state<br/>user config · secrets · OAuth tokens · isolated Claude history"]
+
+    Operator --> CLI
+    Orca -. "task JSON and CLI contract" .-> Ledger
+    Lifecycle -->|"starts a new process for the selected route"| Claude
+    Lifecycle --> Proxy
+    Proxy --> OpenRouter
+    Proxy --> ChatGPT
+    Proxy --> Grok
+    Proxy --> OMLX
+    Renderer -. "writes validated policy" .-> PrivateState
+    PrivateState -. "supplies credentials" .-> Proxy
+    Claude -. "writes session state" .-> PrivateState
+
+    classDef boundary fill:#f6f8fa,stroke:#57606a,color:#24292f;
+    classDef runtime fill:#ddf4ff,stroke:#0969da,color:#24292f;
+    classDef state fill:#fff8c5,stroke:#9a6700,color:#24292f;
+    class CLI,Catalog,Renderer,Ledger,Lifecycle boundary;
+    class Claude,Proxy,OpenRouter,ChatGPT,Grok,OMLX runtime;
+    class PrivateState state;
+```
+
+The request path is always `Claude Code -> localhost LiteLLM -> one validated
+route`. A Claude process never changes providers in place: route limits,
+context policy, reasoning controls, credentials, and generated settings are
+fixed when that process starts. Cross-provider work uses the task ledger as a
+durable handoff boundary and launches a new model-pinned process. An external
+scheduler may choose the Mac and invoke that contract, while claude-litellm
+continues to own route validation, local readiness, credentials, and gateway
+lifecycle.
+
 ## Install
 
 Requirements: macOS, Claude Code, Python 3.13.x, Rust/Cargo, `jq`, `node`,
@@ -69,7 +138,7 @@ short direct form are equivalent for one-session launch:
 
 ```zsh
 claude-litellm use fable
-claude-litellm use GPT-5.4-chatgpt-oauth
+claude-litellm use GPT-5.6-Sol-chatgpt-oauth
 claude-litellm Grok-4.5-xai-oauth        # short form remains supported
 claude-litellm use root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx
 ```
@@ -99,6 +168,46 @@ claude-litellm use Kimi-K2.7-Code-openrouter --default
 default preset only on PASS. Run `claude-litellm` afterward. The four preset
 names remain launch conveniences, not independently switchable provider slots
 inside one Claude process.
+
+## Model-session tasks
+
+For work that should move between providers, use a task as the durable boundary
+above individual Claude sessions:
+
+```zsh
+task_id="$(claude-litellm task create gateway-review \
+  --goal 'Review the gateway migration and finish local-model readiness checks' \
+  --worktree "$PWD")"
+
+claude-litellm task handoff "$task_id" \
+  --from GLM-5.2-openrouter \
+  --to local-omlx-gemma4-12b-omlx \
+  --objective 'Review the local runtime path and run focused tests' \
+  --summary 'Migration is complete; local route readiness must be rechecked' \
+  --commit "$(git rev-parse HEAD)" \
+  --tests './scripts/check.zsh passed before this handoff'
+
+claude-litellm task launch "$task_id" -- --print
+claude-litellm task complete "$task_id" \
+  --summary 'Local review completed; see the recorded test evidence' \
+  --tests './scripts/check.zsh'
+```
+
+`task launch` always opens a new Claude process pinned to the concrete route
+recorded by the handoff. It renders a bounded prompt from the task goal,
+worktree, prior decisions, commit and test evidence instead of copying a
+provider transcript. For routes owned by a local runtime, launch first issues a
+small live probe and refuses a model that is merely discoverable but not able
+to answer. Cloud routes are not automatically probed, because that would create
+an implicit billable request.
+
+The ledger is private state under the installed package and supports
+`task list`, `task show`, and `task prompt --json`. That JSON surface is the
+intended integration point for an external scheduler: a future Orca deployment
+can choose a Mac and invoke the same handoff/launch contract, while
+claude-litellm remains responsible for route validation and one-model process
+configuration. Machine placement and automatic load balancing are not provided
+by claude-litellm itself.
 
 ## Permissions
 
@@ -199,6 +308,10 @@ claude-litellm model add <openrouter-id> --name <route>
 claude-litellm model register <route> --backend <provider/model> --context N --output N --api-key-env ENV_VAR|none
 claude-litellm model qualify <route> --activate-tier sonnet
 claude-litellm use <route> --default
+claude-litellm task create <name> --goal <text> [--worktree <path>]
+claude-litellm task handoff <id> --to <route> --objective <text>
+claude-litellm task launch <id> [-- <claude args>]
+claude-litellm task complete <id> --summary <text> [--close]
 claude-litellm model reasoning probe <route> high --candidate
 claude-litellm permissions get
 claude-litellm permissions set bypassPermissions
@@ -238,7 +351,7 @@ means genuinely no authentication, not OAuth.
 - `DeepSeek-V4-Pro-openrouter`
 - `root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx`
 - `Qwen3.8-27B-Uncensored-8bit-omlx`
-- `GPT-5.4-chatgpt-oauth`
+- `GPT-5.6-Sol-chatgpt-oauth`
 - `Grok-4.5-xai-oauth`
 
 The packaged tier defaults are `fable` → Kimi, `opus` → GLM, `sonnet` → MiMo,
@@ -275,7 +388,7 @@ availability, or behavioral-effort guarantee.
   guardrails apply separately to every route. Output clamps apply when the
   provider accepts token-limit fields.
   LiteLLM's ChatGPT subscription adapter intentionally strips those fields, so
-  that experimental route relies on GPT-5.4's natural output cap rather than a
+  that experimental route relies on GPT-5.6 Sol's natural output cap rather than a
   lower gateway-enforced cap.
 - Project auth status/JSON and guarded refresh errors do not render ChatGPT or
   Grok OAuth token payloads. Do not enable third-party trace logging around
@@ -337,7 +450,7 @@ Reasoning support does not automatically imply an effort-control slot. The
 wrapper validates model-specific effort levels and refuses unsupported
 `--effort` values instead of silently dropping them.
 
-Claude Code 2.1.207 also emits `thinking: {type: adaptive}` with
+Claude Code 2.1.212 also emits `thinking: {type: adaptive}` with
 `output_config.effort` even when the user did not pass `--effort`. On a route
 with no validated selectable slot, the wrapper warns and the gateway removes
 only the effort selection while retaining adaptive/provider-default reasoning.

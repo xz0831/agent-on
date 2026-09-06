@@ -142,10 +142,10 @@ route before assigning it to a tier:
 claude-litellm auth login chatgpt
 claude-litellm auth login grok
 claude-litellm auth status --json
-claude-litellm model qualify GPT-5.4-chatgpt-oauth \
+claude-litellm model qualify GPT-5.6-Sol-chatgpt-oauth \
   --activate-tier sonnet
 claude-litellm model qualify Grok-4.5-xai-oauth
-claude-litellm GPT-5.4-chatgpt-oauth -p 'Reply exactly READY'
+claude-litellm GPT-5.6-Sol-chatgpt-oauth -p 'Reply exactly READY'
 ```
 
 Login and logout hold the shared mutation lock. If the managed proxy is already
@@ -239,7 +239,7 @@ claude-litellm harness reasoning unset claude
 ```
 
 The harness default is durable and becomes Claude Code's `--effort` intent. An
-explicit unsupported `--effort` fails before proxy startup. Claude Code 2.1.207
+explicit unsupported `--effort` fails before proxy startup. Claude Code 2.1.212
 also sends an implicit `high` effort with adaptive thinking when neither a flag
 nor setting is present, so the absence of a CLI flag is not the absence of
 effort on the wire. The wrapper warns when a selected route has no selectable

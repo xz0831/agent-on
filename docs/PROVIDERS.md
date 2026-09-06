@@ -52,13 +52,13 @@ ambiguously.
 ## ChatGPT OAuth
 
 The `chatgpt/*` provider in LiteLLM 1.92.0 implements device-code login, refresh
-tokens and the ChatGPT Codex backend. `GPT-5.4-chatgpt-oauth` is the initial
+tokens and the ChatGPT Codex backend. `GPT-5.6-Sol-chatgpt-oauth` is the initial
 route. This route is experimental: it is useful and implemented upstream in
 LiteLLM, but it is not an OpenAI-supported general API contract for Claude Code.
 Use native Codex or an OpenAI Platform API key when a supported OpenAI contract
 is required. LiteLLM documents that this subscription adapter rejects and
 strips token-limit fields, so the gateway cannot enforce a lower per-request
-output cap on this route; it relies on GPT-5.4's natural model cap.
+output cap on this route; it relies on GPT-5.6 Sol's natural model cap.
 
 The managed proxy installs the non-interactive OAuth guard before LiteLLM
 initialization. While logged out, the ChatGPT deployment fails closed and is
@@ -75,7 +75,7 @@ inference origins are not supported as ambient or request configuration.
 The deterministic suite does not perform a real ChatGPT subscription login or
 provider request. Its generic GPT translation mock is not proof of the
 `chatgpt/*` provider-specific wire. After account authorization, run
-`model qualify GPT-5.4-chatgpt-oauth` for all six live transport gates, then use
+`model qualify GPT-5.6-Sol-chatgpt-oauth` for all six live transport gates, then use
 a real Claude Code `--print` request as a separate end-client smoke test.
 
 LiteLLM 1.92.0 also drops streamed output items when ChatGPT closes with an
@@ -133,7 +133,7 @@ The registry therefore stores `model_info.x_reasoning_efforts` separately from
   unqualified `xhigh` and `max` to `high` before constructing the downstream
   request. Exposing either alias as a distinct level would therefore advertise
   multiple choices for one effective wire value.
-- GPT-5.4 through ChatGPT OAuth: LiteLLM's local adapter has a reasoning slot
+- GPT-5.6 Sol through ChatGPT OAuth: LiteLLM's local adapter has a reasoning slot
   and translates Claude's adaptive-thinking effort form. LiteLLM metadata does
   not publish selectable levels for this subscription route, and the logged-in
   upstream has not been traced or behaviorally compared. Explicit effort is
@@ -147,7 +147,7 @@ proxy. This makes a missing provider slot observable instead of allowing
 LiteLLM's broad `drop_params` compatibility policy to create a false impression
 that the model searched or reasoned more deeply.
 
-Claude Code 2.1.207 sends adaptive thinking plus `output_config.effort` even
+Claude Code 2.1.212 sends adaptive thinking plus `output_config.effort` even
 without an explicit flag. The wrapper treats that shared/default value as
 intent and applies the selected route contract:
 
