@@ -59,7 +59,7 @@
       "provider_model": "openai/Qwen3-VL-32B-Instruct-4bit",
       "status": "tokenizer_delta",
       "observed_input_tokens": 768,
-      "evidence": "The identical prompt text counted 819 prompt_tokens on Huihui-Qwen3.8-27B-oQ4e-mtp and 768 on Qwen3-VL-32B-Instruct-4bit — a 6.6% spread between two models on the same local runtime. Relevant to adapterConfig.outputReservation.tokenizerHeadroom (8192), which exists to absorb exactly this class of mismatch; this is the first measured local datapoint for it. Raw: same directory, compare prompt_tokens across smoke_20260823.json and smoke_20260823_attempt4.json"
+      "evidence": "The identical prompt text counted 819 prompt_tokens on Huihui-Qwen3.8-27B-oQ4e-mtp and 768 on Qwen3-VL-32B-Instruct-4bit \u2014 a 6.6% spread between two models on the same local runtime. Relevant to adapterConfig.outputReservation.tokenizerHeadroom (8192), which exists to absorb exactly this class of mismatch; this is the first measured local datapoint for it. Raw: same directory, compare prompt_tokens across smoke_20260823.json and smoke_20260823_attempt4.json"
     },
     {
       "id": "2026-08-23-huihui-reasoning-leak-is-thinking-flag-not-model",
@@ -92,6 +92,35 @@
       "observed_input_tokens": 783,
       "observed_output_tokens": 412,
       "evidence": "With enable_thinking=false the model completed the circuit-lab interpretation task in 10.3s and outranked Qwen3-VL-32B-Instruct-4bit on accuracy: it correctly separated a stuck-high failure mode from contention on the row the Instruct model misread, and got the boundary, operating-region and signature rows right. Supports promoting this route to the packaged haiku tier. Measured by the circuit-lab session; raw in ~/Projects/ls-sizing-study/results/smoke_c_arm/."
+    },
+    {
+      "id": "2026-09-06-omlx-renamed-published-ids-bricking-packaged-routes",
+      "timestamp": "2026-09-06T00:00:00Z",
+      "scope": "backend",
+      "model_name": "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx",
+      "provider_model": "openai/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp",
+      "status": "degraded",
+      "evidence": "oMLX renamed its published model ids again. Both packaged routes died: 'Huihui-Qwen3.8-27B-oQ4e-mtp' is now published as 'root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp' (org prefix + abliterated tag, same oQ4e-mtp quant), and 'Qwen3.8-27B-Uncensored-8-bit' is now 'Qwen3.8-27B-Uncensored-8bit' (hyphen dropped). The haiku alias pointed at the first, so the haiku tier was bricked. Both still appeared in the proxy's /v1/models, so nothing downstream reported a problem; a completion returned NotFoundError from oMLX. Found sideways while answering an unrelated question, the third such rename. Fixed by renaming both routes to the served ids; check.zsh now cross-checks packaged local model ids against the runtime's /v1/models when it is reachable."
+    },
+    {
+      "id": "2026-09-06-tool-call-fidelity-six-gates-pass-on-abliterated-route",
+      "timestamp": "2026-09-06T00:00:00Z",
+      "scope": "backend",
+      "model_name": "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx",
+      "provider_model": "openai/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp",
+      "status": "healthy",
+      "evidence": "verify_tool_call_fidelity.py --live-only passed all six live gates through the deployed proxy: text SSE, Claude system text blocks, forced structured tool call, streamed input_json_delta, tool_result continuation, and the Claude adaptive-thinking/effort request shape. Qualifies the route for multi-step tool-driven agentic work (the tool_result continuation gate is the multi-turn edit loop). Route carries enable_thinking=false from the '*Qwen3.8*' glob override; the forced-tool gate is the one that regressed to reasoning text when thinking was left on."
+    },
+    {
+      "id": "2026-09-06-omlx-serializes-concurrent-requests",
+      "timestamp": "2026-09-06T00:00:00Z",
+      "scope": "backend",
+      "model_name": "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx",
+      "provider_model": "openai/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp",
+      "status": "healthy",
+      "observed_input_tokens": 28,
+      "observed_output_tokens": 110,
+      "evidence": "Throughput and concurrency measured through the proxy on a 28-token prompt generating 110 tokens: 1.8s and 1.7s serially (~63 tok/s output). Two concurrent identical requests completed in 4.4s wall, versus ~3.5s for the same two run back to back -- so oMLX does not serve them in parallel and concurrency is ~26% WORSE than serial. Consequence: a second consumer of :8000 cannot be isolated by concurrency, only by time-sharing. Caveat: short prompt; sustained long-context agentic runs will show lower tok/s, and an earlier long-context observation put it nearer 40 tok/s."
     }
   ]
 }
