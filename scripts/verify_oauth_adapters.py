@@ -496,10 +496,35 @@ def main() -> int:
     payload = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
 
-    chatgpt = _route(payload, "GPT-5.6-Sol-chatgpt-oauth")
-    assert chatgpt.get("model") == "chatgpt/gpt-5.6-sol"
-    assert "api_key" not in chatgpt, "ChatGPT OAuth route must not override OAuth with an API key"
-    assert _route_entry(payload, "GPT-5.6-Sol-chatgpt-oauth")["model_info"]["x_reasoning_efforts"] == []
+    # Every packaged chatgpt/* route, not just one: the lane carries a family
+    # of models, and a route added without the OAuth invariants (no api_key
+    # override, no selectable effort until live qualification) would otherwise
+    # land unchecked.
+    chatgpt_routes = {
+        "GPT-5.6-Luna-chatgpt-oauth": "chatgpt/gpt-5.6-luna",
+        "GPT-5.6-Sol-chatgpt-oauth": "chatgpt/gpt-5.6-sol",
+        "GPT-5.6-Terra-chatgpt-oauth": "chatgpt/gpt-5.6-terra",
+        "GPT-6-Astra-chatgpt-oauth": "chatgpt/gpt-6-astra",
+    }
+    for route_name, backend in chatgpt_routes.items():
+        chatgpt = _route(payload, route_name)
+        assert chatgpt.get("model") == backend, route_name
+        assert "api_key" not in chatgpt, (
+            f"{route_name} must not override OAuth with an API key"
+        )
+        info = _route_entry(payload, route_name)["model_info"]
+        assert info["x_reasoning_efforts"] == [], route_name
+        assert info["max_input_tokens"] == 1050000, route_name
+        assert info["max_output_tokens"] == 128000, route_name
+
+    # Astra publishes no "none" effort, so it cannot be run without reasoning.
+    # Assert the distinction is recorded, or a future anchor merge would erase
+    # it silently -- the limits coincide, so nothing else would notice.
+    astra_info = _route_entry(payload, "GPT-6-Astra-chatgpt-oauth")["model_info"]
+    assert astra_info.get("x_reasoning_always_on") is True
+    assert "none" not in astra_info["x_provider_reasoning_efforts"]
+    sol_info = _route_entry(payload, "GPT-5.6-Sol-chatgpt-oauth")["model_info"]
+    assert "none" in sol_info["x_provider_reasoning_efforts"]
 
     grok = _route(payload, "Grok-4.5-xai-oauth")
     assert grok.get("model") == "xai/grok-4.5"
@@ -979,7 +1004,13 @@ def main() -> int:
             tmp / "proxy-valid-token-startup.log",
         )
         model_ids = {row.get("id") for row in models_payload.get("data", [])}
-        assert "GPT-5.6-Sol-chatgpt-oauth" in model_ids
+        for _route_name in (
+            "GPT-5.6-Luna-chatgpt-oauth",
+            "GPT-5.6-Sol-chatgpt-oauth",
+            "GPT-5.6-Terra-chatgpt-oauth",
+            "GPT-6-Astra-chatgpt-oauth",
+        ):
+            assert _route_name in model_ids, _route_name
         assert "Grok-4.5-xai-oauth" in model_ids
         assert "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx" in model_ids
 
@@ -1015,9 +1046,15 @@ def main() -> int:
         unauthenticated_ids = {
             row.get("id") for row in unauthenticated_payload.get("data", [])
         }
-        assert "GPT-5.6-Sol-chatgpt-oauth" not in unauthenticated_ids, (
-            "pre-auth bootstrap policy must omit the unavailable ChatGPT deployment"
-        )
+        for _route_name in (
+            "GPT-5.6-Luna-chatgpt-oauth",
+            "GPT-5.6-Sol-chatgpt-oauth",
+            "GPT-5.6-Terra-chatgpt-oauth",
+            "GPT-6-Astra-chatgpt-oauth",
+        ):
+            assert _route_name not in unauthenticated_ids, (
+                f"pre-auth bootstrap policy must omit {_route_name}"
+            )
         expected_non_chatgpt_ids = {
             row["model_name"]
             for row in payload["model_list"]

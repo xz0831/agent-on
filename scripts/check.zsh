@@ -1547,7 +1547,11 @@ ai_litellm_health
 proxy_models="$(ai_litellm_proxy_model_names)"
 [[ "$proxy_models" == *"root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx"* ]]
 [[ "$proxy_models" == *"Grok-4.5-xai-oauth"* ]]
-[[ "$proxy_models" != *"GPT-5.6-Sol-chatgpt-oauth"* ]]
+# Every packaged chatgpt/* route must be omitted without a credential, not
+# just the one that happened to exist when this check was written.
+for _oauth_route in GPT-5.6-Luna-chatgpt-oauth GPT-5.6-Sol-chatgpt-oauth GPT-5.6-Terra-chatgpt-oauth GPT-6-Astra-chatgpt-oauth; do
+  [[ "$proxy_models" != *"$_oauth_route"* ]] || { echo "FAIL: $_oauth_route served without a ChatGPT credential" >&2; exit 1; }
+done
 test ! -e "$prefix/state/auth/chatgpt/auth.json"
 "$HOME/.local/bin/claude-litellm" proxy stop >/dev/null 2>&1
 test ! -e "$prefix/state/ai-litellm/litellm.pid"

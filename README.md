@@ -351,7 +351,10 @@ means genuinely no authentication, not OAuth.
 - `DeepSeek-V4-Pro-openrouter`
 - `root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx`
 - `Qwen3.8-27B-Uncensored-8bit-omlx`
+- `GPT-5.6-Luna-chatgpt-oauth`
 - `GPT-5.6-Sol-chatgpt-oauth`
+- `GPT-5.6-Terra-chatgpt-oauth`
+- `GPT-6-Astra-chatgpt-oauth`
 - `Grok-4.5-xai-oauth`
 
 The packaged tier defaults are `fable` → Kimi, `opus` → GLM, `sonnet` → MiMo,

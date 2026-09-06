@@ -52,8 +52,12 @@ ambiguously.
 ## ChatGPT OAuth
 
 The `chatgpt/*` provider in LiteLLM 1.92.0 implements device-code login, refresh
-tokens and the ChatGPT Codex backend. `GPT-5.6-Sol-chatgpt-oauth` is the initial
-route. This route is experimental: it is useful and implemented upstream in
+tokens and the ChatGPT Codex backend. Four routes are packaged: `GPT-5.6-Luna-chatgpt-oauth`,
+`GPT-5.6-Sol-chatgpt-oauth`, `GPT-5.6-Terra-chatgpt-oauth` and
+`GPT-6-Astra-chatgpt-oauth`. The three 5.6 variants share one limits anchor
+because OpenAI documents them as one spec with different cost/performance
+tradeoffs; Astra has its own because its published effort list omits `none`,
+so it always reasons and cannot be run in a non-reasoning mode. This route is experimental: it is useful and implemented upstream in
 LiteLLM, but it is not an OpenAI-supported general API contract for Claude Code.
 Use native Codex or an OpenAI Platform API key when a supported OpenAI contract
 is required. LiteLLM documents that this subscription adapter rejects and

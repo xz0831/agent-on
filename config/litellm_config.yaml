@@ -78,16 +78,26 @@ x-limits:
     x_output_source: owned-policy-local-output-cap
     x_reasoning_confidence: owned-policy
     x_reasoning_source: local-runtime-no-reasoning-routing
-  gpt56_sol_chatgpt_oauth: &gpt56_sol_chatgpt_oauth
+  # Shared by Luna, Sol and Terra: developers.openai.com documents the three
+  # 5.6 variants as one spec with different performance-to-cost tradeoffs, not
+  # different architectures. That shared-spec claim is the ONLY reason one
+  # anchor serves three underlying models here, against this file's usual
+  # one-anchor-per-model rule -- split it the moment OpenAI differentiates any
+  # of their limits, or a change to one will silently move the other two.
+  gpt56_chatgpt_oauth: &gpt56_chatgpt_oauth
     max_input_tokens: 1050000
     max_output_tokens: 128000
     supports_reasoning: true
-    # GPT-5.6 Sol supports reasoning and LiteLLM 1.92's chatgpt/* adapter
-    # accepts a reasoning object, but the subscription backend is not an
-    # OpenAI-supported third-party gateway contract and has not been
-    # live-measured. Refuse explicit effort until login-time qualification
-    # establishes the accepted values.
+    # The 5.6 family reasons and LiteLLM 1.92's chatgpt/* adapter accepts a
+    # reasoning object, but the subscription backend is not an OpenAI-supported
+    # third-party gateway contract and has not been live-measured. Refuse
+    # explicit effort until login-time qualification establishes the accepted
+    # values. x_provider_reasoning_efforts records what the docs advertise so
+    # the gap between advertised and selectable stays visible; note that
+    # LiteLLM 1.92's Anthropic adapter normalises xhigh/max to high anyway, the
+    # same transport ceiling documented on the GLM-5.2 anchor above.
     x_reasoning_efforts: []
+    x_provider_reasoning_efforts: [none, low, medium, high, xhigh, max]
     x_input_confidence: provider
     x_input_source: developers.openai.com GPT-5.6 model guidance
     x_output_confidence: provider
@@ -95,6 +105,26 @@ x-limits:
     x_output_enforcement: provider-natural-cap-only; chatgpt-adapter-strips-token-limit-fields
     x_reasoning_confidence: owned-policy
     x_reasoning_source: openai-docs-efforts; chatgpt-oauth-selectable-levels-not-live-validated
+
+  # GPT-6 Astra shares the 5.6 limits but NOT its reasoning contract: the docs
+  # list no "none" level for it, so Astra always reasons and cannot be run in a
+  # non-reasoning mode. That is a behavioural difference with direct cost and
+  # latency consequences, so it gets its own anchor even though the numbers
+  # currently coincide -- sharing one would hide the distinction.
+  gpt6_astra_chatgpt_oauth: &gpt6_astra_chatgpt_oauth
+    max_input_tokens: 1050000
+    max_output_tokens: 128000
+    supports_reasoning: true
+    x_reasoning_efforts: []
+    x_provider_reasoning_efforts: [low, medium, high, xhigh, max]
+    x_reasoning_always_on: true
+    x_input_confidence: provider
+    x_input_source: developers.openai.com GPT-6 model guidance
+    x_output_confidence: provider
+    x_output_source: developers.openai.com GPT-6 model guidance
+    x_output_enforcement: provider-natural-cap-only; chatgpt-adapter-strips-token-limit-fields
+    x_reasoning_confidence: owned-policy
+    x_reasoning_source: openai-docs-efforts; no "none" level published, so reasoning cannot be disabled; chatgpt-oauth-selectable-levels-not-live-validated
   grok45_xai_oauth: &grok45_xai_oauth
     max_input_tokens: 500000
     max_output_tokens: 32768
@@ -142,10 +172,25 @@ model_list:
 
   # OAuth-backed cloud routes. Authentication is owned by the LiteLLM provider;
   # do not add api_key here or inject OPENAI_API_KEY/XAI_API_KEY at launch.
+  - model_name: GPT-5.6-Luna-chatgpt-oauth
+    litellm_params:
+      model: chatgpt/gpt-5.6-luna
+    model_info: *gpt56_chatgpt_oauth
+
   - model_name: GPT-5.6-Sol-chatgpt-oauth
     litellm_params:
       model: chatgpt/gpt-5.6-sol
-    model_info: *gpt56_sol_chatgpt_oauth
+    model_info: *gpt56_chatgpt_oauth
+
+  - model_name: GPT-5.6-Terra-chatgpt-oauth
+    litellm_params:
+      model: chatgpt/gpt-5.6-terra
+    model_info: *gpt56_chatgpt_oauth
+
+  - model_name: GPT-6-Astra-chatgpt-oauth
+    litellm_params:
+      model: chatgpt/gpt-6-astra
+    model_info: *gpt6_astra_chatgpt_oauth
 
   - model_name: Grok-4.5-xai-oauth
     litellm_params:
