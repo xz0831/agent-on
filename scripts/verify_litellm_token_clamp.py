@@ -51,6 +51,25 @@ class MockState:
             return list(self.records)
 
 
+def _default_litellm_bin() -> str | None:
+    """Resolve the litellm CLI, preferring this repo's managed venv over PATH.
+
+    PATH can hold an unrelated standalone install (a `uv tool install litellm`,
+    say) that is broken or a different version, in which case this verifier
+    measures something the repo never ships -- or, as seen on 2026-09-06, fails
+    to start at all with ModuleNotFoundError: proxy_server while the managed
+    venv's litellm was healthy. The whole point of the hash-locked runtime is
+    that the gate exercises THAT interpreter, so look there first.
+    """
+    explicit = os.environ.get("LITELLM_BIN")
+    if explicit:
+        return explicit
+    managed = Path.home() / ".local/share/claude-litellm/runtime/venv/bin/litellm"
+    if managed.is_file() and os.access(managed, os.X_OK):
+        return str(managed)
+    return shutil.which("litellm")
+
+
 def find_free_port() -> int:
     with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -513,7 +532,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Verify whether LiteLLM config-only settings clamp provider output token reservations.",
     )
-    parser.add_argument("--litellm-bin", default=os.environ.get("LITELLM_BIN") or shutil.which("litellm"))
+    parser.add_argument("--litellm-bin", default=_default_litellm_bin())
     parser.add_argument("--output-cap", type=int, default=8)
     parser.add_argument(
         "--callback-module",
