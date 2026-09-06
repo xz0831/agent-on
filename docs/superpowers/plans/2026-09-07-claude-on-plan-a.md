@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python ≥ 3.11 from `PATH` (`tomllib`, `fcntl`, `http.server`, `urllib`, `unittest`), a ≤20-line zsh shim. No third-party packages, no venv.
 
-**Spec:** `docs/superpowers/specs/2026-09-07-claude-on-design.md` (rev 6, commit `3b1093e`). Section references below (§n, Dn, Fn, Qn) point into it. This plan is §14 row **A**, plus the two rev-6 P2s the owner asked to carry into Plan A's contract: the `add` lock location (§7.1) and per-run cost attribution (§11).
+**Spec:** `docs/superpowers/specs/2026-09-07-claude-on-design.md` (rev 7). Section references below (§n, Dn, Fn, Qn) point into it. This plan is §14 row **A**, plus the two rev-6 P2s the owner asked to carry into Plan A's contract: the `add` lock location (§7.1) and per-run cost attribution (§11).
 
 ## Global Constraints
 
@@ -542,7 +542,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "status":
             from .status import build_status, render_text
             doc = build_status(paths, route=args.route, check=args.check)
-            code = EXIT_FAIL if args.check and doc["last_check"]["result"] == "fail" else EXIT_OK
+            code = EXIT_FAIL if args.check and any(i["result"] == "fail" for i in doc["invariants"]) else EXIT_OK
             text = render_text(doc)
         elif args.command == "sync":
             from .sync import run_sync
@@ -644,7 +644,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 - Consumes: `util.canonical_json`, `util.sha16`, `Paths.routes_toml`, `Paths.discovered_toml`
 - Produces: dataclasses `Limits(input, output, confidence, source)`, `Price(input, output, cache_read, cache_write, source)`, `Reasoning(supported, efforts, provider_efforts, source)`, `Source(name, base_url, auth_env, catalog, discover, limits)`, `Route(name, source, wire_model, aliases, limits, reasoning, price, packaged)`, `RouteTable(sources, routes, shadowed)`; functions `parse_routes_text`, `merge_tables`, `load_routes`, `route_block`, `discovered_text`; `errors.RULES`, `errors.SchemaError`.
 
-Why the seed's numbers differ from `config/litellm_config.yaml`: the live OpenRouter catalog on 2026-09-07 says DeepSeek-V4-Pro's top provider serves **1,024,000** input (the yaml declares 1,048,576 — declared > advertised, an R1 drift), Kimi-K2.7-Code caps output at **235,929** (yaml: 262,144), GLM-5.2 at **131,072** (yaml: 32,768 labelled `provider`), Mimo-V2.5 now publishes 1,048,576 / 131,072 (yaml: 262,144 / 16,384 `owned-policy` "unpublished"). The seed carries the live provider figures with the date in `source`; the old yaml's oMLX output cap of 16,384 was a LiteLLM clamp policy and is not carried — oMLX routes inherit the source's `configured` 131,072 / 32,768 (§6 example, rev-6 inheritance rule). The three unreachable sources carry `owned-policy` limits labelled as pending measurement (S4, S5, S3) so their discovered routes are never uncapped. The GPT and xAI OAuth routes are deliberately absent (D3; the decision record is seeded in Plan C).
+Why the seed's numbers differ from `config/litellm_config.yaml`: the live OpenRouter catalog on 2026-09-07 says DeepSeek-V4-Pro's top provider serves **1,024,000** input (the yaml declares 1,048,576 — declared > advertised, an R1 drift), Kimi-K2.7-Code caps output at **235,929** (yaml: 262,144), GLM-5.2 at **131,072** (yaml: 32,768 labelled `provider`), Mimo-V2.5 now publishes 1,048,576 / 131,072 (yaml: 262,144 / 16,384 `owned-policy` "unpublished"). The seed carries the live provider figures with the date in `source`; the old yaml's oMLX output cap of 16,384 was a LiteLLM clamp policy and is not carried — oMLX routes inherit the source's `configured` 131,072 / 32,768 (§6 example, rev-6 inheritance rule). The three unreachable sources carry `owned-policy` limits labelled as pending measurement (S4, S5, S3) so their discovered routes are never uncapped. The reasoning tables carry `supported = true` with `confidence = "provider"` and no `efforts` list: OpenRouter's `supported_parameters` names parameters (`reasoning`, `reasoning_effort`), never effort levels, so a level list would be invented (spec §6, rev 7). The GPT and xAI OAuth routes are deliberately absent (D3; the decision record is seeded in Plan C).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -705,7 +705,8 @@ class ParseTest(unittest.TestCase):
         self.assertRule("routes.limits.shape", head + '[routes."mock/m".limits]\ninput = 10\n')
         self.assertRule("routes.limits.shape", head + '[routes."mock/m".limits]\ninput = 10\nconfidence = "verified"\nsource = "x"\n')
         self.assertRule("routes.limits.no_globs", head + '[routes."mock/Qwen*"]\n')
-        self.assertRule("routes.reasoning.shape", head + '[routes."mock/m".reasoning]\nefforts = ["low"]\n')
+        self.assertRule("routes.reasoning.shape", head + '[routes."mock/m".reasoning]\nefforts = "low"\nsource = "x"\n')
+        self.assertRule("routes.reasoning.shape", head + '[routes."mock/m".reasoning]\nsupported = true\n')
         self.assertRule("routes.price.shape", head + '[routes."mock/m".price]\ninput_usd_per_mtok = 1\nsource = "x"\n')
         self.assertRule("routes.alias.shape", head + '[routes."mock/m"]\naliases = ["a/b"]\n')
         self.assertRule("routes.unique", head + '[routes."mock/m"]\naliases = ["z"]\n[routes."mock/n"]\naliases = ["z"]\n')
@@ -714,6 +715,15 @@ class ParseTest(unittest.TestCase):
                      "routes.limits.shape", "routes.limits.no_globs", "routes.reasoning.shape", "routes.price.shape",
                      "routes.alias.shape", "routes.unique"):
             self.assertIn(rule, RULES)
+
+    def test_reasoning_accepts_the_spec_shape_and_supported_alone(self):
+        head = 'version = 1\n[sources.mock]\nbase_url = "http://127.0.0.1:1"\n'
+        _, rts, _ = routes(head + '[routes."mock/m".reasoning]\nefforts = ["low", "high"]\nprovider_efforts = ["xhigh", "high"]\nconfidence = "provider"\nsource = "x"\n')
+        r = rts["mock/m"].reasoning
+        self.assertEqual((r.supported, r.efforts, r.provider_efforts, r.confidence), (True, ("low", "high"), ("xhigh", "high"), "provider"))
+        _, rts, _ = routes(head + '[routes."mock/m".reasoning]\nsupported = true\nsource = "x"\n')
+        r = rts["mock/m"].reasoning
+        self.assertEqual((r.supported, r.efforts, r.confidence), (True, (), None))
 
     def test_unregistered_rule_cannot_be_raised(self):
         with self.assertRaises(KeyError):
@@ -839,7 +849,7 @@ RULES: dict[str, str] = {
     "routes.route.wire_model": "wire_model is a non-empty string; it defaults to the name after the first '/'",
     "routes.limits.shape": "limits carry positive-integer input and/or output, a confidence in {provider, owned-policy, configured} and a source string",
     "routes.limits.no_globs": "no source or route key contains '*' or '?' — there are no globs (§6)",
-    "routes.reasoning.shape": "reasoning has supported (bool) and optional efforts / provider_efforts lists of strings",
+    "routes.reasoning.shape": "reasoning has efforts / provider_efforts (lists of strings), an optional confidence in {provider, owned-policy, configured}, a source string, and an optional supported (bool; defaults to whether any efforts are listed) — it may stand alone when a catalog names only parameters, never invented levels",
     "routes.price.shape": "price has input_usd_per_mtok and output_usd_per_mtok (numbers ≥ 0), optional cache_read/cache_write, and a source string",
     "routes.alias.shape": "aliases is a list of non-empty strings without '/'",
     "routes.unique": "no two routes share a name, an alias, or (source, wire_model); a discovered route may not reuse a packaged alias",
@@ -912,6 +922,7 @@ class Reasoning:
     supported: bool
     efforts: tuple[str, ...]
     provider_efforts: tuple[str, ...]
+    confidence: str | None
     source: str
 
 
@@ -1033,8 +1044,11 @@ def _parse_price(d, where: str) -> Price:
 
 
 def _parse_reasoning(d, where: str) -> Reasoning:
-    if not isinstance(d, dict) or not isinstance(d.get("supported"), bool):
-        raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.supported (bool) is required")
+    """§6: efforts / provider_efforts, confidence, source. `supported` may stand alone: OpenRouter's
+    supported_parameters names parameters (`reasoning`, `reasoning_effort`), never levels, so `add` writes
+    `supported` + `confidence = "provider"` and no invented effort list."""
+    if not isinstance(d, dict):
+        raise SchemaError("routes.reasoning.shape", f"{where}: reasoning must be a table")
 
     def strs(k: str) -> tuple[str, ...]:
         v = d.get(k, [])
@@ -1042,7 +1056,19 @@ def _parse_reasoning(d, where: str) -> Reasoning:
             raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.{k} must be a list of strings")
         return tuple(v)
 
-    return Reasoning(d["supported"], strs("efforts"), strs("provider_efforts"), str(d.get("source", "")))
+    efforts, provider_efforts = strs("efforts"), strs("provider_efforts")
+    supported = d.get("supported", bool(efforts or provider_efforts))
+    if not isinstance(supported, bool):
+        raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.supported must be a bool")
+    confidence = d.get("confidence")
+    if confidence is not None and confidence not in L1_CONFIDENCES:
+        raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.confidence must be one of {L1_CONFIDENCES}")
+    if not isinstance(d.get("source"), str) or not d["source"]:
+        raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.source must say where it came from")
+    for k in d:
+        if k not in ("supported", "efforts", "provider_efforts", "confidence", "source"):
+            raise SchemaError("routes.reasoning.shape", f"{where}: unknown reasoning key {k!r}")
+    return Reasoning(supported, efforts, provider_efforts, confidence, d["source"])
 
 
 def _parse_source(name: str, d) -> Source:
@@ -1195,8 +1221,9 @@ def route_block(route: Route) -> str:
             lines.append(f"efforts = {_val(list(r.efforts))}")
         if r.provider_efforts:
             lines.append(f"provider_efforts = {_val(list(r.provider_efforts))}")
-        if r.source:
-            lines.append(f"source = {_val(r.source)}")
+        if r.confidence:
+            lines.append(f"confidence = {_val(r.confidence)}")
+        lines.append(f"source = {_val(r.source)}")
     if route.price:
         p = route.price
         lines += ["", f"[{head}.price]", f"input_usd_per_mtok = {_val(p.input)}", f"output_usd_per_mtok = {_val(p.output)}"]
@@ -1285,8 +1312,9 @@ confidence = "provider"
 source     = "openrouter.top_provider.context_length / max_completion_tokens (2026-09-07)"
 
 [routes."openrouter/deepseek/deepseek-v4-pro".reasoning]
-supported = true
-source    = "openrouter.supported_parameters: reasoning, reasoning_effort (2026-09-07)"
+supported  = true
+confidence = "provider"
+source     = "openrouter.supported_parameters: reasoning, reasoning_effort (2026-09-07)"
 
 [routes."openrouter/deepseek/deepseek-v4-pro".price]
 input_usd_per_mtok      = 0.63684
@@ -1305,8 +1333,9 @@ confidence = "provider"
 source     = "openrouter.top_provider.context_length / max_completion_tokens (2026-09-07)"
 
 [routes."openrouter/moonshotai/kimi-k2.7-code".reasoning]
-supported = true
-source    = "openrouter.supported_parameters: reasoning (2026-09-07)"
+supported  = true
+confidence = "provider"
+source     = "openrouter.supported_parameters: reasoning (2026-09-07)"
 
 [routes."openrouter/moonshotai/kimi-k2.7-code".price]
 input_usd_per_mtok      = 0.66
@@ -1325,8 +1354,9 @@ confidence = "provider"
 source     = "openrouter.top_provider.context_length / max_completion_tokens (2026-09-07)"
 
 [routes."openrouter/xiaomi/mimo-v2.5".reasoning]
-supported = true
-source    = "openrouter.supported_parameters: reasoning (2026-09-07)"
+supported  = true
+confidence = "provider"
+source     = "openrouter.supported_parameters: reasoning (2026-09-07)"
 
 [routes."openrouter/xiaomi/mimo-v2.5".price]
 input_usd_per_mtok      = 0.14
@@ -1345,8 +1375,9 @@ confidence = "provider"
 source     = "openrouter.top_provider.context_length / max_completion_tokens (2026-09-07)"
 
 [routes."openrouter/z-ai/glm-5.2".reasoning]
-supported = true
-source    = "openrouter.supported_parameters: reasoning, reasoning_effort (2026-09-07)"
+supported  = true
+confidence = "provider"
+source     = "openrouter.supported_parameters: reasoning, reasoning_effort (2026-09-07)"
 
 [routes."openrouter/z-ai/glm-5.2".price]
 input_usd_per_mtok      = 0.966
@@ -2625,260 +2656,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 
 ---
 
-### Task 7: `sync`
-
-**Files:**
-- Create: `claude_on/sync.py`
-- Test: `tests/claude_on/test_sync.py`
-
-**Interfaces:**
-- Consumes: `parse_routes_text`, `load_routes`, `Route`, `discovered_text`, `probe_all`, `omlx_settings_path`, `read_configured_limits`, `fetch_openrouter_spend`, `resolve_secret`, `update_observed`, `write_discovered`, `empty_route`, `empty_source`, `compute_context`, `describe_copy`; **and** `invariants.build_context/evaluate` — this task therefore imports from Task 8's module. Write Task 8 first if executing in isolation; the test below only needs `route.unique` to exist.
-- Produces: `run_sync(paths, *, timeout=5.0, env=None) -> dict` with keys `command, copy, sources{name: {reachable, error, catalog_count}}, discovered[], shadowed[], orphans[], spend{}, invariants[]`.
-
-Rules encoded (§7 table, §9): `served = wire_model ∈ catalog`; `served` is `null` (unmeasured) when the source is unreachable — never a stale `true`; limits tiers `configured` (loopback oMLX settings) and `advertised` (catalog) refreshed, `verified` never touched; `cost_model.context/basis` recomputed by `compute_context`; `usd_per_mtok` = the route's price, else zeros when the source has no `auth_env` (nothing bills), else `null`; for a non-discover source only declared routes' catalog entries are kept plus the count; spend is fetched for every source with an `auth_env` (today: OpenRouter) or recorded with an error naming where the key was looked for; orphans = packaged routes whose reachable source does not serve them.
-
-- [ ] **Step 1: Write the failing tests**
-
-`tests/claude_on/test_sync.py`:
-
-```python
-from __future__ import annotations
-
-import json
-import os
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
-
-import unittest  # noqa: E402
-
-from claude_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
-from claude_on.schemas.routes import load_routes  # noqa: E402
-from claude_on.state import read_observed  # noqa: E402
-from claude_on.sync import run_sync  # noqa: E402
-
-CATALOG = [omlx_entry("alpha", 262144), omlx_entry("beta", 131072), openrouter_entry("vendor/model-x", 200000, 8000)]
-SPEND = {"usage": 1.5, "limit": 10, "limit_reset": "daily", "limit_remaining": 8.5, "usage_daily": 0.5}
-
-
-class SyncTest(unittest.TestCase):
-    def test_sync_measures_served_limits_discovery_orphans_and_spend(self):
-        with MockSource(catalog=CATALOG, spend=SPEND, expect_key="k-1") as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
-            settings = sb.paths.home / ".omlx" / "settings.json"
-            settings.parent.mkdir()
-            settings.write_text(json.dumps({"sampling": {"max_context_window": 131072, "max_tokens": 32768}}), encoding="utf-8")
-            before = sb.paths.routes_toml.read_bytes()
-            report = run_sync(sb.paths, timeout=3, env={"MOCK_PAID_KEY": "k-1"})
-            self.assertEqual(sb.paths.routes_toml.read_bytes(), before, "sync never touches routes.toml")
-            self.assertEqual(report["orphans"], ["mock/gone"])                      # F1: declared but not served
-            # alpha is packaged → shadowed, not discovered; the OpenRouter-shaped entry is also in `mock`'s catalog (one mock, two sources)
-            self.assertEqual(report["discovered"], ["mock/beta", "mock/vendor/model-x"])
-            self.assertEqual(report["shadowed"], [])
-            obs = read_observed(sb.paths)
-            self.assertTrue(obs["sources"]["mock"]["reachable"])
-            self.assertEqual(obs["sources"]["mock"]["catalog"], ["alpha", "beta", "vendor/model-x"])
-            self.assertEqual(obs["sources"]["mock"]["identity"], "owned_by=omlx")
-            self.assertEqual(obs["sources"]["mock"]["configured_limits"]["input"], 131072)
-            self.assertEqual(set(obs["sources"]["paid"]["catalog"]), {"vendor/model-x"})   # non-discover: declared entries only
-            self.assertEqual(obs["sources"]["paid"]["catalog_count"], 3)
-            r = obs["routes"]["mock/alpha"]
-            self.assertTrue(r["served"])
-            self.assertEqual(r["limits"]["input"], {"configured": 131072, "advertised": 262144, "verified": None, "checked": r["checked"]})
-            self.assertEqual(r["limits"]["output"]["configured"], 32768)
-            self.assertEqual((r["cost_model"]["context"], r["cost_model"]["context_basis"]), (8192, "declared"))   # source limit 8192 wins
-            self.assertEqual(r["cost_model"]["usd_per_mtok"], {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
-            self.assertEqual(r["cost_model"]["caching"], "unknown")                   # never inferred from a price
-            self.assertFalse(obs["routes"]["mock/gone"]["served"])
-            x = obs["routes"]["paid/vendor/model-x"]
-            self.assertEqual((x["cost_model"]["context"], x["cost_model"]["context_basis"]), (100000, "declared"))
-            self.assertEqual(x["limits"]["input"]["advertised"], 200000)
-            self.assertEqual(x["cost_model"]["usd_per_mtok"]["input"], 1.0)
-            self.assertEqual(obs["routes"]["mock/beta"]["cost_model"]["context"], 8192)   # discovered → inherited source limit
-            self.assertEqual(obs["spend"]["paid"]["usd_used"], 1.5)
-            self.assertIsNone(obs["spend"]["paid"]["error"])
-            self.assertEqual([i["id"] for i in report["invariants"]], ["route.unique"])
-            self.assertEqual(report["invariants"][0]["result"], "pass")
-            table = load_routes(sb.paths)
-            self.assertIn("mock/beta", table.routes)
-            self.assertEqual(table.effective_limits(table.routes["mock/beta"]).input, 8192)
-            self.assertEqual(list(sb.paths.state.glob("*.tmp.*")), [])
-
-    def test_declared_over_advertised_is_visible_and_second_sync_shadows_a_promoted_route(self):
-        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
-            run_sync(sb.paths, timeout=3, env={})
-            self.assertIn("mock/beta", sb.paths.discovered_toml.read_text())
-            # promote beta to packaged by hand (what `add` does), then sync again: it must drop out of the discovered file
-            sb.paths.routes_toml.write_text(sb.paths.routes_toml.read_text() + '\n[routes."mock/beta"]\n', encoding="utf-8")
-            report = run_sync(sb.paths, timeout=3, env={})
-            self.assertNotIn("mock/beta", sb.paths.discovered_toml.read_text())
-            self.assertEqual(report["discovered"], ["mock/vendor/model-x"])
-            self.assertTrue(read_observed(sb.paths)["routes"]["mock/beta"]["served"])
-
-    def test_unreachable_source_records_the_error_and_leaves_served_unmeasured(self):
-        with Sandbox(MOCK_ROUTES.format(base="http://127.0.0.1:9")) as sb:
-            report = run_sync(sb.paths, timeout=1, env={})
-            obs = read_observed(sb.paths)
-            self.assertFalse(obs["sources"]["mock"]["reachable"])
-            self.assertIn(":9", obs["sources"]["mock"]["error"])
-            self.assertIsNone(obs["routes"]["mock/alpha"]["served"])
-            self.assertIsNone(obs["routes"]["mock/alpha"]["limits"]["input"]["advertised"])
-            self.assertEqual(report["orphans"], [])
-            self.assertEqual(report["discovered"], [])
-            self.assertIn("MOCK_PAID_KEY", obs["spend"]["paid"]["error"])            # no key anywhere → said where it looked
-            self.assertTrue(sb.paths.discovered_toml.exists())
-
-    def test_spend_key_comes_from_the_env_file_when_the_environment_has_none(self):
-        with MockSource(catalog=CATALOG, spend=SPEND, expect_key="k-file") as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
-            sb.paths.state.mkdir()
-            sb.paths.env_file.write_text("MOCK_PAID_KEY=k-file\n", encoding="utf-8")
-            os.chmod(sb.paths.env_file, 0o600)
-            run_sync(sb.paths, timeout=3, env={})
-            self.assertEqual(read_observed(sb.paths)["spend"]["paid"]["usd_limit"], 10)
-
-
-if __name__ == "__main__":
-    unittest.main()
-```
-
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_sync.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on.sync'`
-
-- [ ] **Step 3: Write the module**
-
-`claude_on/sync.py`:
-
-```python
-"""`claude-on sync` (§9): probe every source; refresh catalogs, served flags, configured/advertised limits and spend;
-rewrite routes.discovered.toml; report orphans. Never writes `verified` (that is `qualify --limits`), never touches
-routes.toml, never dirties a tracked file (D13)."""
-from __future__ import annotations
-
-import os
-
-from .invariants import build_context, evaluate
-from .paths import Paths, describe_copy
-from .schemas.observed import compute_context, empty_route, empty_source
-from .schemas.routes import Route, discovered_text, load_routes, parse_routes_text
-from .sources import fetch_openrouter_spend, omlx_settings_path, probe_all, read_configured_limits
-from .state import resolve_secret, update_observed, write_discovered
-from .util import utc_now
-
-FREE = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
-
-
-def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> dict:
-    env = os.environ if env is None else env
-    srcs, packaged, _ = parse_routes_text(paths.routes_toml.read_text(encoding="utf-8"), packaged=True)
-    probes = probe_all(srcs, timeout)
-    now = utc_now()
-
-    # 1. discovered routes: every catalog id of a reachable discover=true source that no packaged route serves
-    packaged_keys = {(r.source, r.wire_model) for r in packaged.values()}
-    discovered: list[Route] = []
-    for name, src in srcs.items():
-        if not src.discover or not probes[name].reachable:
-            continue
-        for model_id in sorted(probes[name].catalog):
-            if (name, model_id) not in packaged_keys:
-                discovered.append(Route(f"{name}/{model_id}", name, model_id, (), None, None, None, packaged=False))
-    write_discovered(paths, discovered_text(discovered, now))
-    table = load_routes(paths)   # packaged + the file just written, dedup'd (packaged wins)
-
-    # 2. side facts: the local oMLX settings file, and spend for every keyed source
-    configured: dict[str, dict] = {}
-    for name, src in srcs.items():
-        p = omlx_settings_path(src, paths.home)
-        if p is not None and p.exists():
-            got = read_configured_limits(p, paths.home)
-            if got is not None:
-                configured[name] = got
-    spend: dict[str, dict] = {}
-    for name, src in srcs.items():
-        if not src.auth_env:
-            continue
-        key = resolve_secret(paths, src.auth_env, env)
-        if key:
-            spend[name] = fetch_openrouter_spend(src.base_url, key, timeout)
-        else:
-            spend[name] = {"usd_used": None, "usd_limit": None, "limit_reset": None, "usd_remaining": None, "usd_used_daily": None,
-                           "source": f"openrouter GET {src.base_url.rstrip('/')}/v1/auth/key", "checked": now,
-                           "error": f"no {src.auth_env} in the environment or in {paths.env_file}"}
-
-    orphans: list[str] = []
-
-    def mutate(doc: dict) -> None:
-        doc["copy"] = describe_copy(paths)
-        for name, src in srcs.items():
-            pr = probes[name]
-            s = doc["sources"].setdefault(name, empty_source())
-            s.update({"reachable": pr.reachable, "checked": pr.checked, "error": pr.error,
-                      "catalog_count": pr.catalog_count if pr.reachable else None,
-                      "identity": pr.identity if pr.reachable else s.get("identity"),
-                      "configured_limits": configured.get(name)})
-            if pr.reachable:
-                if src.discover:
-                    s["catalog"] = sorted(pr.catalog)
-                else:   # keep only what declared routes need, plus the count (§7)
-                    declared = {r.wire_model for r in table.by_source(name)}
-                    s["catalog"] = {k: v for k, v in pr.catalog.items() if k in declared}
-        for rname, route in table.routes.items():
-            r = doc["routes"].setdefault(rname, empty_route())
-            pr = probes[route.source]
-            r["checked"] = now
-            if pr.reachable:
-                r["served"] = route.wire_model in pr.catalog
-                if route.packaged and not r["served"]:
-                    orphans.append(rname)
-                entry = pr.catalog.get(route.wire_model) or {}
-                advertised = {"input": entry.get("max_input"), "output": entry.get("max_output")}
-            else:
-                r["served"] = None                              # unmeasured now, never a stale true
-                advertised = {"input": None, "output": None}
-            conf = configured.get(route.source) or {}
-            for k in ("input", "output"):
-                r["limits"][k].update({"configured": conf.get(k), "advertised": advertised[k], "checked": now})   # never `verified`
-            lim = table.effective_limits(route)
-            context, basis = compute_context(lim.input if lim else None, r["limits"]["input"])
-            if route.price is not None:
-                usd = route.price.per_mtok()
-            elif srcs[route.source].auth_env is None:
-                usd = dict(FREE)                                # nothing bills a keyless source
-            else:
-                usd = None                                      # a keyed source with no price declared: unknown, not 0
-            r["cost_model"].update({"context": context, "context_basis": basis, "usd_per_mtok": usd})
-        for name, sp in spend.items():
-            doc["spend"][name] = sp
-
-    doc = update_observed(paths, mutate)
-    invariants = [r.as_dict() for r in evaluate(build_context(paths), ids=["route.unique"])]
-    return {"command": "sync", "copy": doc["copy"],
-            "sources": {n: {"reachable": p.reachable, "error": p.error, "catalog_count": p.catalog_count} for n, p in probes.items()},
-            "discovered": [r.name for r in discovered], "shadowed": list(table.shadowed), "orphans": sorted(orphans),
-            "spend": spend, "invariants": invariants}
-```
-
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
-Expected: all pass (requires Task 8's `invariants.py` to exist — implement Task 8 before running if working strictly in order, or land Tasks 7 and 8 in one commit).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add claude_on/sync.py tests/claude_on/test_sync.py
-git commit -m "feat(claude-on): sync — served flags, limit tiers, discovery, orphans, spend
-
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
-```
-
----
-
-### Task 8: L3 — the knowledge record schema and the invariant registry (fourteen predicates)
+### Task 7: L3 — the knowledge record schema and the invariant registry (fourteen predicates)
 
 **Files:**
 - Create: `claude_on/schemas/knowledge.py`, `claude_on/invariants.py`
@@ -2888,7 +2666,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 - Consumes: `Paths`, `describe_copy`, `RULES`, `SchemaError`, `forbid_claude_cost`, `RouteTable`, `load_routes`, `read_observed`
 - Produces: `knowledge.KINDS`, `knowledge.validate_record(kind, rec)`, `knowledge.validate_file(path) -> list[str]`; `invariants.Result(id, result, reason, subject, fix)` with `.as_dict()`, `Context(paths, routes, routes_error, observed, tree, home, claude_code)`, `REGISTRY`, `invariant(id, *, statement, fix, per_route=False)`, `build_context(paths, *, with_claude_code=False)`, `evaluate(ctx, ids=None, route=None) -> list[Result]`, `skipped_ids(results) -> list[str]`, `claude_code_version() -> str|None`, `ENV_DENY`, `TIER_NAMES`.
 
-The fourteen ids and what each catches are §8's table. In Plan A `credential.not_in_child_env` is an honest `skip` (the launcher is Plan B). The reproduction for every other F is a test below.
+The fourteen ids and what each catches are §8's table. In Plan A `credential.not_in_child_env` is an honest `skip` (the launcher is Plan B). `test.names.derived` lints Python under `claude_on/` and `tests/claude_on/` here; docs join the lint in Plan D, when they are generated from `routes.toml` (§8 says "test or doc"). The reproduction for every other F is a test below.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2908,17 +2686,16 @@ from helpers import MOCK_ROUTES, REPO, Sandbox  # noqa: E402
 import unittest  # noqa: E402
 
 from claude_on.invariants import REGISTRY, build_context, evaluate, skipped_ids  # noqa: E402
-from claude_on.mock_source import MockSource, omlx_entry  # noqa: E402
 from claude_on.schemas.knowledge import validate_file, validate_record  # noqa: E402
 from claude_on.schemas.errors import SchemaError  # noqa: E402
-from claude_on.schemas.observed import empty_route  # noqa: E402
+from claude_on.schemas.observed import empty_route, empty_source  # noqa: E402
 from claude_on.state import update_observed  # noqa: E402
-from claude_on.sync import run_sync  # noqa: E402
 
 EXPECTED_IDS = {"route.served", "route.unique", "source.limits.propagated", "limits.declared_vs_observed", "copy.single",
                 "credential.not_in_child_env", "harness.env.clean", "gate.no_silent_skip", "gate.mock.ephemeral",
                 "test.names.derived", "knowledge.typed", "schema.complete", "cost.not_copied", "qualification.current"}
 BASE = "http://127.0.0.1:1"
+TS = "2026-09-07T00:00:00Z"
 
 
 def one(paths, inv_id, route=None):
@@ -2951,13 +2728,18 @@ class RegistryTest(unittest.TestCase):
 
 class F1ServedTest(unittest.TestCase):
     def test_planted_dead_wire_model_fails_and_live_passes(self):
-        with MockSource(catalog=[omlx_entry("alpha")]) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
-            run_sync(sb.paths, timeout=3, env={})
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            def plant(doc):   # exactly what `sync` (Task 8) writes: the source's catalog and each route's served flag
+                doc["sources"]["mock"] = {**empty_source(), "reachable": True, "checked": TS, "catalog": ["alpha"], "catalog_count": 1}
+                doc["routes"]["mock/alpha"] = {**empty_route(), "served": True, "checked": TS}
+                doc["routes"]["mock/gone"] = {**empty_route(), "served": False, "checked": TS}
+            update_observed(sb.paths, plant)
             res = {r.subject: r for r in one(sb.paths, "route.served")}
             self.assertEqual(res["mock/alpha"].result, "pass")
             self.assertEqual(res["mock/gone"].result, "fail")
             self.assertIn("not in mock catalog", res["mock/gone"].reason)
             self.assertIn("sync", res["mock/gone"].fix)
+            self.assertEqual(res["paid/vendor/model-x"].result, "skip")          # its source was never probed
 
 
 class F2F12LimitsTest(unittest.TestCase):
@@ -2980,15 +2762,16 @@ class F2F12LimitsTest(unittest.TestCase):
             self.assertEqual(r["paid/vendor/model-x"].result, "pass")            # its own
 
     def test_declared_above_observed_fails_and_verified_is_the_stronger_bound(self):
-        with MockSource(catalog=[omlx_entry("alpha", 4096)]) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
-            run_sync(sb.paths, timeout=3, env={})     # declared 8192 (source), advertised 4096
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            def plant(doc):   # declared 8192 (inherited from the source) against an advertised 4096
+                doc["routes"]["mock/alpha"] = empty_route()
+                doc["routes"]["mock/alpha"]["limits"]["input"].update({"advertised": 4096, "checked": TS})
+            update_observed(sb.paths, plant)
             r = {x.subject: x for x in one(sb.paths, "limits.declared_vs_observed")}
             self.assertEqual(r["mock/alpha"].result, "fail")
             self.assertIn("8192 > advertised 4096", r["mock/alpha"].reason)
             self.assertEqual(r["paid/vendor/model-x"].result, "skip")            # nothing observed for it → skip
-            def plant(doc):
-                doc["routes"]["mock/alpha"]["limits"]["input"]["verified"] = 16384
-            update_observed(sb.paths, plant)
+            update_observed(sb.paths, lambda doc: doc["routes"]["mock/alpha"]["limits"]["input"].__setitem__("verified", 16384))
             r = {x.subject: x for x in one(sb.paths, "limits.declared_vs_observed")}
             self.assertEqual(r["mock/alpha"].result, "pass")
             self.assertIn("verified", r["mock/alpha"].reason)
@@ -3571,7 +3354,7 @@ def qualification_current(ctx: Context, route):
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
-Expected: all pass, including Task 7's sync tests. `test_schema_rules_registry_is_complete_and_alive` runs against the real tree: if it fails with "registered but never raised", a rule in `RULES` has no raiser — every rule listed in Task 2 is raised by the code in Tasks 2, 3 and 8 (`knowledge.record` by `schemas/knowledge.py`); do not delete rules to make it pass, find the missing raise.
+Expected: all pass. `test_schema_rules_registry_is_complete_and_alive` runs against the real tree: if it fails with "registered but never raised", a rule in `RULES` has no raiser — every rule listed in Task 2 is raised by the code in Tasks 2, 3 and 7 (`knowledge.record` by `schemas/knowledge.py`); do not delete rules to make it pass, find the missing raise. The tests plant observations with `update_observed` — exactly the records `sync` (Task 8) writes — so this task has no dependency on `sync`.
 
 - [ ] **Step 5: Commit**
 
@@ -3584,6 +3367,274 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ```
 
 ---
+### Task 8: `sync`
+
+**Files:**
+- Create: `claude_on/sync.py`
+- Test: `tests/claude_on/test_sync.py`
+
+**Interfaces:**
+- Consumes: `parse_routes_text`, `load_routes`, `Route`, `discovered_text`, `probe_all`, `omlx_settings_path`, `read_configured_limits`, `fetch_openrouter_spend`, `resolve_secret`, `update_observed`, `write_discovered`, `empty_route`, `empty_source`, `compute_context`, `describe_copy`, `invariants.build_context/evaluate` (Task 7)
+- Produces: `run_sync(paths, *, timeout=5.0, env=None) -> dict` with keys `command, copy, sources{name: {reachable, error, catalog_count}}, discovered[], shadowed[], orphans[], spend{}, invariants[]`.
+
+Rules encoded (§7 table, §9): `served = wire_model ∈ catalog`; `served` is `null` (unmeasured) when the source is unreachable — never a stale `true`; limits tiers `configured` (loopback oMLX settings) and `advertised` (catalog) refreshed, `verified` never touched; `cost_model.context/basis` recomputed by `compute_context`; `usd_per_mtok` = the route's price, else zeros when the source has no `auth_env` (nothing bills), else `null`; for a non-discover source only declared routes' catalog entries are kept plus the count; spend is fetched for every source with an `auth_env` (today: OpenRouter) or recorded with an error naming where the key was looked for; orphans = packaged routes whose reachable source does not serve them.
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/claude_on/test_sync.py`:
+
+```python
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
+
+import unittest  # noqa: E402
+
+from claude_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
+from claude_on.schemas.routes import load_routes  # noqa: E402
+from claude_on.state import read_observed  # noqa: E402
+from claude_on.sync import run_sync  # noqa: E402
+
+CATALOG = [omlx_entry("alpha", 262144), omlx_entry("beta", 131072), openrouter_entry("vendor/model-x", 200000, 8000)]
+SPEND = {"usage": 1.5, "limit": 10, "limit_reset": "daily", "limit_remaining": 8.5, "usage_daily": 0.5}
+
+
+class SyncTest(unittest.TestCase):
+    def test_sync_measures_served_limits_discovery_orphans_and_spend(self):
+        with MockSource(catalog=CATALOG, spend=SPEND, expect_key="k-1") as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            settings = sb.paths.home / ".omlx" / "settings.json"
+            settings.parent.mkdir()
+            settings.write_text(json.dumps({"sampling": {"max_context_window": 131072, "max_tokens": 32768}}), encoding="utf-8")
+            before = sb.paths.routes_toml.read_bytes()
+            report = run_sync(sb.paths, timeout=3, env={"MOCK_PAID_KEY": "k-1"})
+            self.assertEqual(sb.paths.routes_toml.read_bytes(), before, "sync never touches routes.toml")
+            self.assertEqual(report["orphans"], ["mock/gone"])                      # F1: declared but not served
+            # alpha is packaged → shadowed, not discovered; the OpenRouter-shaped entry is also in `mock`'s catalog (one mock, two sources)
+            self.assertEqual(report["discovered"], ["mock/beta", "mock/vendor/model-x"])
+            self.assertEqual(report["shadowed"], [])
+            obs = read_observed(sb.paths)
+            self.assertTrue(obs["sources"]["mock"]["reachable"])
+            self.assertEqual(obs["sources"]["mock"]["catalog"], ["alpha", "beta", "vendor/model-x"])
+            self.assertEqual(obs["sources"]["mock"]["identity"], "owned_by=omlx")
+            self.assertEqual(obs["sources"]["mock"]["configured_limits"]["input"], 131072)
+            self.assertEqual(set(obs["sources"]["paid"]["catalog"]), {"vendor/model-x"})   # non-discover: declared entries only
+            self.assertEqual(obs["sources"]["paid"]["catalog_count"], 3)
+            r = obs["routes"]["mock/alpha"]
+            self.assertTrue(r["served"])
+            self.assertEqual(r["limits"]["input"], {"configured": 131072, "advertised": 262144, "verified": None, "checked": r["checked"]})
+            self.assertEqual(r["limits"]["output"]["configured"], 32768)
+            self.assertEqual((r["cost_model"]["context"], r["cost_model"]["context_basis"]), (8192, "declared"))   # source limit 8192 wins
+            self.assertEqual(r["cost_model"]["usd_per_mtok"], {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
+            self.assertEqual(r["cost_model"]["caching"], "unknown")                   # never inferred from a price
+            self.assertFalse(obs["routes"]["mock/gone"]["served"])
+            x = obs["routes"]["paid/vendor/model-x"]
+            self.assertEqual((x["cost_model"]["context"], x["cost_model"]["context_basis"]), (100000, "declared"))
+            self.assertEqual(x["limits"]["input"]["advertised"], 200000)
+            self.assertEqual(x["cost_model"]["usd_per_mtok"]["input"], 1.0)
+            self.assertEqual(obs["routes"]["mock/beta"]["cost_model"]["context"], 8192)   # discovered → inherited source limit
+            self.assertEqual(obs["spend"]["paid"]["usd_used"], 1.5)
+            self.assertIsNone(obs["spend"]["paid"]["error"])
+            self.assertEqual([i["id"] for i in report["invariants"]], ["route.unique"])
+            self.assertEqual(report["invariants"][0]["result"], "pass")
+            table = load_routes(sb.paths)
+            self.assertIn("mock/beta", table.routes)
+            self.assertEqual(table.effective_limits(table.routes["mock/beta"]).input, 8192)
+            self.assertEqual(list(sb.paths.state.glob("*.tmp.*")), [])
+
+    def test_declared_over_advertised_is_visible_and_second_sync_shadows_a_promoted_route(self):
+        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            run_sync(sb.paths, timeout=3, env={})
+            self.assertIn("mock/beta", sb.paths.discovered_toml.read_text())
+            # promote beta to packaged by hand (what `add` does), then sync again: it must drop out of the discovered file
+            sb.paths.routes_toml.write_text(sb.paths.routes_toml.read_text() + '\n[routes."mock/beta"]\n', encoding="utf-8")
+            report = run_sync(sb.paths, timeout=3, env={})
+            self.assertNotIn("mock/beta", sb.paths.discovered_toml.read_text())
+            self.assertEqual(report["discovered"], ["mock/vendor/model-x"])
+            self.assertTrue(read_observed(sb.paths)["routes"]["mock/beta"]["served"])
+
+    def test_unreachable_source_records_the_error_and_leaves_served_unmeasured(self):
+        with Sandbox(MOCK_ROUTES.format(base="http://127.0.0.1:9")) as sb:
+            report = run_sync(sb.paths, timeout=1, env={})
+            obs = read_observed(sb.paths)
+            self.assertFalse(obs["sources"]["mock"]["reachable"])
+            self.assertIn(":9", obs["sources"]["mock"]["error"])
+            self.assertIsNone(obs["routes"]["mock/alpha"]["served"])
+            self.assertIsNone(obs["routes"]["mock/alpha"]["limits"]["input"]["advertised"])
+            self.assertEqual(report["orphans"], [])
+            self.assertEqual(report["discovered"], [])
+            self.assertIn("MOCK_PAID_KEY", obs["spend"]["paid"]["error"])            # no key anywhere → said where it looked
+            self.assertTrue(sb.paths.discovered_toml.exists())
+
+    def test_a_source_that_goes_unreachable_loses_its_stale_catalog_and_identity(self):
+        m = MockSource(catalog=CATALOG).start()
+        with Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            run_sync(sb.paths, timeout=3, env={})
+            self.assertEqual(read_observed(sb.paths)["sources"]["mock"]["identity"], "owned_by=omlx")
+            m.stop()
+            run_sync(sb.paths, timeout=1, env={})
+            src = read_observed(sb.paths)["sources"]["mock"]
+            self.assertFalse(src["reachable"])
+            self.assertIsNone(src["catalog"])                                   # a stale list under a fresh `checked` is R1
+            self.assertIsNone(src["identity"])
+            self.assertIsNone(src["catalog_count"])
+            self.assertIsNone(read_observed(sb.paths)["routes"]["mock/alpha"]["served"])
+
+    def test_spend_key_comes_from_the_env_file_when_the_environment_has_none(self):
+        with MockSource(catalog=CATALOG, spend=SPEND, expect_key="k-file") as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            sb.paths.state.mkdir()
+            sb.paths.env_file.write_text("MOCK_PAID_KEY=k-file\n", encoding="utf-8")
+            os.chmod(sb.paths.env_file, 0o600)
+            run_sync(sb.paths, timeout=3, env={})
+            self.assertEqual(read_observed(sb.paths)["spend"]["paid"]["usd_limit"], 10)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `python3 -m unittest discover -s tests/claude_on -p 'test_sync.py' -v`
+Expected: `ModuleNotFoundError: No module named 'claude_on.sync'`
+
+- [ ] **Step 3: Write the module**
+
+`claude_on/sync.py`:
+
+```python
+"""`claude-on sync` (§9): probe every source; refresh catalogs, served flags, configured/advertised limits and spend;
+rewrite routes.discovered.toml; report orphans. Never writes `verified` (that is `qualify --limits`), never touches
+routes.toml, never dirties a tracked file (D13)."""
+from __future__ import annotations
+
+import os
+
+from .invariants import build_context, evaluate
+from .paths import Paths, describe_copy
+from .schemas.observed import compute_context, empty_route, empty_source
+from .schemas.routes import Route, discovered_text, load_routes, parse_routes_text
+from .sources import fetch_openrouter_spend, omlx_settings_path, probe_all, read_configured_limits
+from .state import resolve_secret, update_observed, write_discovered
+from .util import utc_now
+
+FREE = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+
+
+def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> dict:
+    env = os.environ if env is None else env
+    srcs, packaged, _ = parse_routes_text(paths.routes_toml.read_text(encoding="utf-8"), packaged=True)
+    probes = probe_all(srcs, timeout)
+    now = utc_now()
+
+    # 1. discovered routes: every catalog id of a reachable discover=true source that no packaged route serves
+    packaged_keys = {(r.source, r.wire_model) for r in packaged.values()}
+    discovered: list[Route] = []
+    for name, src in srcs.items():
+        if not src.discover or not probes[name].reachable:
+            continue
+        for model_id in sorted(probes[name].catalog):
+            if (name, model_id) not in packaged_keys:
+                discovered.append(Route(f"{name}/{model_id}", name, model_id, (), None, None, None, packaged=False))
+    write_discovered(paths, discovered_text(discovered, now))
+    table = load_routes(paths)   # packaged + the file just written, dedup'd (packaged wins)
+
+    # 2. side facts: the local oMLX settings file, and spend for every keyed source
+    configured: dict[str, dict] = {}
+    for name, src in srcs.items():
+        p = omlx_settings_path(src, paths.home)
+        if p is not None and p.exists():
+            got = read_configured_limits(p, paths.home)
+            if got is not None:
+                configured[name] = got
+    spend: dict[str, dict] = {}
+    for name, src in srcs.items():
+        if not src.auth_env:
+            continue
+        key = resolve_secret(paths, src.auth_env, env)
+        if key:
+            spend[name] = fetch_openrouter_spend(src.base_url, key, timeout)
+        else:
+            spend[name] = {"usd_used": None, "usd_limit": None, "limit_reset": None, "usd_remaining": None, "usd_used_daily": None,
+                           "source": f"openrouter GET {src.base_url.rstrip('/')}/v1/auth/key", "checked": now,
+                           "error": f"no {src.auth_env} in the environment or in {paths.env_file}"}
+
+    orphans: list[str] = []
+
+    def mutate(doc: dict) -> None:
+        doc["copy"] = describe_copy(paths)
+        for name, src in srcs.items():
+            pr = probes[name]
+            s = doc["sources"].setdefault(name, empty_source())
+            s.update({"reachable": pr.reachable, "checked": pr.checked, "error": pr.error,
+                      "catalog_count": pr.catalog_count if pr.reachable else None,
+                      "identity": pr.identity if pr.reachable else None,        # not measured now → null, never stale (R1)
+                      "configured_limits": configured.get(name)})
+            if not pr.reachable:
+                s["catalog"] = None
+            elif src.discover:
+                s["catalog"] = sorted(pr.catalog)
+            else:   # keep only what declared routes need, plus the count (§7)
+                declared = {r.wire_model for r in table.by_source(name)}
+                s["catalog"] = {k: v for k, v in pr.catalog.items() if k in declared}
+        for rname, route in table.routes.items():
+            r = doc["routes"].setdefault(rname, empty_route())
+            pr = probes[route.source]
+            r["checked"] = now
+            if pr.reachable:
+                r["served"] = route.wire_model in pr.catalog
+                if route.packaged and not r["served"]:
+                    orphans.append(rname)
+                entry = pr.catalog.get(route.wire_model) or {}
+                advertised = {"input": entry.get("max_input"), "output": entry.get("max_output")}
+            else:
+                r["served"] = None                              # unmeasured now, never a stale true
+                advertised = {"input": None, "output": None}
+            conf = configured.get(route.source) or {}
+            for k in ("input", "output"):
+                r["limits"][k].update({"configured": conf.get(k), "advertised": advertised[k], "checked": now})   # never `verified`
+            lim = table.effective_limits(route)
+            context, basis = compute_context(lim.input if lim else None, r["limits"]["input"])
+            if route.price is not None:
+                usd = route.price.per_mtok()
+            elif srcs[route.source].auth_env is None:
+                usd = dict(FREE)                                # nothing bills a keyless source
+            else:
+                usd = None                                      # a keyed source with no price declared: unknown, not 0
+            r["cost_model"].update({"context": context, "context_basis": basis, "usd_per_mtok": usd})
+        for name, sp in spend.items():
+            doc["spend"][name] = sp
+
+    doc = update_observed(paths, mutate)
+    invariants = [r.as_dict() for r in evaluate(build_context(paths), ids=["route.unique"])]
+    return {"command": "sync", "copy": doc["copy"],
+            "sources": {n: {"reachable": p.reachable, "error": p.error, "catalog_count": p.catalog_count} for n, p in probes.items()},
+            "discovered": [r.name for r in discovered], "shadowed": list(table.shadowed), "orphans": sorted(orphans),
+            "spend": spend, "invariants": invariants}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
+Expected: all pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add claude_on/sync.py tests/claude_on/test_sync.py
+git commit -m "feat(claude-on): sync — served flags, limit tiers, discovery, orphans, spend
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
+```
+
+---
+
 ### Task 9: `status [route] [--check]`
 
 **Files:**
@@ -3594,7 +3645,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 - Consumes: `build_context`, `evaluate`, `skipped_ids`, `describe_copy`, `update_observed`, `utc_now`, `cli.copy_line`, `cli.invariant_lines`
 - Produces: `build_status(paths, *, route=None, check=False) -> dict` with keys `command, copy, routes_error, routes{name: {declared, observed}}, shadowed[], orphaned[], sources{}, spend{}, last_check, last_gate_run, invariants (list | None)`; `render_text(doc) -> str`; `route_view(table, observed, route) -> dict`.
 
-Rules: `status` reads and, only with `--check`, writes `last_check` — never `last_gate_run` (Q4). `declared` shows the effective limits and where they came from (`limits_from = route | source | None`), the price, the reasoning table, and the `effective_route_sha` the fingerprint uses; `observed` is the raw L2 record or `null`. `orphaned` lists packaged routes with `served == false`.
+Rules: `status` reads and, only with an unscoped `--check`, writes `last_check` — never `last_gate_run` (Q4). `status <route> --check` evaluates the per-route predicates for that route only and *shows* them; it never persists a partial check as `last_check`, because a later `status` would print it as if every invariant had been evaluated. `declared` shows the effective limits and where they came from (`limits_from = route | source | None`), the price, the reasoning table, and the `effective_route_sha` the fingerprint uses; `observed` is the raw L2 record or `null`. `orphaned` lists packaged routes with `served == false`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3663,13 +3714,16 @@ class StatusTest(unittest.TestCase):
             self.assertIn("skip credential.not_in_child_env", text)
             self.assertIn("ORPHANED", text)
 
-    def test_check_on_one_route_scopes_the_per_route_predicates(self):
+    def test_check_on_one_route_is_shown_but_never_persisted(self):
         with MockSource(catalog=[omlx_entry("alpha"), openrouter_entry("vendor/model-x")]) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             run_sync(sb.paths, timeout=3, env={})
             doc = build_status(sb.paths, route="mock/alpha", check=True)
             subjects = {i["subject"] for i in doc["invariants"] if i["subject"]}
             self.assertEqual(subjects, {"mock/alpha"})
-            self.assertEqual(doc["last_check"]["scope"], "mock/alpha")
+            self.assertIsNone(doc["last_check"])                                # a partial check must not stand as the last check (Q4)
+            self.assertIsNone(read_observed(sb.paths)["last_check"])
+            build_status(sb.paths, check=True)
+            self.assertEqual(read_observed(sb.paths)["last_check"]["result"], "fail")   # the full check sees mock/gone
 
     def test_broken_routes_toml_is_reported_not_raised(self):
         with Sandbox("version = 7\n") as sb:
@@ -3738,11 +3792,12 @@ def build_status(paths: Paths, *, route: str | None = None, check: bool = False)
     if check:
         results = evaluate(ctx, route=selected)
         doc["invariants"] = [r.as_dict() for r in results]
-        summary = {"at": utc_now(), "commit": doc["copy"]["commit"],
-                   "result": "fail" if any(r.result == "fail" for r in results) else "pass",
-                   "skipped": skipped_ids(results), "scope": selected or "all"}
-        update_observed(paths, lambda d: d.__setitem__("last_check", summary))
-        doc["last_check"] = summary
+        if selected is None:   # only a full check may stand as `last_check`; a scoped one is shown, never recorded (Q4)
+            summary = {"at": utc_now(), "commit": doc["copy"]["commit"],
+                       "result": "fail" if any(r.result == "fail" for r in results) else "pass",
+                       "skipped": skipped_ids(results)}
+            update_observed(paths, lambda d: d.__setitem__("last_check", summary))
+            doc["last_check"] = summary
     return doc
 
 
@@ -3803,7 +3858,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 
 **Interfaces:**
 - Consumes: `MockSource`, `omlx_entry`, `run_sync`, `build_context`, `evaluate`, `skipped_ids`, `update_observed`, `describe_copy`, `utc_now`
-- Produces: `run_gate(paths) -> dict` with keys `command, copy, tests{ran, ok, tail, skipped}, smoke{ok, results, expected}, invariants[], last_gate_run{}, result`; `VERIFIERS: list[str]` (empty in Plan A; Plan B appends the fidelity verifier); `INNER_ENV = "CLAUDE_ON_GATE_INNER"`.
+- Produces: `run_gate(paths) -> dict` with keys `command, copy, tests{ran, ok, tail, skipped}, smoke{ok, results, expected}, invariants[], last_gate_run{}, result`; `run_smoke(mock) -> {ok, results{"route.served:<route>": pass|fail}, expected}`; `VERIFIERS: list[str]` (empty in Plan A; Plan B appends the fidelity verifier); `INNER_ENV = "CLAUDE_ON_GATE_INNER"`. `last_gate_run.verifiers` is the object `{declared: [...], ran: [...]}` (spec §7/§10 rev 7) — a count could not let `gate.no_silent_skip` fail on a verifier declared but never run (F6).
 
 The gate is: (1) the unit tests as a subprocess (`unittest discover -s tests/claude_on`), skipped with a stated reason when `CLAUDE_ON_GATE_INNER` is set (a test running the gate must not recurse); (2) the **smoke**: a temp checkout whose `routes.toml` points at the mock source with one live and one planted-dead packaged route, `sync`, then `route.served` must be `pass` for the live one, `fail` for the dead one, `pass` for the discovered extra — F1 reproduced on every gate run; (3) every invariant over the real checkout and state; (4) `last_gate_run` written with the skips listed and the mock's port. Result is `fail` if any of (1)–(3) failed. Exit 1 on fail.
 
@@ -4002,7 +4057,7 @@ Append to `.github/workflows/ci.yml` (a new top-level job under `jobs:`; the exi
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`, then the real thing: `./bin/claude-on gate` on the checkout.
-Expected: tests pass; the gate prints `tests: ran N — ok`, `smoke (F1 on the mock source): ok`, every invariant line with its result, and `result: pass` with the skips listed (`route.served:*` until `sync` has run, `credential.not_in_child_env`, `copy.single` because no shim exists yet, `knowledge.typed`). `harness.env.clean` must read `pass … model = 'fable' is a tier name` on this machine. If `test.names.derived` or `schema.complete` fail on the real tree, that is a defect in the tree: fix the literal or the rule, never the lint.
+Expected: tests pass; the gate prints `tests: ran N — ok`, `smoke (F1 on the mock source): ok`, every invariant line with its result, and `result: pass` with the skips listed: `route.served:*` until `sync` has run, one `qualification.current:<route>` per route until Plan B's `qualify` runs, `credential.not_in_child_env`, `copy.single` because no shim exists yet, `knowledge.typed`, and on the very first run `gate.no_silent_skip` and `gate.mock.ephemeral` (no record yet). `harness.env.clean` must read `pass … model = 'fable' is a tier name` on this machine. If `test.names.derived` or `schema.complete` fail on the real tree, that is a defect in the tree: fix the literal or the rule, never the lint.
 
 - [ ] **Step 5: Commit**
 
@@ -4086,6 +4141,7 @@ class AddTest(unittest.TestCase):
             self.assertEqual((y.limits.input, y.limits.output, y.limits.confidence), (200000, 8000, "provider"))
             self.assertEqual((y.price.input, y.price.output, y.price.cache_read, y.price.cache_write), (1.0, 2.0, None, None))
             self.assertTrue(y.reasoning.supported)
+            self.assertEqual((y.reasoning.confidence, y.reasoning.efforts), ("provider", ()))
             self.assertIn("paid.pricing", y.price.source)
             self.assertEqual(list(sb.paths.checkout.glob("routes.toml.tmp.*")), [])
 
@@ -4178,7 +4234,8 @@ def route_from_catalog(name: str, source: Source, entry: dict | None, aliases: t
         params = entry.get("supported_parameters")
         if params is not None:
             reasoning_params = [p for p in params if p in ("reasoning", "reasoning_effort")]
-            reasoning = Reasoning(bool(reasoning_params), (), (), f"{src}.supported_parameters: {', '.join(reasoning_params) or 'none'} ({today})")
+            reasoning = Reasoning(bool(reasoning_params), (), (), "provider",
+                                  f"{src}.supported_parameters: {', '.join(reasoning_params) or 'none'} ({today})")
     return Route(name, src, model, aliases, limits, reasoning, price, packaged=True)
 
 
@@ -4287,7 +4344,7 @@ Expected: `orphaned packaged: ['omlx/Qwen3.8-27B-Uncensored-8bit']`, `fail route
 ./bin/claude-on gate --json | python3 -c 'import json,sys; g=json.load(sys.stdin); print(g["result"], g["tests"], g["last_gate_run"]["skipped"], g["last_gate_run"]["mock_port"])'
 ```
 
-Expected: `result: pass`, exit 0; tests ran ≥ 60 and ok; the second run's `gate.no_silent_skip` and `gate.mock.ephemeral` pass against the first run's record; skips listed are exactly `credential.not_in_child_env`, `copy.single`, `knowledge.typed`, plus `route.served:*` for routes on unreachable sources (none yet) and `tests:` never (outer run).
+Expected: `result: pass`, exit 0; tests ran ≥ 60 and ok; the second run's `gate.no_silent_skip` and `gate.mock.ephemeral` pass against the first run's record; skips listed are `credential.not_in_child_env`, `copy.single`, `knowledge.typed`, one `qualification.current:<route>` per route (sixteen on 2026-09-07: six packaged, ten discovered — until Plan B's `qualify` runs), `route.served:*` only for routes on unreachable sources (none yet), and never a `tests:` entry on an outer run.
 
 - [ ] **Step 6: `add` a real OpenRouter route and revert it**
 
@@ -4361,26 +4418,26 @@ Replace every `<…>` with the observed value before committing. If any step's e
 |---|---|
 | `claude_on/` package, stdlib only, `python3 ≥ 3.11` shim ≤ 20 lines (D4, D9) | 1 |
 | `routes.toml` + schema; rules stated once; TOML only (D4, D5, §6) | 2 |
-| read-time dedup, packaged wins by `(source, wire_model)`; orphaned reported never deleted (§6) | 2, 7 |
-| source limits inherited by any route declaring none (§6 rev 6) | 2, 8 |
+| read-time dedup, packaged wins by `(source, wire_model)`; orphaned reported never deleted (§6) | 2, 8 |
+| source limits inherited by any route declaring none (§6 rev 6) | 2, 7 |
 | `observed.json` shape; null for unmeasured; three-valued caching; F11 rejected (§7) | 3 |
-| `compute_context` = min(declared, verified) else min(declared, configured, advertised); tie → declared (§7) | 3, 7 |
-| `spend.openrouter` from `/v1/auth/key`, five fields (§7 rev 6) | 6, 7, 12 |
+| `compute_context` = min(declared, verified) else min(declared, configured, advertised); tie → declared (§7) | 3, 8 |
+| `spend.openrouter` from `/v1/auth/key`, five fields (§7 rev 6) | 6, 8, 12 |
 | storage rules: observed lock, re-read, temp+rename, `.tmp.*` sweep; discovered under the same lock; checkout lock `<checkout>/.routes.lock` (§7.1 rev 6); O_APPEND ledgers | 5, 11 |
 | §11 cost attribution per run, price snapshot, `unknown` rule, session fold (rev 6) | 4 (functions + tests); the launch that feeds them is Plan B |
-| fourteen invariants with stable ids, statement, fix, pass/fail/skip; skip never a pass (§8) | 8 |
-| reproduction for every F1–F14 except F3 (no quoted battery exists) and F11 (unit test) | 8 (F1, F2/F12, F4, F5, F6, F7/F8, F9, F10, F13, F14), 3 (F11) |
-| `harness.env.clean` broad denylist with the tier-name exception (§8 rev 6) | 8 |
-| `status` declared beside observed; `--check` writes `last_check` only (§9, Q4) | 9 |
-| `sync` refreshes served/configured/advertised/spend, never `verified`, never touches `routes.toml` (§9) | 7 |
+| fourteen invariants with stable ids, statement, fix, pass/fail/skip; skip never a pass (§8) | 7 |
+| reproduction for every F1–F14 except F3 (no quoted battery exists) and F11 (unit test) | 7 (F1, F2/F12, F4, F5 — code only; docs join in Plan D — F6, F7/F8, F9, F10, F13, F14), 3 (F11) |
+| `harness.env.clean` broad denylist with the tier-name exception (§8 rev 6) | 7 |
+| `status` declared beside observed; an unscoped `--check` writes `last_check` only, a scoped one is never persisted (§9, Q4) | 9 |
+| `sync` refreshes served/configured/advertised/spend, never `verified`, never touches `routes.toml` (§9); an unreachable source keeps no stale catalog or identity (R1) | 8 |
 | `add` fills from the catalog with `provider` confidence, never `verified`; refuses an unserved model (§6, §9) | 11 |
 | gate: unit tests + mock source on an ephemeral port + every invariant → `last_gate_run` (§8) | 10 |
-| every command `--json`, prints `copy.*`, names its invariants (§2, §9) | 1, 7, 9, 10, 11 |
+| every command `--json`, prints `copy.*`, names its invariants (§2, §9) | 1, 8, 9, 10, 11 |
 | runs beside `claude-litellm`, deletes nothing; old gate unaffected | 1 (no `__init__.py`), 12 |
-| §14 verify column: routes minus OAuth/xAI; planted dead wire_model fails; deliberate skip prints skip; spend exercised; concurrent adds survive; paid-then-free fold | 2, 12, 8/10, 12, 11, 4 |
+| §14 verify column: routes minus OAuth/xAI; planted dead wire_model fails; deliberate skip prints skip; spend exercised; concurrent adds survive; paid-then-free fold | 2, 12, 7/10, 12, 11, 4 |
 
 Not in Plan A, by design: `knowledge/gate-runs.jsonl` (Plan C writes the durable twin of `last_gate_run`); `learn`; the launch, credential flow, read-back and `qualify` (Plan B); `install` (Plan D); `omlx-tp2` and `omlx@morty` measurement (S4, S5).
 
 **Placeholder scan:** no TBD/TODO; every code step carries the code; the only `<…>` tokens are in Task 12's commit-message template and are explicitly to be replaced with measured values.
 
-**Type consistency:** `parse_routes_text` returns a 3-tuple everywhere it is called (Tasks 2, 7, 11); `Result.as_dict()` is what every command puts under `invariants`; `evaluate(ctx, ids=…, route=…)` signature is identical in Tasks 7–11; `Paths(checkout, state, home, tree)` and `Sandbox(routes_text, tree=REPO)` match; `MockSource(catalog, spend, expect_key)` and its `/v1/auth/key` + `/api/v1/auth/key` paths match `fetch_openrouter_spend`'s `<base>/v1/auth/key`; `compute_context(declared, tier)` is called with the observed `limits["input"]` dict in Task 7; the gate's `last_gate_run` record carries exactly the keys `observed.GATE_RUN_KEYS` requires (plus `tests_ok`, `smoke_ok`, which the schema tolerates).
+**Type consistency:** `parse_routes_text` returns a 3-tuple everywhere it is called (Tasks 2, 8, 11); `Result.as_dict()` is what every command puts under `invariants`; `evaluate(ctx, ids=…, route=…)` signature is identical in Tasks 7–11; Task 7 (invariants) depends on nothing from Task 8 (sync) — its tests plant the records `sync` would write; `Paths(checkout, state, home, tree)` and `Sandbox(routes_text, tree=REPO)` match; `MockSource(catalog, spend, expect_key)` and its `/v1/auth/key` + `/api/v1/auth/key` paths match `fetch_openrouter_spend`'s `<base>/v1/auth/key`; `compute_context(declared, tier)` is called with the observed `limits["input"]` dict in Task 8; the gate's `last_gate_run` record carries exactly the keys `observed.GATE_RUN_KEYS` requires (plus `tests_ok`, `smoke_ok`, which the schema tolerates).

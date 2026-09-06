@@ -1,6 +1,6 @@
 # claude-on — an agent-operated model-source layer for Claude Code
 
-Status: DRAFT rev 6 · 2026-09-07 · reinstates the conclusion
+Status: DRAFT rev 7 · 2026-09-07 · reinstates the conclusion
 of the 2026-08-20 verdict "Does claude-litellm Need LiteLLM?" (no), and on
 landing replaces `docs/ARCHITECTURE.md`.
 
@@ -47,6 +47,13 @@ inherited by any route of the source that declares none (§6);
 `harness.env.clean` fails on `model` only when its value is a literal model
 id rather than a tier name (§8); and `spend.openrouter` was exercised on
 2026-09-07 (§7).
+
+Rev 7 records two shapes Plan A's review found the examples got wrong
+(⟲⟲⟲⟲): a `reasoning` table may carry `supported` alone, because a catalog
+such as OpenRouter's names parameters and never effort levels (§6, §9); and
+`last_gate_run.verifiers` is `{declared, ran}`, not a count, because only the
+object lets `gate.no_silent_skip` fail on a verifier declared but never run
+(§7, §10; F6).
 
 ## 0. One paragraph
 
@@ -380,7 +387,7 @@ is the only place they are stated:
 
 - Route name = `<source>/<model>`; the source must exist; `wire_model` defaults to the part after the first `/`.
 - Every numeric limit carries a `confidence` and a `source`. In L1 the allowed confidences are `provider` (the provider's published figure), `owned-policy` (a cap we chose), and `configured` (read from a source's settings file — what the file says, not what the server applied). `advertised` and `verified` are L2 tiers written only by `sync`/`qualify` (§7); `add` may copy an `advertised` value into L1 as `provider`, never as `verified`.
-- `reasoning.provider_efforts` may be present without `efforts` (advertised but not selectable). No ceiling field: with no translator there is no transport ceiling.
+- `reasoning.provider_efforts` may be present without `efforts` (advertised but not selectable). No ceiling field: with no translator there is no transport ceiling. `supported` (bool) with a `source` may stand alone (⟲⟲⟲⟲ rev 7): OpenRouter's `supported_parameters` lists `reasoning` / `reasoning_effort` — parameter names, never levels — so `add` writes `supported` and `confidence = "provider"` and invents no effort list; `efforts` is written only when a catalog publishes levels.
 - Duplicates between the two files are resolved **at read time, packaged wins**, keyed by `(source, wire_model)`. `add omlx/<id>` therefore writes only `routes.toml` (one file, one atomic temp+rename); the discovered twin is shadowed immediately and dropped from `routes.discovered.toml` at the next `sync`. No write ever spans the two files — they may sit on different filesystems, and a two-file "atomic" update is not one (the F4 path, done honestly). A packaged route whose `wire_model` the source no longer serves is reported `orphaned`, never deleted.
 - Source-level `limits` apply to every route of that source that declares no `limits` of its own — discovered or packaged (⟲⟲⟲ rev 6: the packaged `omlx/…Huihui…` route above carries none and must not end up uncapped). No globs.
 - A relative `catalog` is `urljoin(base_url, catalog)`; an absolute one is used verbatim.
@@ -435,7 +442,7 @@ schema rejects a missing key. `status` prints it beside L1.
     }
   },
   "last_check":    { "at": "2026-09-07T01:02:00Z", "commit": "1eeb9ed", "result": "pass", "skipped": ["source.reachable:omlx-tp2"] },
-  "last_gate_run": { "at": "2026-09-07T00:50:00Z", "commit": "1eeb9ed", "result": "pass", "tests": 31, "verifiers": 3,
+  "last_gate_run": { "at": "2026-09-07T00:50:00Z", "commit": "1eeb9ed", "result": "pass", "tests": 31, "verifiers": { "declared": ["fidelity"], "ran": ["fidelity"] },
                      "skipped": ["source.reachable:omlx@morty", "source.reachable:omlx-tp2", "source.reachable:exo"], "mock_port": 51873 },
   "spend": { "openrouter": { "usd_used": 77.85, "usd_limit": 100, "limit_reset": "daily", "usd_remaining": 99.96, "usd_used_daily": 0.04,
                              "source": "openrouter GET /api/v1/auth/key", "checked": "2026-09-07T00:12:03Z" } }
@@ -538,7 +545,7 @@ def route_served(ctx, route):
 | `copy.single` | the shim resolves to this checkout and the tree is clean (`dirty` is reported, not failed) | F7, F8, R2 |
 | `credential.not_in_child_env` | a launched child's environment contains no source `auth_env` value (asserted by a unit test that spawns `printenv`) | §1.1c |
 | `harness.env.clean` | `~/.claude/settings.json` sets none of the routing denylist — the **current broad list** (`ANTHROPIC_*`, `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_MAX_*`, `*_PROXY`, `apiKeyHelper`, `model` — where `model` fails only for a literal model id; a tier name such as `fable` resolves through the slots the launcher pins (D7) and passes with a note, ⟲⟲⟲ rev 6, because this machine's shared settings carry `model: fable`), because a shared `env` block measurably overrides the launcher's process env | (kept; rev 2 had narrowed it to three keys) |
-| `gate.no_silent_skip` | the last gate run's `skipped` list is printed with the result | F6 |
+| `gate.no_silent_skip` | the last gate run's `skipped` list is printed with the result, and every verifier it declared ran | F6 |
 | `gate.mock.ephemeral` | the gate's mock source binds an ephemeral port, never a configured one | F9 |
 | `test.names.derived` | no test or doc contains a route name literal not in `routes.toml` (lint over `tree`) | F5 |
 | `knowledge.typed` | every knowledge record validates against its kind's schema | F13 |
@@ -567,7 +574,7 @@ command prints `copy.*`.
 | `claude-on <route\|alias> [claude args…]` | bind Claude Code to the route and **spawn** it as a child (inherited stdio, SIGINT/SIGTERM forwarded, exit status propagated); after exit, read the session transcript when one exists and record the session summary. Session rules: the launcher passes `--session-id <uuid>` unless the user passed `--session-id` (theirs is used) or `--resume`/`--continue` (the resumed session's file is read); if the user passed `--no-session-persistence` there is no transcript and `last_session` is recorded as `{ "skipped": "no-session-persistence" }` — read-back is best-effort, never a reason to refuse arguments | L1 L2 | L2 | `route.served` (re-probed with one ≤2 s GET; unreachable → skip + warning, launch proceeds — D6), `harness.env.clean`, `credential.not_in_child_env` |
 | `claude-on status [--check]` | print L1 beside L2 and the last N observations and applicable traps for the selected route; with `--check`, evaluate every invariant and write **`last_check`** — never `last_gate_run`, which only the gate runner writes | L1 L2 L5 | L2 (`last_check` if `--check`) | all |
 | `claude-on sync` | probe every source; refresh catalogs, served flags, `configured` and `advertised` limits (never `verified` — that is `qualify --limits`), spend; rewrite `routes.discovered.toml`; report orphans | L0 L1 | `$STATE/routes.discovered.toml`, L2 | `route.unique` after write |
-| `claude-on add <source>/<model> [--alias a]` | declare a packaged route in `routes.toml`; for OpenRouter fill limits, efforts and price from the catalog with `confidence = "provider"`; a discovered twin is shadowed at read time (packaged wins, §6) and dropped by the next `sync` | L0 L1 | `routes.toml` | `route.served`, `route.unique` |
+| `claude-on add <source>/<model> [--alias a]` | declare a packaged route in `routes.toml`; for OpenRouter fill limits, reasoning (`supported`; `efforts` only when a catalog publishes levels — ⟲⟲⟲⟲ rev 7) and price from the catalog with `confidence = "provider"`; a discovered twin is shadowed at read time (packaged wins, §6) and dropped by the next `sync` | L0 L1 | `routes.toml` | `route.served`, `route.unique` |
 | `claude-on qualify <route> [--baseline] [--limits]` | six fidelity gates + throughput / concurrency / caching / thinking probes, recorded with the fingerprint (§8); `--baseline` measures `harness_baseline_tokens` with the fixed minimal prompt; `--limits` finds the enforced input boundary (`verified`) | L1 L2 | L2 L5 (`qualifications.jsonl`) | `route.served` |
 | `claude-on learn <kind> --json '<record>'` (or stdin) | validate and append to `knowledge/<kind>.jsonl`; assigns `id = <kind>-<ULID>` and `ts`; validates `supersedes` | — | L5 | `knowledge.typed` |
 | `claude-on install` | link the shim, create the state root, check `python3 ≥ 3.11`, record `copy.*` | checkout | shim, state | `copy.single` |
@@ -595,7 +602,7 @@ agent with a file reader.
 | `decisions.jsonl` | `{id, ts, decision, rationale, supersedes?, by}` | `learn` |
 | `traps.jsonl` | `{id, ts, trap, mechanism, avoid, evidence, found_by, applies_to[]}` | `learn` |
 | `qualifications.jsonl` | `{id, ts, route, fingerprint{effective_route_sha, wire_model, source_identity, claude_code}, gates{name: pass\|fail}, thinking_block_seen, completed, tok_s, concurrency, caching, commit}` — `commit` is provenance only; currency is judged by `fingerprint` (§8) | `qualify` |
-| `gate-runs.jsonl` | `{id, ts, commit, result, tests, verifiers, invariants{id: pass\|fail\|skip}, skipped_reasons[], mock_port}` — the durable twin of `last_gate_run` | the gate |
+| `gate-runs.jsonl` | `{id, ts, commit, result, tests, verifiers{declared[], ran[]}, invariants{id: pass\|fail\|skip}, skipped_reasons[], mock_port}` — the durable twin of `last_gate_run`; `verifiers` is the object, not a count, so a verifier declared but never run is visible (⟲⟲⟲⟲ rev 7, F6) | the gate |
 | `tasks.jsonl` | event-sourced: `{id, ts, task_id, event: created\|handoff\|launched\|completed, …}`; current state is the fold | `learn task …` |
 
 Seed content on landing: the tokenizer-vs-template observation, the
