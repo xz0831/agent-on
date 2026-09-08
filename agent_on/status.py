@@ -71,6 +71,14 @@ def render_text(doc: dict) -> str:
                      + f" checked={o.get('checked') or '-'}")
         if v["observed"]:
             lines.append("  " + cost_line(n, v["observed"]))
+            lq = v["observed"].get("last_qualification")                          # D6 gap: --check reads `current`, but
+            if lq is None:                                                        # a plain `status` said nothing about a
+                lines.append("  qualified: never")                                # qualification that had already failed
+            elif lq["pass"]:
+                lines.append(f"  qualified ✓ {lq['at']}")
+            else:
+                failed = ", ".join(g for g, ok in lq["gates"].items() if not ok)
+                lines.append(f"  qualified ✗ {lq['at']} ({failed})")
             ls = v["observed"].get("last_session")
             if ls:
                 lines.append("  last session: " + (f"skipped ({ls['skipped']})" if "skipped" in ls else

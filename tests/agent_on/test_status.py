@@ -10,7 +10,8 @@ from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
 import unittest  # noqa: E402
 
 from agent_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
-from agent_on.state import read_observed  # noqa: E402
+from agent_on.schemas.observed import empty_route  # noqa: E402
+from agent_on.state import read_observed, update_observed  # noqa: E402
 from agent_on.status import build_status, render_text  # noqa: E402
 from agent_on.sync import run_sync  # noqa: E402
 
@@ -71,6 +72,34 @@ class StatusTest(unittest.TestCase):
             self.assertIsNone(read_observed(sb.paths)["last_check"])
             build_status(sb.paths, check=True)
             self.assertEqual(read_observed(sb.paths)["last_check"]["result"], "fail")   # the full check sees mock/gone
+
+    def test_text_view_shows_the_last_qualifications_outcome(self):  # F3
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            fp = {"effective_route_sha": "sha", "wire_model": "alpha", "source_identity": None, "claude_code": None}
+
+            def plant_failing(doc):
+                doc["routes"]["mock/alpha"] = empty_route()
+                doc["routes"]["mock/alpha"]["last_qualification"] = {
+                    "pass": False, "at": "2026-09-08T00:00:00Z",
+                    "gates": {"text_sse": True, "forced_structured_tool": False},
+                    "thinking_block_seen": False, "completed": True, "fingerprint": fp}
+
+            def plant_passing(doc):
+                doc["routes"]["paid/vendor/model-x"] = empty_route()
+                doc["routes"]["paid/vendor/model-x"]["last_qualification"] = {
+                    "pass": True, "at": "2026-09-08T01:00:00Z", "gates": {"text_sse": True},
+                    "thinking_block_seen": True, "completed": True, "fingerprint": fp}
+
+            def plant_never(doc):
+                doc["routes"]["mock/gone"] = empty_route()
+
+            update_observed(sb.paths, plant_failing)
+            update_observed(sb.paths, plant_passing)
+            update_observed(sb.paths, plant_never)
+            text = render_text(build_status(sb.paths))
+            self.assertIn("qualified ✗ 2026-09-08T00:00:00Z (forced_structured_tool)", text)
+            self.assertIn("qualified ✓ 2026-09-08T01:00:00Z", text)
+            self.assertIn("qualified: never", text)
 
     def test_broken_routes_toml_is_reported_not_raised(self):
         with Sandbox("version = 7\n") as sb:
