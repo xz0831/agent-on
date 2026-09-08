@@ -14,10 +14,13 @@ from agent_on.schemas.knowledge import APPLIES_TO_VERBS, KINDS, validate_file  #
 from agent_on.schemas.routes import load_routes  # noqa: E402
 
 REQUIRED = {"decisions": ["decisions-D1", "decisions-D2", "decisions-D3", "decisions-D3-2026-08-20", "decisions-D3-2026-09-06", "decisions-D6",
-                          "decisions-D13", "decisions-Q8-attribution-deferred", "decisions-Q10-delete-a-route", "decisions-delegate-cheaper-models", "decisions-fix-on-contact"],
+                          "decisions-D13", "decisions-Q8-attribution-deferred", "decisions-Q10-delete-a-route", "decisions-delegate-cheaper-models", "decisions-fix-on-contact",
+                          "decisions-verifier-folded-into-qualify", "decisions-old-path-deleted"],
             "observations": ["observations-2026-08-23-tokenizer-delta", "observations-2026-08-23-huihui-quality", "observations-2026-09-06-omlx-serialises",
                              "observations-2026-09-08-omlx-concurrency-per-model", "observations-2026-09-06-baseline-48312", "observations-2026-09-08-baseline-54380",
-                             "observations-2026-09-07-thinking-two-arm", "observations-2026-09-08-direct-cache", "observations-2026-09-08-limits-huihui-260671"],
+                             "observations-2026-09-07-thinking-two-arm", "observations-2026-09-08-direct-cache", "observations-2026-09-08-limits-huihui-260671",
+                             "observations-2026-06-08-deepseek-211580-lower-bound", "observations-2026-06-08-glm51-204800-lower-bound", "observations-2026-08-23-huihui-reasoning-leak",
+                             "observations-2026-08-23-qwen3-vl-text-baseline", "observations-2026-08-23-local-tokenizer-delta-819-vs-768", "observations-2026-08-23-reasoning-leak-is-the-thinking-flag"],
             "traps": ["traps-single-quoted-battery", "traps-installed-copy-selector", "traps-promotion-deadlock", "traps-budget-formula-in-code",
                       "traps-port-4000-collision", "traps-fabricated-cost-field", "traps-discovery-filter", "traps-child-env-credential",
                       "traps-exo-thunderbolt-hijack", "traps-settings-last-wins", "traps-synthetic-error-turns"]}
