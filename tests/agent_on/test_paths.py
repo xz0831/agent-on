@@ -23,6 +23,14 @@ class PathsTest(unittest.TestCase):
         self.assertEqual(p.checkout, CHECKOUT)
         self.assertEqual(p.code_tree, CHECKOUT)
 
+    def test_agent_on_checkout_overrides_checkout_and_tree_for_a_sandboxed_cli_subprocess(self):
+        # final-fix item 3: a CLI-launch test needs a subprocess to resolve routes.toml from a sandbox, not the
+        # real installation; AGENT_ON_CHECKOUT is read only here, and only when set.
+        p = default_paths(env={"HOME": "/h"})
+        self.assertEqual((p.checkout, p.code_tree), (CHECKOUT, CHECKOUT))
+        p = default_paths(env={"HOME": "/h", "AGENT_ON_CHECKOUT": "/sandbox/co"})
+        self.assertEqual((p.checkout, p.code_tree), (Path("/sandbox/co"), Path("/sandbox/co")))
+
     def test_routes_lock_is_keyed_by_the_checkout_not_the_state_root(self):
         # rev-6 P2: two runs with different AGENT_ON_STATE must take the same lock for the same routes.toml
         a = Paths(checkout=Path("/co"), state=Path("/s1"), home=Path("/h"))

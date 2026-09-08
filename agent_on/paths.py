@@ -81,7 +81,11 @@ def default_paths(env: dict | None = None) -> Paths:
         state = Path(env["AGENT_ON_STATE"])
     else:
         state = Path(env.get("XDG_STATE_HOME") or (home / ".local" / "state")) / "agent-on"
-    return Paths(checkout=CHECKOUT, state=state, home=home, tree=CHECKOUT)
+    # AGENT_ON_CHECKOUT: test-only override of the checkout (and its code tree) so a CLI subprocess under test can
+    # be pointed at a sandbox routes.toml instead of the real installation (final-fix item 3); production never
+    # sets it, so every other caller keeps resolving to the real installed checkout.
+    checkout = Path(env["AGENT_ON_CHECKOUT"]) if env.get("AGENT_ON_CHECKOUT") else CHECKOUT
+    return Paths(checkout=checkout, state=state, home=home, tree=checkout)
 
 
 def ensure_state(paths: Paths) -> None:
