@@ -93,7 +93,7 @@ def build_context(paths: Paths, *, with_claude_code: bool = False) -> Context:
         table, err = None, str(e)
     try:
         observed = read_observed(paths)
-    except SchemaError as e:
+    except (SchemaError, ValueError, OSError) as e:
         observed = {"_error": str(e), "copy": None, "sources": {}, "routes": {}, "last_check": None, "last_gate_run": None, "spend": {}}
     return Context(paths, table, err, observed, paths.code_tree, paths.home, claude_code_version() if with_claude_code else None)
 
@@ -225,7 +225,7 @@ def harness_env_clean(ctx: Context):
         d = json.loads(p.read_text(encoding="utf-8"))
     except ValueError as e:
         return fail(f"{p} is not JSON: {e}")
-    bad = [k for k in (d.get("env") or {}) if any(fnmatch.fnmatchcase(k, pat) for pat in ENV_DENY)]
+    bad = [k for k in (d.get("env") or {}) if any(fnmatch.fnmatchcase(k.upper(), pat) for pat in ENV_DENY)]
     if bad:
         return fail(f"env sets {bad}")
     if "apiKeyHelper" in d:

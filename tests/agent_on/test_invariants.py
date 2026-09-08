@@ -138,6 +138,10 @@ class HarnessEnvTest(unittest.TestCase):
             self.assertEqual(one(sb.paths, "harness.env.clean").result, "fail")
             self.write(sb, {"env": {"HTTPS_PROXY": "http://x"}})
             self.assertEqual(one(sb.paths, "harness.env.clean").result, "fail")
+            self.write(sb, {"env": {"https_proxy": "http://x"}})
+            self.assertEqual(one(sb.paths, "harness.env.clean").result, "fail")
+            self.write(sb, {"env": {"anthropic_base_url": "http://x"}})
+            self.assertEqual(one(sb.paths, "harness.env.clean").result, "fail")
             self.write(sb, {"apiKeyHelper": "cat x"})
             self.assertEqual(one(sb.paths, "harness.env.clean").result, "fail")
 
@@ -243,6 +247,17 @@ class CostAndQualificationTest(unittest.TestCase):
             r = {x.subject: x for x in one(sb.paths, "qualification.current")}
             self.assertEqual(r["mock/alpha"].result, "fail")
             self.assertIn("effective_route_sha", r["mock/alpha"].reason)
+
+    def test_corrupt_observed_json_reaches_the_error_branch_instead_of_crashing(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            sb.paths.state.mkdir(parents=True, exist_ok=True)
+            sb.paths.observed_json.write_text("not json at all", encoding="utf-8")
+            ctx = build_context(sb.paths)
+            self.assertIn("_error", ctx.observed)
+            r = one(sb.paths, "cost.not_copied")
+            self.assertEqual(r.result, "fail")
+            self.assertIn(ctx.observed["_error"], r.reason)
+            self.assertEqual(one(sb.paths, "route.unique").result, "pass")           # routes still load
 
 
 if __name__ == "__main__":
