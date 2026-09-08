@@ -1,0 +1,326 @@
+"""L6 — the Claude Code binding (§11). The one file that knows which harness is being launched: it computes the
+child environment from a route, isolates CLAUDE_CONFIG_DIR while sharing the user's settings by symlink, keeps
+the per-launch run directory (the key, the apiKeyHelper settings file, the launch record), spawns `claude` and
+reads the session back into the cost ledger. Nothing here writes `routes.toml` or reads a transcript cost figure."""
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from .cost import attribute_run, fold_session
+from .ids import ulid
+from .paths import Paths, describe_copy, ensure_state, project_slug
+from .schemas.observed import USAGE_FIELDS, empty_route
+from .schemas.routes import Route, RouteTable, load_routes
+from .sources import probe_source
+from .state import append_session_run, locked, read_observed, read_session_runs, resolve_secret, update_observed
+from .util import parse_utc, utc_now
+
+TIERS = ("FABLE", "OPUS", "SONNET", "HAIKU")
+PLACEHOLDER_TOKEN = "agent-on"          # a keyless source still needs a non-empty token: an empty one prompts for login
+DISCOVERY_ENV = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
+FREE = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+SHARED_ITEMS = ("settings.json", "settings.local.json", "plugins", "skills", "keybindings.json", "CLAUDE.md")
+# The routing denylist the old launcher scrubbed (config/ai-litellm/harnesses/claude.json), kept whole: anything
+# here in the parent would re-route or re-authenticate the child behind the launcher's back.
+SCRUB_ENV = (
+    "OPENROUTER_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "OPENAI_API_BASE", "OPENAI_BASE_URL",
+    "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES", "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES", "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER", "CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+    "CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK", "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+    "GOOGLE_API_KEY", "GEMINI_API_KEY", "OLLAMA_HOST", "LITELLM_API_KEY", "LITELLM_MASTER_KEY",
+    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_SKIP_BEDROCK_AUTH", "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+    "ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL", "AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_CUSTOM_HEADERS",
+    "CLAUDE_CONFIG_DIR",
+)
+# Beyond the list, every ANTHROPIC_* and CLAUDE_* variable of the parent is dropped: a launch from inside another
+# Claude Code session (an agent launching agent-on) otherwise hands the child its parent's session plumbing —
+# CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_MESSAGING_SOCKET/TOKEN, CLAUDE_EFFORT, CLAUDE_PID were
+# all observed inherited on 2026-09-08. The operator's output cap is the one deliberate control that passes (D12).
+PASS_THROUGH = ("CLAUDE_CODE_MAX_OUTPUT_TOKENS",)
+
+
+# ---- child environment (§11 item 2) --------------------------------------------------------------------------
+
+def child_env(parent: dict, table: RouteTable, route: Route, *, context: int | None, config_dir: Path,
+              discover: bool = False, sonnet: Route | None = None, haiku: Route | None = None) -> dict:
+    """The environment Claude Code is spawned with. Every source's auth_env and the routing denylist are removed;
+    a keyed source gets NO key variable (the apiKeyHelper supplies it); a keyless one gets the placeholder token."""
+    for r in (sonnet, haiku):
+        if r is not None and r.source != route.source:
+            raise ValueError(f"--sonnet/--haiku must name a route on source {route.source!r}; {r.name!r} is on {r.source!r}")
+    env = {k: v for k, v in parent.items()
+           if k in PASS_THROUGH or (k not in SCRUB_ENV and not k.startswith(("ANTHROPIC_", "CLAUDE_")))}
+    for src in table.sources.values():
+        if src.auth_env:
+            env.pop(src.auth_env, None)
+    source = table.sources[route.source]
+    env["ANTHROPIC_BASE_URL"] = source.base_url
+    if source.auth_env is None:
+        env["ANTHROPIC_AUTH_TOKEN"] = PLACEHOLDER_TOKEN
+    slots = {"FABLE": route, "OPUS": route, "SONNET": sonnet or route, "HAIKU": haiku or route}
+    for tier, r in slots.items():
+        env[f"ANTHROPIC_DEFAULT_{tier}_MODEL"] = r.wire_model
+    env["CLAUDE_CODE_SUBAGENT_MODEL"] = route.wire_model
+    if context:
+        env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
+    env["CLAUDE_CODE_ATTRIBUTION_HEADER"] = "0"
+    if discover:
+        env[DISCOVERY_ENV] = "1"
+    env["CLAUDE_CONFIG_DIR"] = str(config_dir)
+    return env
+
+
+# ---- the isolated config dir (§11 item 1) --------------------------------------------------------------------
+
+def prepare_config_dir(paths: Paths, cwd: str) -> Path:
+    """$STATE/claude-config: the user's settings, plugins, skills, keybindings and CLAUDE.md are symlinks to
+    ~/.claude (dangling links are fine — they light up when the native file appears); transcripts, history and
+    auto-memory stay per-launcher. The project is marked trusted, because the apiKeyHelper only runs for a
+    trusted project. Existing keys of .claude.json are preserved; the write is serialised under a state lock."""
+    cfg = paths.claude_config_dir
+    cfg.mkdir(parents=True, exist_ok=True, mode=0o700)
+    native = paths.home / ".claude"
+    for item in SHARED_ITEMS:
+        link, target = cfg / item, native / item
+        if link.is_symlink():
+            if os.readlink(link) != str(target):
+                link.unlink()
+                link.symlink_to(target)
+            continue
+        if link.exists():
+            link.rename(link.with_name(f"{item}.isolated.bak"))
+        link.symlink_to(target)
+    dotfile = cfg / ".claude.json"
+    with locked(paths.state / "locks" / "config.lock"):
+        doc: dict = {}
+        if dotfile.exists():
+            try:
+                doc = json.loads(dotfile.read_text(encoding="utf-8"))
+            except ValueError:
+                doc = {}
+        changed = False
+        if doc.get("hasCompletedOnboarding") is not True:
+            doc["hasCompletedOnboarding"] = True
+            changed = True
+        entry = doc.setdefault("projects", {}).setdefault(cwd, {})
+        if entry.get("hasTrustDialogAccepted") is not True:
+            entry["hasTrustDialogAccepted"] = True
+            changed = True
+        if changed or not dotfile.exists():
+            tmp = dotfile.with_name(".claude.json.tmp")
+            tmp.write_text(json.dumps(doc, indent=1, sort_keys=True), encoding="utf-8")
+            os.replace(tmp, dotfile)
+    return cfg
+
+
+# ---- run/<launch-id>/ (§7.1, §11 item 2) ---------------------------------------------------------------------
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def sweep_run_dirs(paths: Paths, min_age_s: float = 5.0) -> list[str]:
+    """Remove run directories whose launcher pid is dead (a crash left the key behind). A directory younger than
+    min_age_s is left alone: another launch may be between mkdir and its pid file."""
+    removed: list[str] = []
+    if not paths.run_dir.exists():
+        return removed
+    now = time.time()
+    for d in sorted(paths.run_dir.iterdir()):
+        if not d.is_dir() or now - d.stat().st_mtime < min_age_s:
+            continue
+        try:
+            pid = int((d / "pid").read_text().strip())
+        except (OSError, ValueError):
+            pid = None
+        if pid is None or not _alive(pid):
+            shutil.rmtree(d, ignore_errors=True)
+            removed.append(d.name)
+    return removed
+
+
+def write_run_dir(paths: Paths, launch_id: str, *, key: str | None, launch: dict) -> tuple[Path, Path | None]:
+    """Create run/<launch-id>/ with the launcher's pid, the launch record, and — for a keyed source — the key at
+    mode 0600 plus the settings file whose apiKeyHelper reads it. Returns (run_dir, helper settings path or None)."""
+    ensure_state(paths)
+    d = paths.run_dir / launch_id
+    d.mkdir(mode=0o700)
+    (d / "pid").write_text(str(os.getpid()), encoding="utf-8")
+    (d / "launch.json").write_text(json.dumps(launch, indent=1, sort_keys=True), encoding="utf-8")
+    helper = None
+    if key is not None:
+        key_path = d / "key"
+        fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(fd, key.encode("utf-8"))
+        finally:
+            os.close(fd)
+        helper = d / "settings.json"
+        helper.write_text(json.dumps({"apiKeyHelper": f"cat {shlex.quote(str(key_path))}"}), encoding="utf-8")
+    return d, helper
+
+
+# ---- session rules (§9) ----------------------------------------------------------------------------------------
+
+def session_args(claude_args: list[str]) -> tuple[list[str], str | None, str]:
+    """Inject --session-id unless the user chose the session themselves. Returns (args, session_id or None, mode)."""
+    args = list(claude_args)
+    if "--no-session-persistence" in args:
+        return args, None, "no-persistence"
+    for i, a in enumerate(args):
+        if a == "--session-id":
+            return args, (args[i + 1] if i + 1 < len(args) else None), "user-session-id"
+        if a.startswith("--session-id="):
+            return args, a.split("=", 1)[1], "user-session-id"
+    for i, a in enumerate(args):
+        if a in ("--resume", "-r"):
+            nxt = args[i + 1] if i + 1 < len(args) and not args[i + 1].startswith("-") else None
+            return args, nxt, "resume"
+        if a.startswith("--resume="):
+            return args, a.split("=", 1)[1], "resume"
+    if "--continue" in args or "-c" in args:
+        return args, None, "continue"
+    sid = str(uuid.uuid4())
+    return ["--session-id", sid, *args], sid, "fresh"
+
+
+# ---- the §12 line ----------------------------------------------------------------------------------------------
+
+def cost_line(route_name: str, observed_route: dict | None) -> str:
+    """One line before spawning. Every field comes from the cost model; a value the probes did not produce is `?`."""
+    cm = (observed_route or {}).get("cost_model") or {}
+    ctx = cm.get("context")
+    base = (cm.get("harness_baseline_tokens") or {}).get("value")
+    ctx_s = f"ctx {ctx}" if ctx else "ctx ?"
+    if ctx and base:
+        ctx_s += f" ({base} baseline = {round(100 * base / ctx)}%)"
+    elif base:
+        ctx_s += f" ({base} baseline)"
+    tok = cm.get("tok_s")
+    tok_s = f"{tok:.0f} tok/s" if isinstance(tok, (int, float)) and not isinstance(tok, bool) else "? tok/s"
+    usd = cm.get("usd_per_mtok")
+    if isinstance(usd, dict) and usd.get("input") is not None:
+        usd_s = "$0" if not usd.get("input") and not usd.get("output") else f"${usd['input']}/{usd.get('output')} per Mtok"
+    else:
+        usd_s = "$?"
+    cache = {True: "cache ✓", False: "cache ✗"}.get(cm.get("caching"), "cache ?")
+    conc = cm.get("concurrency")
+    conc_s = "serial" if conc == 1 else (f"{conc}× concurrent" if conc else "concurrency ?")
+    th = cm.get("thinking") or {}
+    if th.get("observed") is True:
+        th_s = "thinking on" + (f" (~{th['tokens_on_probe'] / 1000:.1f}K tok/probe)" if th.get("tokens_on_probe") else "")
+    elif th.get("observed") is False:
+        th_s = "thinking off"
+    else:
+        th_s = "thinking ?"
+    return f"{route_name}  {ctx_s} · {tok_s} · {usd_s} · {cache} · {conc_s} · {th_s}"
+
+
+# ---- session read-back (§11 item 4) --------------------------------------------------------------------------
+
+def read_transcript(path: Path) -> dict:
+    """Only the verified fields (§7). Claude Code writes one line per content block of an API response, all with
+    the same message.id and identical usage — turns are keyed by message.id so a response is counted once.
+    Claude Code's own cost figure is never read (F11)."""
+    turns: dict[str, dict] = {}
+    meta = {"version": None, "effort": None, "permission_mode": None, "session_id": None}
+    first = None
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(d, dict):
+                continue
+            if meta["version"] is None and d.get("version"):
+                meta["version"] = d["version"]
+            if meta["session_id"] is None and d.get("sessionId"):
+                meta["session_id"] = d["sessionId"]
+            if meta["effort"] is None and d.get("effort") is not None:
+                meta["effort"] = d["effort"]
+            if meta["permission_mode"] is None and d.get("permissionMode") is not None:
+                meta["permission_mode"] = d["permissionMode"]
+            if d.get("type") != "assistant":
+                continue
+            msg = d.get("message") or {}
+            usage = msg.get("usage")
+            ts = d.get("timestamp")
+            if not isinstance(usage, dict) or not isinstance(ts, str):
+                continue
+            u = {k: int(usage.get(k) or 0) for k in USAGE_FIELDS}
+            key = msg.get("id") or d.get("uuid") or f"line-{len(turns)}"
+            turns[key] = {"timestamp": ts, "model": msg.get("model"), "usage": u}
+            if first is None:
+                first = {"input_tokens_total": u["input_tokens"] + u["cache_creation_input_tokens"] + u["cache_read_input_tokens"], "usage": u}
+    return {"turns": list(turns.values()), "first_request": first, **meta}
+
+
+def find_transcript(paths: Paths, session_id: str | None, cwd: str, mode: str, started: str) -> Path | None:
+    """The file to read after exit: the known session id, else (resume without id / continue) the newest transcript
+    of this project modified since the launch started."""
+    if mode == "no-persistence":
+        return None
+    if session_id:
+        return paths.transcript_path(session_id, cwd)
+    pdir = paths.claude_config_dir / "projects" / project_slug(cwd)
+    if not pdir.exists():
+        return None
+    since = parse_utc(started).timestamp() - 1
+    files = [p for p in pdir.glob("*.jsonl") if p.stat().st_mtime >= since]
+    return max(files, key=lambda p: p.stat().st_mtime) if files else None
+
+
+def record_session(paths: Paths, launch: dict, *, ended: str, transcript: Path | None, mode: str) -> dict:
+    """Write last_session for the route and one ledger line for the session (§11 item 4). Best-effort: a missing
+    transcript is recorded as {skipped}, never raised."""
+    route = launch["route"]
+    if mode == "no-persistence":
+        rec: dict = {"skipped": "no-session-persistence"}
+    elif transcript is None or not transcript.exists():
+        rec = {"skipped": f"no transcript at {transcript}"}
+    else:
+        t = read_transcript(transcript)
+        session_id = t["session_id"] or launch.get("session_id") or transcript.stem
+        run = {"launch_id": launch["launch_id"], "route": route, "source": launch["source"], "wire_model": launch["wire_model"],
+               "started": launch["started"], "ended": ended, "price": launch["price"], "priced_models": launch.get("priced_models") or {}}
+        this_run = attribute_run(t["turns"], run)
+        append_session_run(paths, session_id, {**this_run, "session_id": session_id, "mode": mode})
+        runs = read_session_runs(paths, session_id)
+        total = fold_session(t["turns"], runs)
+        fresh = mode in ("fresh", "user-session-id") and len(runs) == 1
+        rec = {"id": session_id, "at": ended,
+               "first_request": t["first_request"],                                    # null when the transcript had no assistant turn
+               "this_run": this_run, "session_total": total,
+               "scope_note": "fresh session; this_run == session_total" if fresh else f"{mode}: this_run is this launch's turns; session_total folds {len(runs)} run(s)",
+               "duration_ms": int((parse_utc(ended) - parse_utc(launch["started"])).total_seconds() * 1000),
+               "effort": t["effort"], "permission_mode": t["permission_mode"], "claude_code": t["version"]}
+
+    def mutate(doc: dict) -> None:
+        doc["routes"].setdefault(route, empty_route())["last_session"] = rec
+
+    update_observed(paths, mutate)
+    return rec
