@@ -120,7 +120,7 @@ class ConfiguredLimitsTest(unittest.TestCase):
 
 class SpendTest(unittest.TestCase):
     def test_key_endpoint_maps_to_the_five_spend_fields(self):
-        data = {"usage": 77.848, "limit": 100, "limit_reset": "daily", "limit_remaining": 99.96, "usage_daily": 0.04, "label": "sk-or-v1-…"}
+        data = {"usage": 77.848, "limit": 100, "limit_reset": "daily", "limit_remaining": 99.96, "usage_daily": 0.04, "label": "<key label, never recorded>"}
         with MockSource(spend=data, expect_key="k-1") as m:
             s = fetch_openrouter_spend(m.base_url, "k-1", timeout=3)
             self.assertEqual((s["usd_used"], s["usd_limit"], s["limit_reset"], s["usd_remaining"], s["usd_used_daily"]), (77.848, 100, "daily", 99.96, 0.04))
