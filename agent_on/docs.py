@@ -26,18 +26,25 @@ def _reasoning(r: Route) -> str:
 
 
 def render_routes_doc(table: RouteTable) -> str:
+    """L1 only: packaged routes from routes.toml. Discovered routes (routes.discovered.toml) are state, not
+    declarations, and never appear here — `agent-on status` is where they're seen (fix-round-1 ruling: the
+    page must not depend on $STATE, or docs.current would fail on a machine with a nonempty discovered file)."""
     out = [HEADER, "", "Declared in `routes.toml` (L1). Measured values — served, limits verified, cost model, qualification — are in",
-           "`agent-on status`, never here.", "", "## Sources", "", "| source | base_url | auth_env | catalog | discover | limits in / out |", "|---|---|---|---|---|---|"]
+           "`agent-on status`, never here. Discovered routes (from `$STATE/routes.discovered.toml`) are state, not",
+           "declarations — `agent-on status` shows them.", "", "## Sources", "",
+           "| source | base_url | auth_env | catalog | discover | limits in / out |", "|---|---|---|---|---|---|"]
     for name, s in sorted(table.sources.items()):
         out.append(f"| `{name}` | {s.base_url} | {s.auth_env or 'none'} | {s.catalog or '—'} | {'yes' if s.discover else 'no'} | {_lim(s.limits)} |")
     out += ["", "## Routes", ""]
     for sname in sorted(table.sources):
-        routes = sorted(table.by_source(sname), key=lambda r: r.name)
-        out += [f"### {sname}", "", "| route | aliases | wire model | limits in / out | from | price | reasoning | kind |", "|---|---|---|---|---|---|---|---|"]
+        routes = sorted((r for r in table.by_source(sname) if r.packaged), key=lambda r: r.name)
+        out += [f"### {sname}", "", "| route | aliases | wire model | limits in / out | from | price | reasoning |", "|---|---|---|---|---|---|---|"]
         keyless = table.sources[sname].auth_env is None
         for r in routes:
             lim = table.effective_limits(r)
             origin = "route" if r.limits is not None else ("source" if lim else "—")
-            out.append(f"| `{r.name}` | {', '.join(f'`{a}`' for a in r.aliases) or '—'} | {r.wire_model} | {_lim(lim)} | {origin} | {_price(r, keyless)} | {_reasoning(r)} | {'packaged' if r.packaged else 'discovered'} |")
+            out.append(f"| `{r.name}` | {', '.join(f'`{a}`' for a in r.aliases) or '—'} | {r.wire_model} | {_lim(lim)} | {origin} | {_price(r, keyless)} | {_reasoning(r)} |")
+        if not routes:
+            out.append("no packaged routes")
         out.append("")
     return "\n".join(out).rstrip("\n") + "\n"

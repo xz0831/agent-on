@@ -12,6 +12,7 @@ import unittest  # noqa: E402
 from agent_on.docs import render_routes_doc  # noqa: E402
 from agent_on.invariants import build_context, evaluate  # noqa: E402
 from agent_on.schemas.routes import load_routes  # noqa: E402
+from agent_on.state import write_discovered  # noqa: E402
 
 BASE = "http://127.0.0.1:1"
 
@@ -34,6 +35,15 @@ class RenderTest(unittest.TestCase):
                 for a in r.aliases:
                     self.assertIn(f"`{a}`", text)
             self.assertIn("| free |", text)                                              # a keyless source's routes are free
+
+    def test_discovered_routes_are_state_and_never_rendered(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            before = render_routes_doc(load_routes(sb.paths))
+            write_discovered(sb.paths, 'version = 1\n\n[routes."mock/extra"]\nwire_model = "extra-model"\n')
+            after = render_routes_doc(load_routes(sb.paths))
+            self.assertEqual(before, after)                                              # $STATE must not change the page
+            self.assertNotIn("mock/extra", after)
+            self.assertNotIn("extra-model", after)
 
     def test_the_real_page_is_current_and_the_invariant_sees_staleness(self):
         real = (REPO / "docs" / "ROUTES.md").read_text(encoding="utf-8")

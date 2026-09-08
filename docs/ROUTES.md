@@ -3,7 +3,8 @@
 
 
 Declared in `routes.toml` (L1). Measured values — served, limits verified, cost model, qualification — are in
-`agent-on status`, never here.
+`agent-on status`, never here. Discovered routes (from `$STATE/routes.discovered.toml`) are state, not
+declarations — `agent-on status` shows them.
 
 ## Sources
 
@@ -19,31 +20,34 @@ Declared in `routes.toml` (L1). Measured values — served, limits verified, cos
 
 ### exo
 
-| route | aliases | wire model | limits in / out | from | price | reasoning | kind |
-|---|---|---|---|---|---|---|---|
+| route | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|
+no packaged routes
 
 ### omlx
 
-| route | aliases | wire model | limits in / out | from | price | reasoning | kind |
-|---|---|---|---|---|---|---|---|
-| `omlx/Qwen3.8-27B-Uncensored-8bit` | `uncensored8` | Qwen3.8-27B-Uncensored-8bit | 131072 / 32768 (configured) | source | free | — | packaged |
-| `omlx/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp` | `huihui` | root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp | 131072 / 32768 (configured) | source | free | — | packaged |
+| route | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|
+| `omlx/Qwen3.8-27B-Uncensored-8bit` | `uncensored8` | Qwen3.8-27B-Uncensored-8bit | 131072 / 32768 (configured) | source | free | — |
+| `omlx/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp` | `huihui` | root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp | 131072 / 32768 (configured) | source | free | — |
 
 ### omlx-tp2
 
-| route | aliases | wire model | limits in / out | from | price | reasoning | kind |
-|---|---|---|---|---|---|---|---|
+| route | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|
+no packaged routes
 
 ### omlx@morty
 
-| route | aliases | wire model | limits in / out | from | price | reasoning | kind |
-|---|---|---|---|---|---|---|---|
+| route | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|
+no packaged routes
 
 ### openrouter
 
-| route | aliases | wire model | limits in / out | from | price | reasoning | kind |
-|---|---|---|---|---|---|---|---|
-| `openrouter/deepseek/deepseek-v4-pro` | `deepseek` | deepseek/deepseek-v4-pro | 1024000 / 384000 (provider) | route | $0.63684 / $1.27368 per Mtok | supported | packaged |
-| `openrouter/moonshotai/kimi-k2.7-code` | `kimi` | moonshotai/kimi-k2.7-code | 262144 / 235929 (provider) | route | $0.66 / $3.4 per Mtok | supported | packaged |
-| `openrouter/xiaomi/mimo-v2.5` | `mimo` | xiaomi/mimo-v2.5 | 1048576 / 131072 (provider) | route | $0.14 / $0.28 per Mtok | supported | packaged |
-| `openrouter/z-ai/glm-5.2` | `glm` | z-ai/glm-5.2 | 1048576 / 131072 (provider) | route | $0.966 / $3.036 per Mtok | supported | packaged |
+| route | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|
+| `openrouter/deepseek/deepseek-v4-pro` | `deepseek` | deepseek/deepseek-v4-pro | 1024000 / 384000 (provider) | route | $0.63684 / $1.27368 per Mtok | supported |
+| `openrouter/moonshotai/kimi-k2.7-code` | `kimi` | moonshotai/kimi-k2.7-code | 262144 / 235929 (provider) | route | $0.66 / $3.4 per Mtok | supported |
+| `openrouter/xiaomi/mimo-v2.5` | `mimo` | xiaomi/mimo-v2.5 | 1048576 / 131072 (provider) | route | $0.14 / $0.28 per Mtok | supported |
+| `openrouter/z-ai/glm-5.2` | `glm` | z-ai/glm-5.2 | 1048576 / 131072 (provider) | route | $0.966 / $3.036 per Mtok | supported |
