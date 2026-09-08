@@ -202,12 +202,6 @@ boundary. A local-runtime destination must answer a live route probe before the
 worker is launched; cloud routes are not implicitly probed because that can be
 billable.
 
-This layer intentionally does not schedule machines. Its JSON task/prompt
-surface can be consumed by Orca or another dispatcher that selects a host and
-invokes the same CLI. The dispatcher owns placement and remote execution;
-claude-litellm continues to own catalog resolution, local readiness, gateway
-credentials and the one-route worker contract.
-
 Runtime discovery currently has one generated route block and therefore allows
 only one enabled `discoverModels` runtime. Validation fails closed if multiple
 runtimes request ownership of that block.

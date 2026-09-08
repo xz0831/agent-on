@@ -599,7 +599,7 @@ command prints `copy.*`.
 | `agent-on sync` | probe every source; refresh catalogs, served flags, `configured` and `advertised` limits (never `verified` — that is `qualify --limits`), spend; rewrite `routes.discovered.toml`; report orphans | L0 L1 | `$STATE/routes.discovered.toml`, L2 | `route.unique` after write |
 | `agent-on add <source>/<model> [--alias a]` | declare a packaged route in `routes.toml`; for OpenRouter fill limits, reasoning (`supported`; `efforts` only when a catalog publishes levels — ⟲⟲⟲⟲ rev 7) and price from the catalog with `confidence = "provider"`; a discovered twin is shadowed at read time (packaged wins, §6) and dropped by the next `sync` | L0 L1 | `routes.toml` | `route.served`, `route.unique` |
 | `agent-on qualify <route> [--baseline] [--limits]` | six fidelity gates + throughput / concurrency / caching / thinking probes, recorded with the fingerprint (§8); `--baseline` measures `harness_baseline_tokens` with the fixed minimal prompt; `--limits` finds the enforced input boundary (`verified`) | L1 L2 | L2 L5 (`qualifications.jsonl`) | `route.served` |
-| `agent-on learn <kind> --json '<record>'` (or stdin) | validate and append to `knowledge/<kind>.jsonl`; assigns `id = <kind>-<ULID>` and `ts`; validates `supersedes` | — | L5 | `knowledge.typed` |
+| `agent-on learn <kind> --json-record '<record>'` (or stdin; `--json` stays the output switch — Plan C) | validate and append to `knowledge/<kind>.jsonl`; assigns `id = <kind>-<ULID>` and `ts`; validates `supersedes` | — | L5 | `knowledge.typed` |
 | `agent-on install` | link the shim, create the state root, check `python3 ≥ 3.11`, record `copy.*` | checkout | shim, state | `copy.single` |
 
 9 → 7: the mapping said an agent needs nine — the seven above plus `task

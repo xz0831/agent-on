@@ -509,3 +509,16 @@ back into `status` (`last_session`) and the per-session ledger under `$STATE/ses
 per run at the price snapshotted at launch, and `"unknown"` where a turn's price cannot be restored. `status`
 shows each route's last qualification outcome; a failed gate is shown, never a reason to refuse a launch.
 `claude-litellm` is untouched until Plan D.
+
+### Knowledge (Plan C)
+
+    ./bin/agent-on status glm                    # … plus the last observations and the traps that apply
+    ./bin/agent-on learn traps --json-record '{…}'
+    ./bin/agent-on learn task create … / handoff … / complete …
+    ./bin/claude-on huihui --task <id>           # the handoff prompt, in the task's worktree
+
+`knowledge/` is git-tracked, append-only JSONL beside `routes.toml`: decisions (with supersession), traps (with
+`applies_to`), observations, and the durable twins of qualifications and gate runs. `qualify`, the gate and the
+launch append to it; `learn` is the write verb for everything else; `.claude/skills/agent-on/SKILL.md` tells an
+agent inside Claude Code how to read and write it. The seeds carry the decisions D1–D13, the measured facts from
+2026-08-23 to 2026-09-08 and eleven traps. Commit `knowledge/` with the work that produced it.
