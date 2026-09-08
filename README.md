@@ -502,8 +502,9 @@ The old `claude-litellm` path is untouched until Plan D.
 
 The source key never enters Claude Code's environment: the launcher writes it to a per-launch 0600 file and hands
 Claude Code an `apiKeyHelper` that reads it; every source's key variable and the routing denylist are removed
-from the child. A user `--settings` is folded into that per-launch file (Claude Code 2.1.263 keeps only the last
-`--settings`, so passing both would have displaced the credential). After exit the session transcript is read
+from the child. A user `--settings` is folded into that per-launch file on a keyed route; on a keyless route it
+passes through unchanged (Claude Code 2.1.263 keeps only the last `--settings`, so passing both would have
+displaced the credential). After exit the session transcript is read
 back into `status` (`last_session`) and the per-session ledger under `$STATE/sessions/` — costs are attributed
 per run at the price snapshotted at launch, and `"unknown"` where a turn's price cannot be restored. `status`
 shows each route's last qualification outcome; a failed gate is shown, never a reason to refuse a launch.

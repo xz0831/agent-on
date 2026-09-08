@@ -73,6 +73,10 @@ which harness is asking; L6 is one file per harness. Measured the same day:
 oMLX serves the Anthropic, chat, completions and responses wires at once from
 one engine with no penalty for mixing them in flight (§12).
 
+Rev 8 errata (final-fix round, 2026-09-08): §11's placeholder-token example still
+read `ANTHROPIC_AUTH_TOKEN=claude-on`, left over from before this revision's
+rename; the code and this document now both say `agent-on`.
+
 ## 0. One paragraph
 
 `agent-on` runs an agent harness — Claude Code today, Codex next — on any model from any source —
@@ -650,7 +654,7 @@ becomes `route.served` at launch. The Orca/dispatcher paragraph in
    (required by `apiKeyHelper`; measured to work in `-p`).
 2. **Env injection**, computed from the route:
    - `ANTHROPIC_BASE_URL` — the source's `base_url`
-   - `ANTHROPIC_API_KEY=""`; `ANTHROPIC_AUTH_TOKEN` is **never** the source key. For a keyless source `ANTHROPIC_AUTH_TOKEN=claude-on` (a fixed non-empty placeholder — Claude Code prompts for login on an empty one). For a source with `auth_env`, the **credential flow** is:
+   - `ANTHROPIC_API_KEY=""`; `ANTHROPIC_AUTH_TOKEN` is **never** the source key. For a keyless source `ANTHROPIC_AUTH_TOKEN=agent-on` (a fixed non-empty placeholder — Claude Code prompts for login on an empty one). For a source with `auth_env`, the **credential flow** is:
      1. The launcher (the parent, running in the *unscrubbed* environment) resolves the key: `$<auth_env>` from its own environment if set, else the line for it in `$STATE/env`. The environment wins — decided here, once, where both are visible.
      2. It writes the key to `$STATE/run/<launch-id>/key`, mode 0600, and a per-launch settings file `$STATE/run/<launch-id>/settings.json` containing `{"apiKeyHelper": "cat $STATE/run/<launch-id>/key"}`, passed as `--settings` (merged before any user `--settings`).
      3. It scrubs every source's `auth_env` from the child environment, including the active one. The helper runs as a child of Claude Code and inherits that scrubbed environment — which is why it must read a file the parent wrote, not an environment variable the parent removed (rev 3's defect).
