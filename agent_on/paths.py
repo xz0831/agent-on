@@ -67,8 +67,15 @@ class Paths:
         return self.state / "env"
 
     @property
+    def bin_dir(self) -> Path:
+        return self.home / ".local" / "bin"
+
+    def shim_for(self, name: str) -> Path:
+        return self.bin_dir / name
+
+    @property
     def shim(self) -> Path:
-        return self.home / ".local" / "bin" / "agent-on"
+        return self.shim_for("agent-on")
 
     @property
     def run_dir(self) -> Path:
@@ -123,4 +130,4 @@ def describe_copy(paths: Paths) -> dict:
     v = sys.version_info
     return {"checkout": str(paths.checkout), "commit": commit,
             "dirty": None if porcelain is None else bool(porcelain),
-            "shim": shim, "python": f"{sys.executable} {v.major}.{v.minor}.{v.micro}", "state": str(paths.state)}
+            "shim": shim, "python": f"{sys.executable} {v[0]}.{v[1]}.{v[2]}", "state": str(paths.state)}

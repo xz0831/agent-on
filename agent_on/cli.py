@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 from .paths import default_paths, describe_copy
 from .schemas.errors import SchemaError
@@ -30,6 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--alias")
     a.add_argument("--timeout", type=float, default=5.0)
     sub.add_parser("gate", parents=[common], help="unit tests + mock-source smoke + every invariant; writes last_gate_run")
+    i = sub.add_parser("install", parents=[common], help="link ~/.local/bin/agent-on and claude-on to this checkout, create the state root, check python3 (D9)")
+    i.add_argument("--bin-dir", metavar="DIR", help="where to put the shims (default ~/.local/bin)")
+    i.add_argument("--dry-run", action="store_true")
     l = sub.add_parser("launch", parents=[common], help="bind Claude Code to a route and run it; `claude-on <route>` is this verb (everything after the route goes to Claude Code)")
     l.add_argument("--harness", default="claude", choices=["claude"])
     l.add_argument("--discover", action="store_true", help="set CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 (D8: off by default)")
@@ -132,6 +136,15 @@ def render_qualify(doc: dict) -> str:
     return "\n".join(lines + invariant_lines(doc["invariants"]))
 
 
+def render_install(doc: dict) -> str:
+    lines = [copy_line(doc["copy"]), f"python: {doc['python']['executable']} {doc['python']['version']} {'ok' if doc['python']['ok'] else 'TOO OLD'}",
+             f"state root: {doc['state_root']}"]
+    for n, l in doc["links"].items():
+        lines.append(f"  {l['state']:9} {l['path']} -> {l['target']}" + (f"  ({l['reason']})" if l["reason"] else ""))
+    lines += [f"warning: {w}" for w in doc["warnings"]]
+    return "\n".join(lines + invariant_lines(doc["invariants"]))
+
+
 def render_learn(doc: dict) -> str:
     lines = [copy_line(doc["copy"])]
     lines.append(f"learned {doc['record']['id']} → {doc['path']}" if doc["written"] else "NOT learned")
@@ -165,6 +178,11 @@ def main(argv: list[str] | None = None) -> int:
             doc = run_add(paths, args.name, alias=args.alias, timeout=args.timeout)
             code = EXIT_OK if doc["written"] else EXIT_FAIL
             text = render_add(doc)
+        elif args.command == "install":
+            from .install import run_install
+            doc = run_install(paths, bin_dir=Path(args.bin_dir) if args.bin_dir else None, dry_run=args.dry_run)
+            code = EXIT_OK if doc["written"] or args.dry_run else EXIT_FAIL
+            text = render_install(doc)
         elif args.command == "launch":
             from .harness import run_launch
             doc = run_launch(paths, args.route, args.claude_args, harness=args.harness, discover=args.discover, sonnet=args.sonnet,

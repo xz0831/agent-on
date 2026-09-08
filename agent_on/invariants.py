@@ -191,13 +191,13 @@ def limits_declared_vs_observed(ctx: Context, route):
 
 @invariant("copy.single",
            statement="the shim resolves to this checkout and the tree is clean (dirty is reported, not failed)",
-           fix="re-link: ln -sfn <checkout>/bin/agent-on ~/.local/bin/agent-on")
+           fix="agent-on install")
 def copy_single(ctx: Context):
     shim = ctx.paths.shim
     if not shim.is_symlink():
         if shim.exists():
             return fail(f"{shim} exists but is not a symlink")
-        return skip(f"no shim at {shim} (install lands in Plan D)")
+        return skip(f"no shim at {shim} — run agent-on install")
     target = Path(os.readlink(shim))
     target = (target if target.is_absolute() else shim.parent / target).resolve()
     expected = (ctx.tree / "bin" / "agent-on").resolve()
