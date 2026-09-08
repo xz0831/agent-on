@@ -1,0 +1,149 @@
+# agent-on route table — L1, the only declarations (spec §6). Git-tracked; edited by hand or by `agent-on add`.
+# Route names are <source>/<model> (D10). Every numeric limit carries a confidence and a source.
+# The GPT and xAI OAuth routes packaged in litellm_config.yaml are deliberately absent (D3).
+version = 1
+
+[sources.openrouter]
+base_url = "https://openrouter.ai/api"
+auth_env = "OPENROUTER_API_KEY"
+catalog  = "https://openrouter.ai/api/v1/models"
+
+[sources.omlx]
+base_url = "http://127.0.0.1:8000"
+catalog  = "/v1/models"
+discover = true
+
+[sources.omlx.limits]
+input      = 131072
+output     = 32768
+confidence = "configured"
+source     = "~/.omlx/settings.json sampling.max_context_window / sampling.max_tokens (read 2026-09-07)"
+
+[sources."omlx@morty"]
+base_url = "http://mortys-mac-studio:8000"
+catalog  = "/v1/models"
+discover = true
+
+[sources."omlx@morty".limits]
+input      = 131072
+output     = 32768
+confidence = "owned-policy"
+source     = "assumed equal to the local oMLX settings until S5 measures morty; the remote settings file is not readable from here"
+
+[sources.omlx-tp2]
+base_url = "http://127.0.0.1:8003"
+catalog  = "/v1/models"
+discover = true
+
+[sources.omlx-tp2.limits]
+input      = 131072
+output     = 32768
+confidence = "owned-policy"
+source     = "assumed equal to the single-node oMLX settings until S4 measures the TP2 endpoint (down on 2026-09-07)"
+
+[sources.exo]
+base_url = "http://127.0.0.1:52415"
+catalog  = "/v1/models"
+discover = true
+
+[sources.exo.limits]
+input      = 131072
+output     = 32768
+confidence = "owned-policy"
+source     = "placeholder cap until S3 measures exo (not installed on 2026-09-07)"
+
+# ---- OpenRouter: limits and prices from the live catalog on 2026-09-07 (top_provider.*, pricing.*) --------------
+
+[routes."openrouter/deepseek/deepseek-v4-pro"]
+wire_model = "deepseek/deepseek-v4-pro"
+aliases    = ["deepseek"]
+
+[routes."openrouter/deepseek/deepseek-v4-pro".limits]
+input      = 1024000
+output     = 384000
+confidence = "provider"
+source     = "openrouter.top_provider.context_length / max_completion_tokens (2026-09-07)"
+
+[routes."openrouter/deepseek/deepseek-v4-pro".reasoning]
+supported  = true
+confidence = "provider"
+source     = "openrouter.supported_parameters: reasoning, reasoning_effort (2026-09-07)"
+
+[routes."openrouter/deepseek/deepseek-v4-pro".price]
+input_usd_per_mtok      = 0.63684
+output_usd_per_mtok     = 1.27368
+cache_read_usd_per_mtok = 0.05307
+source                  = "openrouter.pricing (2026-09-07); no cache-write price published"
+
+[routes."openrouter/moonshotai/kimi-k2.7-code"]
+wire_model = "moonshotai/kimi-k2.7-code"
+aliases    = ["kimi"]
+
+[routes."openrouter/moonshotai/kimi-k2.7-code".limits]
+input      = 262144
+output     = 235929
+confidence = "provider"
+source     = "openrouter.top_provider.context_length / max_completion_tokens (2026-09-07)"
+
+[routes."openrouter/moonshotai/kimi-k2.7-code".reasoning]
+supported  = true
+confidence = "provider"
+source     = "openrouter.supported_parameters: reasoning (2026-09-07)"
+
+[routes."openrouter/moonshotai/kimi-k2.7-code".price]
+input_usd_per_mtok      = 0.66
+output_usd_per_mtok     = 3.4
+cache_read_usd_per_mtok = 0.18
+source                  = "openrouter.pricing (2026-09-07); no cache-write price published"
+
+[routes."openrouter/xiaomi/mimo-v2.5"]
+wire_model = "xiaomi/mimo-v2.5"
+aliases    = ["mimo"]
+
+[routes."openrouter/xiaomi/mimo-v2.5".limits]
+input      = 1048576
+output     = 131072
+confidence = "provider"
+source     = "openrouter.top_provider.context_length / max_completion_tokens (2026-09-07)"
+
+[routes."openrouter/xiaomi/mimo-v2.5".reasoning]
+supported  = true
+confidence = "provider"
+source     = "openrouter.supported_parameters: reasoning (2026-09-07)"
+
+[routes."openrouter/xiaomi/mimo-v2.5".price]
+input_usd_per_mtok      = 0.14
+output_usd_per_mtok     = 0.28
+cache_read_usd_per_mtok = 0.0028
+source                  = "openrouter.pricing (2026-09-07); no cache-write price published"
+
+[routes."openrouter/z-ai/glm-5.2"]
+wire_model = "z-ai/glm-5.2"
+aliases    = ["glm"]
+
+[routes."openrouter/z-ai/glm-5.2".limits]
+input      = 1048576
+output     = 131072
+confidence = "provider"
+source     = "openrouter.top_provider.context_length / max_completion_tokens (2026-09-07)"
+
+[routes."openrouter/z-ai/glm-5.2".reasoning]
+supported  = true
+confidence = "provider"
+source     = "openrouter.supported_parameters: reasoning, reasoning_effort (2026-09-07)"
+
+[routes."openrouter/z-ai/glm-5.2".price]
+input_usd_per_mtok      = 0.966
+output_usd_per_mtok     = 3.036
+cache_read_usd_per_mtok = 0.1932
+source                  = "openrouter.pricing (2026-09-07); no cache-write price published"
+
+# ---- oMLX on this machine: limits inherited from [sources.omlx.limits]; free ---------------------------------------
+
+[routes."omlx/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"]
+wire_model = "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"
+aliases    = ["huihui"]
+
+[routes."omlx/Qwen3.8-27B-Uncensored-8bit"]
+wire_model = "Qwen3.8-27B-Uncensored-8bit"
+aliases    = ["uncensored8"]
