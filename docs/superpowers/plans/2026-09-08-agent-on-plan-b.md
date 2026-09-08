@@ -632,7 +632,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 
 **Interfaces:**
 - Consumes: `paths.{Paths, ensure_state, project_slug}`, `schemas.routes.{Route, RouteTable}`, `schemas.observed.{USAGE_FIELDS, empty_route}`, `state.{locked, append_session_run, read_session_runs, update_observed}`, `cost.{attribute_run, fold_session, zero_usage}`, `util.{utc_now, parse_utc}`.
-- Produces: `SCRUB_ENV`, `SHARED_ITEMS`, `TIERS`, `PLACEHOLDER_TOKEN`, `DISCOVERY_ENV`, `FREE`, `child_env(...)`, `prepare_config_dir(paths, cwd)`, `sweep_run_dirs(paths)`, `write_run_dir(paths, launch_id, *, key, launch)`, `session_args(claude_args)`, `cost_line(route_name, observed_route)`, `read_transcript(path)`, `record_session(paths, launch, *, ended, transcript, mode)`, `find_transcript(paths, session_id, cwd, mode, started)`.
+- Produces: `SCRUB_ENV`, `PASS_THROUGH`, `SHARED_ITEMS`, `TIERS`, `PLACEHOLDER_TOKEN`, `DISCOVERY_ENV`, `FREE`, `child_env(...)`, `prepare_config_dir(paths, cwd)`, `sweep_run_dirs(paths)`, `write_run_dir(paths, launch_id, *, key, launch)`, `session_args(claude_args)`, `cost_line(route_name, observed_route)`, `read_transcript(path)`, `record_session(paths, launch, *, ended, transcript, mode)`, `find_transcript(paths, session_id, cwd, mode, started)`.
 
 Rulings recorded here (the spec leaves them open): (1) `ANTHROPIC_API_KEY` is *removed* for a keyed source rather than set to `""` — the scrub already guarantees no inherited key reaches the child, and the `apiKeyHelper` is consulted only when no key variable is present; (2) an assistant API response is written by Claude Code as one transcript line per content block with the same `message.id` and identical `usage`, so turns are de-duplicated by `message.id` (last line wins) — counting lines would double-bill; (3) the subagent slot is bound to the launch route (D7), `--sonnet`/`--haiku` override only their own tier slot.
 
@@ -671,10 +671,13 @@ class ChildEnvTest(unittest.TestCase):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             t = table(sb)
             parent = {"PATH": "/usr/bin", "HOME": "/h", "MOCK_PAID_KEY": "sk-paid", "ANTHROPIC_API_KEY": "sk-ant", "ANTHROPIC_MODEL": "x",
-                      "OPENROUTER_API_KEY": "sk-or", "HTTPS_PROXY": "keep-me", "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "1"}
+                      "OPENROUTER_API_KEY": "sk-or", "HTTPS_PROXY": "keep-me", "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "4096",
+                      "CLAUDE_CODE_SESSION_ID": "parent-session", "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_CODE_MESSAGING_TOKEN": "t", "CLAUDE_EFFORT": "high", "CLAUDE_PID": "1"}
             env = harness.child_env(parent, t, t.routes["paid/vendor/model-x"], context=100000, config_dir=Path("/cfg"))
-            for k in ("MOCK_PAID_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "OPENROUTER_API_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"):
+            for k in ("MOCK_PAID_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "OPENROUTER_API_KEY",
+                      "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_EFFORT", "CLAUDE_PID"):
                 self.assertNotIn(k, env, k)
+            self.assertEqual(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "4096")                # the operator's output cap passes (D12)
             self.assertNotIn("sk-paid", json.dumps(env))
             self.assertEqual(env["PATH"], "/usr/bin")
             self.assertEqual(env["HTTPS_PROXY"], "keep-me")                        # not a routing variable: kept
@@ -914,6 +917,11 @@ SCRUB_ENV = (
     "ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL", "AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_CUSTOM_HEADERS",
     "CLAUDE_CONFIG_DIR",
 )
+# Beyond the list, every ANTHROPIC_* and CLAUDE_* variable of the parent is dropped: a launch from inside another
+# Claude Code session (an agent launching agent-on) otherwise hands the child its parent's session plumbing —
+# CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_MESSAGING_SOCKET/TOKEN, CLAUDE_EFFORT, CLAUDE_PID were
+# all observed inherited on 2026-09-08. The operator's output cap is the one deliberate control that passes (D12).
+PASS_THROUGH = ("CLAUDE_CODE_MAX_OUTPUT_TOKENS",)
 
 
 # ---- child environment (§11 item 2) --------------------------------------------------------------------------
@@ -925,7 +933,8 @@ def child_env(parent: dict, table: RouteTable, route: Route, *, context: int | N
     for r in (sonnet, haiku):
         if r is not None and r.source != route.source:
             raise ValueError(f"--sonnet/--haiku must name a route on source {route.source!r}; {r.name!r} is on {r.source!r}")
-    env = {k: v for k, v in parent.items() if k not in SCRUB_ENV}
+    env = {k: v for k, v in parent.items()
+           if k in PASS_THROUGH or (k not in SCRUB_ENV and not k.startswith(("ANTHROPIC_", "CLAUDE_")))}
     for src in table.sources.values():
         if src.auth_env:
             env.pop(src.auth_env, None)
@@ -1342,6 +1351,7 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual(argv[3], doc["session"]["id"])
             self.assertEqual(argv[4:], ["-p", "hi"])
             self.assertEqual(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], "vendor/model-x")
+            self.assertEqual(env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "100000")               # declared limit: nothing measured yet
             self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(sb.paths.claude_config_dir))
             self.assertEqual(list(sb.paths.run_dir.iterdir()), [])                      # run dir removed after exit
             rec = doc["last_session"]
@@ -1499,6 +1509,9 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
         served = {"id": "route.served", "result": "fail", "reason": f"{route.wire_model!r} not in {route.source} catalog", "subject": route.name, "fix": "run `agent-on sync`"}
         warnings.append(f"{route.wire_model!r} is not in the {route.source} catalog right now; launching anyway (D6)")
     context = ((obs_route or {}).get("cost_model") or {}).get("context")
+    if context is None:                                                            # never synced: the declared cap is still better than
+        lim = table.effective_limits(route)                                        # Claude Code's 200k assumption for an unknown model
+        context = lim.input if lim else None
     key = resolve_secret(paths, source.auth_env, parent) if source.auth_env else None
     if source.auth_env and key is None:
         warnings.append(f"no {source.auth_env} in the environment or {paths.env_file}; Claude Code will not be able to authenticate to {route.source}")
@@ -2320,7 +2333,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 - Test: `tests/agent_on/test_cli_launch.py`
 
 **Interfaces:**
-- Produces: `agent-on launch [--harness claude] [--discover] [--sonnet R] [--haiku R] [--dry-run] <route> [claude args…]` (everything after the route goes to Claude Code verbatim); `agent-on qualify <route> [--baseline] [--limits] [--allow-paid] [--timeout S]`; `bin/claude-on` = `agent-on launch --harness claude "$@"`. Exit codes: `launch` returns the child's exit status (0 for a dry run); `qualify` returns 0 when every gate passed, 1 otherwise (a refused paid probe is 1). In `--json` mode a real launch prints its envelope after the child exits; the §12 cost line always goes to stderr before spawning.
+- Produces: `agent-on launch [--harness claude] [--discover] [--sonnet R] [--haiku R] [--dry-run] <route> [claude args…]` (everything after the route goes to Claude Code verbatim); `agent-on qualify <route> [--baseline] [--limits] [--allow-paid] [--timeout S]`; `bin/claude-on` = `agent-on launch --harness claude "$@"`. Exit codes: `launch` returns the child's exit status (0 for a dry run); `qualify` returns 0 when every gate passed, 1 otherwise (a refused paid probe is 1). In `--json` mode a real launch prints its envelope as **one line after the child's own stdout** (a consumer takes the last line); a dry run prints the indented envelope alone; the §12 cost line goes to stderr before spawning.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2393,7 +2406,7 @@ class LaunchCliTest(unittest.TestCase):
             with redirect_stdout(out):
                 code = cli.main(["--json", "launch", first_route(), "-p", "hi"])
             self.assertEqual(code, 4)
-            doc = json.loads(out.getvalue())
+            doc = json.loads(out.getvalue().strip().splitlines()[-1])                 # the envelope is the last line; the child's stdout precedes it
             self.assertEqual(doc["exit_code"], 4)
             self.assertIn("last_session", doc)
             self.assertTrue(Path(tmp, "out", "env.json").exists())
@@ -2483,6 +2496,15 @@ and in `main`, before the final `else:` (gate):
             text = render_qualify(doc)
 ```
 
+and replace `main`'s final print statement — the landed line `print(json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) if args.json else text)` — with:
+
+```python
+    if args.json and args.command == "launch" and not getattr(args, "dry_run", False):
+        print("\n" + json.dumps(doc, sort_keys=True, ensure_ascii=False))          # one line after the child's own stdout: take the last line
+    else:
+        print(json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) if args.json else text)
+```
+
 (add `import os` to `cli.py`; a `ValueError` from a cross-source `--sonnet` already lands in the `(OSError, ValueError)` envelope with exit 1).
 
 `bin/claude-on` (then `chmod +x bin/claude-on`):
@@ -2539,7 +2561,7 @@ Expected: the cost line for `omlx/root4k--Huihui…` (`ctx 131072 · ? tok/s · 
 ls ~/.local/state/agent-on/sessions/ | tail -2; ls ~/.local/state/agent-on/run/
 ```
 
-Expected: `OK` printed and exit 0; the second run prints the README's first heading (a Read-tool loop completed on the direct wire — the S1 result, now through the launcher); `last_session.first_request.input_tokens_total` in the tens of thousands (the harness baseline shape; 48,312 was measured on 2.1.263), `this_run.cost_usd == 0.0`, `claude_code == "2.1.263"`; one ledger file per session; `run/` empty after exit.
+Expected: `OK` printed and exit 0 (a `-p` on Huihui takes 2–3 minutes: the ~50K-token harness prefill on a 27B model — 53,844 input tokens were read back on 2026-09-08 from this checkout; Claude Code also prints an `unrecognized_model` notice for any model its catalog does not know — harmless, the launcher's `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is what keeps its window right); the second run prints the README's first heading (a Read-tool loop completed on the direct wire — the S1 result, now through the launcher); `last_session.first_request.input_tokens_total` in the tens of thousands (the harness baseline shape; 48,312 was measured on 2.1.263), `this_run.cost_usd == 0.0`, `claude_code == "2.1.263"`; one ledger file per session; `run/` empty after exit.
 
 - [ ] **Step 3: Qualify the free route, with baseline and limits**
 
