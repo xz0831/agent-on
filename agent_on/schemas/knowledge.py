@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .errors import SchemaError
@@ -16,6 +17,16 @@ KINDS: dict[str, tuple[str, ...]] = {
 }
 OBSERVATION_KINDS = ("tokens", "throughput", "quality", "liveness", "cost")
 APPLIES_TO_VERBS = ("status", "sync", "add", "gate", "launch", "qualify", "learn", "install")
+
+# Task 6 — the task ledger (PR #12) as events in knowledge/tasks.jsonl. Kept here (not in agent_on.tasks) so
+# `tasks.py` can import it without a cycle (tasks -> knowledge -> schemas).
+TASK_ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[a-z0-9][a-z0-9-]{0,47}-[0-9a-f]{6}")
+TASK_EVENTS: dict[str, tuple[str, ...]] = {
+    "created": ("name", "goal", "worktree"),
+    "handoff": ("index", "from_route", "to_route", "objective", "summary", "commit", "tests"),
+    "launched": ("index", "launch_id", "route"),
+    "completed": ("index", "summary", "commit", "tests", "close"),
+}
 
 
 def validate_record(kind: str, rec) -> None:
@@ -36,6 +47,14 @@ def validate_record(kind: str, rec) -> None:
             raise SchemaError("knowledge.record", "traps: applies_to must be a non-empty list of verbs, sources, routes or '*'")
     if "supersedes" in rec and not (isinstance(rec["supersedes"], str) and rec["supersedes"].startswith(f"{kind}-")):
         raise SchemaError("knowledge.record", f"{kind}: supersedes must name an id of the same kind")
+    if kind == "tasks":
+        if not (isinstance(rec["task_id"], str) and TASK_ID.fullmatch(rec["task_id"])):
+            raise SchemaError("knowledge.record", f"tasks: invalid task_id {rec['task_id']!r}")
+        if rec["event"] not in TASK_EVENTS:
+            raise SchemaError("knowledge.record", f"tasks: event must be one of {sorted(TASK_EVENTS)}, got {rec['event']!r}")
+        missing = [k for k in TASK_EVENTS[rec["event"]] if k not in rec]
+        if missing:
+            raise SchemaError("knowledge.record", f"tasks/{rec['event']}: missing {missing}")
 
 
 def validate_file(path: Path) -> list[str]:
