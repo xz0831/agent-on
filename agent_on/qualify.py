@@ -13,10 +13,8 @@ import urllib.error
 import urllib.request
 
 from .harness import run_launch
-from .ids import ulid
 from .invariants import build_context, claude_code_version, evaluate
 from .paths import Paths, describe_copy
-from .schemas.knowledge import validate_record
 from .schemas.observed import compute_context, empty_route
 from .schemas.routes import load_routes
 from .sources import probe_source
@@ -408,14 +406,17 @@ def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool
 
     update_observed(paths, mutate)
     doc["written"] = True
-    kdir = paths.checkout / "knowledge"
-    if kdir.is_dir():                                                              # Plan C creates it; until then observed.json is the record
-        record = {"id": f"qualifications-{ulid()}", "ts": now, "route": route.name, "fingerprint": fp, "gates": gates["gates"],
-                  "thinking_block_seen": gates["thinking_block_seen"], "completed": gates["completed"], "tok_s": thr["tok_s"],
-                  "concurrency": conc["concurrency"], "caching": cache["caching"], "commit": doc["copy"]["commit"]}
-        validate_record("qualifications", record)
-        with open(kdir / "qualifications.jsonl", "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, sort_keys=True) + "\n")
-        doc["knowledge"] = str(kdir / "qualifications.jsonl")
+    doc["knowledge"] = None
+    if paths.knowledge_dir.is_dir():                                               # §10: qualify writes L5 when it exists
+        from .knowledge import append
+        q = append(paths, "qualifications", {"route": route.name, "fingerprint": fp, "gates": gates["gates"],
+                                             "thinking_block_seen": gates["thinking_block_seen"], "completed": gates["completed"],
+                                             "tok_s": thr["tok_s"], "concurrency": conc["concurrency"], "caching": cache["caching"],
+                                             "commit": doc["copy"]["commit"]}, now=now)
+        o = append(paths, "observations", {"route": route.name, "kind": "throughput",
+                                           "values": {"tok_s": thr["tok_s"], "concurrency": conc["concurrency"], "caching": cache["caching"],
+                                                      "thinking_observed": gates["thinking_block_seen"]},
+                                           "evidence": f"qualify {q['id']}", "session": None}, now=now)
+        doc["knowledge"] = {"qualification": q["id"], "observation": o["id"]}
     doc["invariants"] = [r.as_dict() for r in evaluate(build_context(paths, with_claude_code=True, claude_bin=claude_bin), ids=["route.served", "qualification.current"], route=route.name)]
     return doc

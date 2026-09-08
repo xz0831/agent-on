@@ -118,6 +118,21 @@ class RunQualifyTest(unittest.TestCase):
             self.assertIsNone(cm["thinking"]["observed"])
             self.assertIsNone(cm["tok_s"])
 
+    def test_qualify_appends_its_qualification_and_a_throughput_observation_when_knowledge_exists(self):
+        from agent_on import knowledge
+        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            self.assertIsNone(run_qualify(sb.paths, "a", env={}, timeout=10).get("knowledge"))          # no knowledge/: nothing written, no error
+            sb.paths.knowledge_dir.mkdir()
+            doc = run_qualify(sb.paths, "a", env={}, timeout=10)
+            q = knowledge.read(sb.paths, "qualifications")
+            o = knowledge.read(sb.paths, "observations")
+            self.assertEqual(len(q), 1)
+            self.assertEqual(doc["knowledge"], {"qualification": q[0]["id"], "observation": o[0]["id"]})
+            self.assertEqual(q[0]["route"], "mock/alpha")
+            self.assertEqual(o[0]["kind"], "throughput")
+            self.assertEqual(o[0]["values"]["caching"], True)
+            self.assertIn(q[0]["id"], o[0]["evidence"])
+
 
 if __name__ == "__main__":
     unittest.main()

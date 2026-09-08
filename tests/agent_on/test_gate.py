@@ -50,6 +50,19 @@ class GateTest(unittest.TestCase):
             self.assertEqual(byid[("gate.no_silent_skip", None)], "pass")
             self.assertEqual(byid[("gate.mock.ephemeral", None)], "pass")
 
+    def test_gate_writes_the_gate_runs_twin_only_when_knowledge_exists(self):
+        from agent_on import knowledge
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb, mock.patch.dict(os.environ, {INNER_ENV: "1"}):
+            doc = run_gate(sb.paths)
+            self.assertIsNone(doc["knowledge"])
+            sb.paths.knowledge_dir.mkdir()
+            doc = run_gate(sb.paths)
+            recs = knowledge.read(sb.paths, "gate-runs")
+            self.assertEqual(doc["knowledge"], {"gate_run": recs[0]["id"]})
+            self.assertEqual(recs[0]["result"], doc["last_gate_run"]["result"])
+            self.assertEqual(recs[0]["invariants"], doc["last_gate_run"]["invariants"])
+            self.assertEqual(recs[0]["verifiers"], {"declared": [], "ran": []})
+
     def test_a_failing_invariant_fails_the_gate(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb, mock.patch.dict(os.environ, {INNER_ENV: "1"}):
             def plant(doc):

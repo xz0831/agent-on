@@ -90,6 +90,8 @@ def render_gate(doc: dict) -> str:
     lines += invariant_lines(doc["invariants"])
     g = doc["last_gate_run"]
     lines.append(f"result: {g['result']} · skipped {g['skipped']} · mock port {g['mock_port']}")
+    if doc.get("knowledge"):
+        lines.append(f"knowledge: gate-runs {doc['knowledge']['gate_run']}")
     return "\n".join(lines)
 
 

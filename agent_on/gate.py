@@ -1,5 +1,5 @@
 """`agent-on gate` (§8): unit tests, the mock-source smoke that reproduces F1, every invariant; then
-`last_gate_run` to L2 with every skip listed and the mock's port. (The knowledge/gate-runs.jsonl twin lands in Plan C.)"""
+`last_gate_run` to L2 with every skip listed and the mock's port, plus its knowledge/gate-runs.jsonl twin (§10)."""
 from __future__ import annotations
 
 import os
@@ -74,5 +74,12 @@ def run_gate(paths: Paths) -> dict:
               "skipped_reasons": [f"{r.id}{'[' + r.subject + ']' if r.subject else ''}: {r.reason}" for r in results if r.result == "skip"],
               "mock_port": mock_port}
     update_observed(paths, lambda d: d.__setitem__("last_gate_run", record))
+    kn = None
+    if paths.knowledge_dir.is_dir():                                               # the durable twin of last_gate_run (§10, Q4)
+        from .knowledge import append
+        rec = append(paths, "gate-runs", {"commit": record["commit"], "result": record["result"], "tests": record["tests"],
+                                          "verifiers": record["verifiers"], "invariants": record["invariants"],
+                                          "skipped_reasons": record["skipped_reasons"], "mock_port": record["mock_port"]}, now=record["at"])
+        kn = {"gate_run": rec["id"]}
     return {"command": "gate", "copy": describe_copy(paths), "tests": tests, "smoke": smoke,
-            "invariants": [r.as_dict() for r in results], "last_gate_run": record, "result": record["result"]}
+            "invariants": [r.as_dict() for r in results], "last_gate_run": record, "result": record["result"], "knowledge": kn}
