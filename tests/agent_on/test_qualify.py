@@ -87,7 +87,13 @@ class GatesTest(unittest.TestCase):
 
 class ProbesTest(unittest.TestCase):
     def test_throughput_and_concurrency(self):
-        with MockSource(delay_s=0.2) as m:
+        # De-flake (final review, Plan C): concurrency==2 needs pair_s/serial_s < 1.5. At delay_s=0.2 the fixed
+        # per-request overhead (thread start + TCP connect for the pair) was itself close to 0.2*0.5=0.1s, putting
+        # the ratio right on the 1.5 boundary — that is what flaked on a loaded machine. 0.8s gives that assertion
+        # ~4x the margin (overhead is a fixed cost, not a fraction of delay_s) while keeping the whole test's wall
+        # time under 5s. The serialize=True arm's ratio (~2, forced by the lock queuing the pair back-to-back) has
+        # a wide margin at any delay_s and was not the flaky assertion, so it stays at 0.2s.
+        with MockSource(delay_s=0.8) as m:
             t = probe_throughput(Wire(m.base_url, "x", timeout=10))
             self.assertGreater(t["tok_s"], 0)
             self.assertEqual(t["output_tokens"], 12)
