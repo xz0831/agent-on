@@ -329,3 +329,113 @@ def record_session(paths: Paths, launch: dict, *, ended: str, transcript: Path |
     if this_line is not None:
         append_session_run(paths, session_id, this_line)
     return rec
+
+
+# ---- spawn and the launch (§9 launch row) ---------------------------------------------------------------------
+
+def utc_ceil() -> str:
+    """Now, rounded UP to the next whole second: transcript timestamps carry milliseconds, so a run's window must end
+    no earlier than the last turn Claude Code wrote just before exiting."""
+    now = datetime.now(timezone.utc)
+    if now.microsecond:
+        now = now.replace(microsecond=0) + timedelta(seconds=1)
+    return now.isoformat().replace("+00:00", "Z")
+
+
+def spawn(argv: list[str], env: dict, cwd: str) -> int:
+    """Run Claude Code as a child with inherited stdio. The tty delivers Ctrl-C to the child directly, so the launcher
+    ignores SIGINT (it must outlive the child to do the read-back) and forwards SIGTERM. Returns the exit status."""
+    proc = subprocess.Popen(argv, env=env, cwd=cwd)
+
+    def forward(signum, frame):
+        try:
+            proc.send_signal(signum)
+        except ProcessLookupError:
+            pass
+
+    old_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    old_term = signal.signal(signal.SIGTERM, forward)
+    try:
+        return proc.wait()
+    finally:
+        signal.signal(signal.SIGINT, old_int)
+        signal.signal(signal.SIGTERM, old_term)
+
+
+def _price_of(route: Route, keyless: bool) -> dict | None:
+    if route.price is not None:
+        return route.price.per_mtok()
+    return dict(FREE) if keyless else None
+
+
+def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str = "claude", discover: bool = False,
+               sonnet: str | None = None, haiku: str | None = None, dry_run: bool = False, env: dict | None = None,
+               claude_bin: str | None = None, cwd: str | None = None, probe_timeout: float = 2.0, announce: bool = True) -> dict:
+    if harness != "claude":
+        raise ValueError(f"harness {harness!r} is not bound yet (Plan F adds codex)")
+    parent = dict(os.environ if env is None else env)
+    # the physical path: Claude Code derives the transcript slug from process.cwd(), which resolves symlinks
+    # (macOS: /var/… is /private/var/…); the trust entry and the transcript lookup must use the same string
+    cwd = os.path.realpath(cwd or os.getcwd())
+    table = load_routes(paths)
+    route = table.resolve(name)
+    source = table.sources[route.source]
+    sonnet_r = table.resolve(sonnet) if sonnet else None
+    haiku_r = table.resolve(haiku) if haiku else None
+    observed = read_observed(paths)
+    obs_route = observed["routes"].get(route.name)
+    warnings: list[str] = []
+    # D6: one ≤2 s probe; unreachable → skip + warning, the launch proceeds
+    probe = probe_source(source, timeout=probe_timeout)
+    if not probe.reachable:
+        served = {"id": "route.served", "result": "skip", "reason": f"{route.source} unreachable: {probe.error}", "subject": route.name, "fix": None}
+        warnings.append(f"{route.source} did not answer ({probe.error}); launching anyway (D6)")
+    elif route.wire_model in probe.catalog:
+        served = {"id": "route.served", "result": "pass", "reason": "served", "subject": route.name, "fix": None}
+    else:
+        served = {"id": "route.served", "result": "fail", "reason": f"{route.wire_model!r} not in {route.source} catalog", "subject": route.name, "fix": "run `agent-on sync`"}
+        warnings.append(f"{route.wire_model!r} is not in the {route.source} catalog right now; launching anyway (D6)")
+    from .invariants import build_context, evaluate                                # local: invariants imports this module
+    lint = [r.as_dict() for r in evaluate(build_context(paths), ids=["harness.env.clean", "credential.not_in_child_env"])]
+    for r in lint:
+        if r["result"] == "fail":
+            warnings.append(f"{r['id']}: {r['reason']} — launching anyway (D6)")
+    context = ((obs_route or {}).get("cost_model") or {}).get("context")
+    if context is None:                                                            # never synced: the declared cap is still better than
+        lim = table.effective_limits(route)                                        # Claude Code's 200k assumption for an unknown model
+        context = lim.input if lim else None
+    key = resolve_secret(paths, source.auth_env, parent) if source.auth_env else None
+    if source.auth_env and key is None:
+        warnings.append(f"no {source.auth_env} in the environment or {paths.env_file}; Claude Code will not be able to authenticate to {route.source}")
+    swept = sweep_run_dirs(paths)
+    config_dir = prepare_config_dir(paths, cwd)
+    launch_id = ulid()
+    started = utc_now()
+    args, session_id, mode = session_args(claude_args)
+    keyless = source.auth_env is None
+    priced = {r.wire_model: _price_of(r, keyless) for r in table.by_source(route.source)}
+    launch = {"launch_id": launch_id, "route": route.name, "source": route.source, "wire_model": route.wire_model, "started": started,
+              "session_id": session_id, "mode": mode, "cwd": cwd, "price": _price_of(route, keyless),
+              "priced_models": {m: p for m, p in priced.items() if p is not None}, "context": context, "claude_args": args}
+    cenv = child_env(parent, table, route, context=context, config_dir=config_dir, discover=discover, sonnet=sonnet_r, haiku=haiku_r)
+    line = cost_line(route.name, obs_route)
+    doc = {"command": "launch", "copy": describe_copy(paths), "route": route.name, "wire_model": route.wire_model, "base_url": source.base_url,
+           "launch_id": launch_id, "session": {"id": session_id, "mode": mode}, "cost_line": line, "invariants": [served, *lint],
+           "env_keys": sorted(k for k in cenv if k.startswith(("ANTHROPIC_", "CLAUDE_"))), "swept": swept, "warnings": warnings}
+    binary = claude_bin or shutil.which("claude") or "claude"
+    if dry_run:
+        doc.update({"dry_run": True, "argv": [binary, *(["--settings", "<run-dir>/settings.json"] if key is not None else []), *args]})
+        return doc
+    run_dir, helper = write_run_dir(paths, launch_id, key=key, launch=launch)
+    argv = [binary, *(["--settings", str(helper)] if helper else []), *args]   # the helper file first: a user --settings merges after it
+    if announce:
+        print(line, file=sys.stderr)                                              # the §12 line, before spawning
+    try:
+        code = spawn(argv, cenv, cwd)
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)                                 # the key never outlives the child
+    ended = utc_ceil()                                                            # inclusive of the last turn's milliseconds
+    transcript = find_transcript(paths, session_id, cwd, mode, started)
+    rec = record_session(paths, launch, ended=ended, transcript=transcript, mode=mode)
+    doc.update({"exit_code": code, "last_session": rec, "transcript": str(transcript) if transcript else None})
+    return doc
