@@ -14,7 +14,7 @@ from agent_on.schemas.knowledge import APPLIES_TO_VERBS, KINDS, validate_file  #
 from agent_on.schemas.routes import load_routes  # noqa: E402
 
 REQUIRED = {"decisions": ["decisions-D1", "decisions-D2", "decisions-D3", "decisions-D3-2026-08-20", "decisions-D3-2026-09-06", "decisions-D6",
-                          "decisions-D13", "decisions-Q8-attribution-deferred", "decisions-delegate-cheaper-models", "decisions-fix-on-contact"],
+                          "decisions-D13", "decisions-Q8-attribution-deferred", "decisions-Q10-delete-a-route", "decisions-delegate-cheaper-models", "decisions-fix-on-contact"],
             "observations": ["observations-2026-08-23-tokenizer-delta", "observations-2026-08-23-huihui-quality", "observations-2026-09-06-omlx-serialises",
                              "observations-2026-09-08-omlx-concurrency-per-model", "observations-2026-09-06-baseline-48312", "observations-2026-09-08-baseline-54380",
                              "observations-2026-09-07-thinking-two-arm", "observations-2026-09-08-direct-cache", "observations-2026-09-08-limits-huihui-260671"],
