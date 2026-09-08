@@ -1575,7 +1575,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 **Interfaces:**
 - Produces: `errors.RULES["observed.qualification.shape"]`; `observed.QUALIFICATION_KEYS`, `observed.FINGERPRINT_KEYS`, validation of `last_qualification`; `qualify.GATES`, `qualify.Wire(base_url, model, key=None, timeout=90.0)` with `.post(payload) -> (status, body)`, `.stream(payload) -> (status, events)`, `.count_tokens(payload) -> int | None`; `run_gates(wire) -> {"gates": {name: bool}, "details": {…}, "thinking_block_seen": bool, "completed": bool, "thinking_tokens": int | None, "all_pass": bool}`; `probe_throughput(wire) -> {"tok_s", "output_tokens", "seconds"}`; `probe_concurrency(wire) -> {"concurrency", "serial_s", "pair_s", "ratio"}`; `probe_caching(wire) -> {"caching": bool, "cache_read_second": int, "status": int}`; `probe_limits(wire, lo, hi, *, count_tokens=True, max_probes=10) -> {"verified": int | None, "basis": "count_tokens" | "estimate" | None, "probes": [...]}` — `verified` is the *counted* size of the largest accepted probe when the source serves `count_tokens`, else the requested size.
 
-The six gates are the ones `scripts/verify_tool_call_fidelity.py` has run since 2026-08 (text SSE, Claude's list-valued system blocks, forced native tool call, streamed `input_json_delta`, exact `tool_result` continuation, adaptive-effort request shape), ported to the direct wire: the request goes to `<base_url>/v1/messages` with both `x-api-key` and `Authorization: Bearer` when the source has a key (OpenRouter honours either; oMLX ignores both). `concurrency` is a two-level probe: two concurrent requests against one; a pair that completes in under 1.5× the single request's time reports `2`, else `1` — the 2026-09-08 measurement showed batching gain is per model, so this is measured per route and never inherited. `caching` needs a cacheable prefix: the probe sends a ~1,500-token system block with `cache_control` twice and reads `cache_read_input_tokens` on the second reply. `probe_limits` bisects the enforced input boundary with `max_tokens: 1` requests of a repeated word, calibrated with `count_tokens` where the source serves it (oMLX does; the mock does), otherwise one word ≈ one token; a 4xx whose message mentions `long`/`context`/`maximum`/`exceed` counts as "over".
+The six gates are the ones `scripts/verify_tool_call_fidelity.py` has run since 2026-08 (text SSE, Claude's list-valued system blocks, forced native tool call, streamed `input_json_delta`, exact `tool_result` continuation, adaptive-effort request shape), ported to the direct wire: the request goes to `<base_url>/v1/messages` with both `x-api-key` and `Authorization: Bearer` when the source has a key (OpenRouter honours either; oMLX ignores both). `concurrency` is a two-level probe: two concurrent requests against one; a pair that completes in under 1.5× the single request's time reports `2`, else `1` — the 2026-09-08 measurement showed batching gain is per model, so this is measured per route and never inherited. `caching` needs a cacheable prefix: the probe sends a ~6,500-token system block with `cache_control` twice and reads `cache_read_input_tokens` on the second reply — oMLX caches in 4,096-token blocks (measured 2026-09-08: 1,770 tokens → never cached, 4,618 → 4,096 read back), so a small prefix would report a false `false`. `probe_limits` bisects the enforced input boundary with `max_tokens: 1` requests of a repeated word, calibrated with `count_tokens` where the source serves it (oMLX does; the mock does), otherwise one word ≈ one token; a 4xx whose message mentions `long`/`context`/`maximum`/`exceed` counts as "over".
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1958,8 +1958,10 @@ def probe_concurrency(wire: Wire) -> dict:
 
 
 def probe_caching(wire: Wire) -> dict:
-    """A cacheable system prefix (~1,500 tokens) sent twice; caching is true when the second reply reports cache reads."""
-    prefix = ("This system prompt exists only to be long enough to be cached by the provider. " * 90).strip()
+    """A cacheable system prefix (~6,500 tokens) sent twice; caching is true when the second reply reports cache reads.
+    The prefix is large on purpose: oMLX caches in 4,096-token blocks (measured 2026-09-08 — a 1,770-token prefix is
+    never reported cached, a 4,618-token one reads back 4,096), and Anthropic-style providers need ≥ 1,024."""
+    prefix = ("This system prompt exists only to be long enough to be cached by the provider. " * 400).strip()
     payload = {"max_tokens": 8, "system": [{"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}}],
                "messages": [{"role": "user", "content": "Reply with exactly: OK"}]}
     wire.post(payload)
@@ -2054,7 +2056,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 - Consumes: Task 3–5 modules, `invariants.{build_context, evaluate, claude_code_version}`, `state.{read_observed, update_observed, resolve_secret}`, `schemas.observed.{compute_context, empty_route}`, `schemas.knowledge.validate_record`, `ids.ulid`, `paths.describe_copy`.
 - Produces: `run_qualify(paths, name, *, baseline=False, limits=False, allow_paid=False, env=None, timeout=90.0, claude_bin=None) -> dict` with keys `command, copy, route, refused (str|None), gates{}, details{}, probes{throughput, concurrency, caching, limits|None}, baseline (int|None), fingerprint{}, written (bool), invariants[]`. `credential.not_in_child_env` becomes a real predicate: for every route it computes `harness.child_env` from a parent that carries a marker value for every source's `auth_env` and an inherited `ANTHROPIC_API_KEY`, and fails if any marker survives.
 
-Rulings: a paid probe is one that runs Claude Code (`--baseline`, ~48K input tokens) or bisects the context (`--limits`, up to ~2× the limit in input tokens) on a source with an `auth_env`; both need `--allow-paid` and the estimate is printed first. The six gates and the three short probes on a keyed source cost well under a cent (spec §7) and run without the flag. `knowledge/qualifications.jsonl` is appended only when `knowledge/` exists (Plan C creates it); until then the record lives in `observed.json` only, and the doc says so.
+Rulings: a paid probe is one that runs Claude Code (`--baseline`, ~48K input tokens) or bisects the context (`--limits`, up to ~2× the limit in input tokens) on a source with an `auth_env`; both need `--allow-paid` and the estimate is printed first. The six gates and the three short probes on a keyed source cost about a cent at GLM-5.2 prices (the caching probe alone sends ~13K input tokens) and run without the flag. `knowledge/qualifications.jsonl` is appended only when `knowledge/` exists (Plan C creates it); until then the record lives in `observed.json` only, and the doc says so.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2571,12 +2573,12 @@ Expected: `OK` printed and exit 0 (a `-p` on Huihui takes 2–3 minutes: the ~50
 ./bin/agent-on status huihui | sed -n '1,8p'
 ```
 
-Expected: six `pass` lines (S1 measured 6/6 on this model); `tok/s` around 50–65 and `concurrency 1` (Huihui gains nothing at 2 — measured 2026-09-08), `caching True` (real session showed `cache_read 20,480`) or `False` — either is a measurement; `thinking on`; `harness baseline: ~48K`; `verified input limit` near 131072 (oMLX enforces `max_context_window`); the status line now shows `ctx 131072 (48xxx baseline = 37%) · … · thinking on`; `qualification.current` passes. Exit 0 both times.
+Expected: six `pass` lines (6/6 measured through the materialized build on 2026-09-08, 33 s); `tok/s` around 60 and `concurrency 1` (pair/serial 2.26 measured), `caching True` (oMLX's 4,096-token cache blocks — the probe's prefix is sized for them); `thinking on`; `harness baseline: ~48K`; `verified input limit` near 131072 (oMLX enforces `max_context_window`); the status line now shows `ctx 131072 (48xxx baseline = 37%) · … · thinking on`; `qualification.current` passes. Exit 0 both times.
 
 - [ ] **Step 4: The paid lane (OpenRouter, cents)**
 
 ```bash
-./bin/agent-on qualify glm; echo "exit $?"                                 # six gates + short probes: < $0.01
+./bin/agent-on qualify glm; echo "exit $?"                                 # six gates + short probes: ≈ $0.01–0.02
 ./bin/agent-on qualify glm --baseline --allow-paid; echo "exit $?"         # one Claude Code -p run: ~48K input ≈ $0.05
 ./bin/claude-on glm -p 'Reply with exactly: OK'; echo "exit $?"
 ./bin/agent-on status glm --json | python3 -c 'import json,sys; v=next(iter(json.load(sys.stdin)["routes"].values()))["observed"]; print(v["cost_model"]["caching"], v["last_session"]["this_run"]["cost_usd"], v["last_session"]["session_total"]["cost_usd"])'
@@ -2623,7 +2625,7 @@ Append to `README.md`, after the Plan A section:
     ./bin/claude-on glm -p 'Reply with exactly: OK'
     ./bin/claude-on --dry-run glm                # show the environment keys and argv, spawn nothing
     ./bin/agent-on qualify huihui --baseline --limits
-    ./bin/agent-on qualify glm                   # six gates + probes on a paid route: under a cent; --baseline/--limits need --allow-paid
+    ./bin/agent-on qualify glm                   # six gates + probes on a paid route: about a cent; --baseline/--limits need --allow-paid
 
 The source key never enters Claude Code's environment: the launcher writes it to a per-launch 0600 file and hands
 Claude Code an `apiKeyHelper` that reads it; every source's key variable and the routing denylist are removed
