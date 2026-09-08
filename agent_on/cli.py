@@ -36,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     l.add_argument("--sonnet", metavar="ROUTE", help="bind the SONNET slot to another route on the same source")
     l.add_argument("--haiku", metavar="ROUTE", help="bind the HAIKU slot to another route on the same source")
     l.add_argument("--dry-run", action="store_true", help="print the environment keys, argv and cost line; spawn nothing")
+    l.add_argument("--task", metavar="ID", help="inject the task's handoff prompt and run in its worktree (§10.1)")
+    l.add_argument("--handoff", default="latest")
     l.add_argument("route", help="a route name or alias")
     l.add_argument("claude_args", nargs=argparse.REMAINDER, help="passed to Claude Code unchanged")
     q = sub.add_parser("qualify", parents=[common], help="six fidelity gates + throughput/concurrency/caching/thinking probes; --baseline and --limits (paid sources need --allow-paid)")
@@ -97,6 +99,8 @@ def render_gate(doc: dict) -> str:
 
 def render_launch(doc: dict) -> str:
     lines = [copy_line(doc["copy"]), doc["cost_line"]]
+    if doc.get("task"):
+        lines.append(f"task {doc['task']['id']} handoff {doc['task']['handoff']} in {doc['task']['worktree']}")
     lines += [f"warning: {w}" for w in doc["warnings"]]
     lines += [f"trap: {t['trap']} — avoid: {t['avoid']}" for t in doc.get("traps", [])]
     if doc.get("dry_run"):
@@ -164,7 +168,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "launch":
             from .harness import run_launch
             doc = run_launch(paths, args.route, args.claude_args, harness=args.harness, discover=args.discover, sonnet=args.sonnet,
-                             haiku=args.haiku, dry_run=args.dry_run, claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"))
+                             haiku=args.haiku, dry_run=args.dry_run, claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"),
+                             task=args.task, handoff=args.handoff)
             if args.dry_run:
                 code = 0
             else:

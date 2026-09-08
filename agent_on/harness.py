@@ -429,15 +429,28 @@ def _price_of(route: Route, keyless: bool) -> dict | None:
 
 def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str = "claude", discover: bool = False,
                sonnet: str | None = None, haiku: str | None = None, dry_run: bool = False, env: dict | None = None,
-               claude_bin: str | None = None, cwd: str | None = None, probe_timeout: float = 2.0, announce: bool = True) -> dict:
+               claude_bin: str | None = None, cwd: str | None = None, probe_timeout: float = 2.0, announce: bool = True,
+               task: str | None = None, handoff: str = "latest") -> dict:
     if harness != "claude":
         raise ValueError(f"harness {harness!r} is not bound yet (Plan F adds codex)")
     parent = dict(os.environ if env is None else env)
+    task_doc = None
+    if task:
+        from .tasks import load as load_task, render_prompt, select_handoff
+        t = load_task(paths, task)
+        h = select_handoff(t, handoff)
+        if not os.path.isdir(t["worktree"]):
+            raise ValueError(f"launch: task worktree is no longer a directory: {t['worktree']}")
+        cwd = t["worktree"]                                                        # the handoff's worktree, as the old task launch did
+        claude_args = [*claude_args, render_prompt(t, h)]                          # the initial prompt is Claude Code's last positional
+        task_doc = {"id": t["id"], "handoff": h["index"], "worktree": os.path.realpath(t["worktree"]), "to_route": h["to_route"]}
     # the physical path: Claude Code derives the transcript slug from process.cwd(), which resolves symlinks
     # (macOS: /var/… is /private/var/…); the trust entry and the transcript lookup must use the same string
     cwd = os.path.realpath(cwd or os.getcwd())
     table = load_routes(paths)
     route = table.resolve(name)
+    if task_doc and task_doc.pop("to_route") != route.name:
+        raise ValueError(f"launch: route {route.name} is not the handoff's route")
     source = table.sources[route.source]
     sonnet_r = table.resolve(sonnet) if sonnet else None
     haiku_r = table.resolve(haiku) if haiku else None
@@ -491,12 +504,15 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     doc = {"command": "launch", "copy": describe_copy(paths), "route": route.name, "wire_model": route.wire_model, "base_url": source.base_url,
            "launch_id": launch_id, "session": {"id": session_id, "mode": mode}, "cost_line": line, "invariants": [served, *lint],
            "env_keys": sorted(k for k in cenv if k.startswith(("ANTHROPIC_", "CLAUDE_"))), "swept": swept, "warnings": warnings,
-           "settings_merged": settings_merged, "traps": traps}
+           "settings_merged": settings_merged, "traps": traps, "task": task_doc}
     binary = claude_bin or shutil.which("claude") or "claude"
     if dry_run:
         doc.update({"dry_run": True, "argv": [binary, *(["--settings", "<run-dir>/settings.json"] if key is not None else []), *args]})
         return doc
     run_dir, helper = write_run_dir(paths, launch_id, key=key, launch=launch, user_settings=user_settings)
+    if task_doc:
+        from .tasks import launched
+        launched(paths, task_doc["id"], handoff=str(task_doc["handoff"]), launch_id=launch_id, route=route.name)
     argv = [binary, *(["--settings", str(helper)] if helper else []), *args]   # a keyed source's --settings is always ours (F1): the user's was folded into it, or there is none
     if announce:
         print(line, file=sys.stderr)                                              # the §12 line, before spawning

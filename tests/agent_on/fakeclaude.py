@@ -40,6 +40,10 @@ if out:
         json.dump(dict(os.environ), f)
     with open(os.path.join(out, "argv.json"), "w") as f:
         json.dump(args, f)
+    cwd_path = os.path.join(out, "cwd.txt")
+    if not os.path.exists(cwd_path):
+        with open(cwd_path, "w") as f:
+            f.write(os.getcwd())
     settings = opt("--settings")
     if settings and os.path.exists(settings):
         with open(settings) as f:

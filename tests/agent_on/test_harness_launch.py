@@ -12,10 +12,12 @@ from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
 import unittest  # noqa: E402
 
 from agent_on import harness  # noqa: E402
+from agent_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
 from agent_on.state import read_observed, read_session_runs  # noqa: E402
 
 FAKE = str(Path(__file__).resolve().parent / "fakeclaude.py")
 BASE = "http://127.0.0.1:1"      # every source unreachable: route.served skips, the launch proceeds (D6)
+CATALOG = [omlx_entry("alpha"), openrouter_entry("vendor/model-x")]
 
 
 class LaunchTest(unittest.TestCase):
@@ -176,6 +178,25 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual(obs[-1]["session"], doc["session"]["id"])
             self.assertEqual(obs[-1]["values"]["turns"], doc["last_session"]["this_run"]["turns"])
             self.assertEqual(obs[-1]["values"]["cost_usd"], doc["last_session"]["this_run"]["cost_usd"])
+
+    def test_task_launch_runs_in_the_worktree_with_the_prompt_last_and_marks_the_handoff_launched(self):
+        from agent_on import knowledge, tasks
+        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            wt = sb.root / "wt"; wt.mkdir()
+            t = tasks.create(sb.paths, "x", "Ship it", str(wt))
+            tasks.handoff(sb.paths, t["id"], to_route="a", objective="Do the thing")
+            with self.assertRaises(ValueError):
+                self.launch(sb, "x", ["-p", "hi"], task=t["id"], dry_run=True)                                                # wrong route
+            dry, _ = self.launch(sb, "a", ["-p", "hi"], task=t["id"], dry_run=True)
+            self.assertEqual(dry["task"], {"id": t["id"], "handoff": 1, "worktree": str(wt.resolve())})
+            self.assertTrue(dry["argv"][-1].startswith("You are worker session 1 for agent-on task"))
+            self.assertEqual([e["event"] for e in knowledge.read(sb.paths, "tasks")], ["created", "handoff"])                  # dry run: no event
+            doc, out = self.launch(sb, "a", ["-p", "hi"], task=t["id"])
+            argv = json.loads((out / "argv.json").read_text())
+            self.assertTrue(argv[-1].startswith("You are worker session 1"))
+            self.assertEqual((out / "cwd.txt").read_text().strip(), str(wt.resolve()))
+            h = tasks.load(sb.paths, t["id"])["handoffs"][0]
+            self.assertEqual((h["status"], h["launch_id"]), ("launched", doc["launch_id"]))
 
 
 if __name__ == "__main__":
