@@ -2,10 +2,12 @@
 """A stand-in for the `claude` binary, for the launcher's unit tests. It records what it received (its environment
 and argv), runs the apiKeyHelper it was handed exactly as Claude Code would (a shell command), writes a transcript
 shaped like Claude Code's into $CLAUDE_CONFIG_DIR/projects/<slug>/, honours --session-id / --resume / --continue /
---no-session-persistence, and exits with $FAKE_CLAUDE_EXIT."""
+--no-session-persistence, and exits with $FAKE_CLAUDE_EXIT (or, if $FAKE_CLAUDE_SIGNAL is set, kills itself with
+that signal — e.g. FAKE_CLAUDE_SIGNAL=TERM — to fixture a Ctrl-C/SIGTERM death for the launcher's exit-code test)."""
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -81,4 +83,8 @@ if cfg and "--no-session-persistence" not in args:
             f.write(json.dumps(line) + "\n")
             f.write(json.dumps({**line, "message": {**line["message"], "content": [{"type": "text", "text": "second block"}]}}) + "\n")
 
+sig_name = os.environ.get("FAKE_CLAUDE_SIGNAL")
+if sig_name:
+    os.kill(os.getpid(), getattr(signal, f"SIG{sig_name}"))
+    time.sleep(5)   # the process is dead once the signal's default disposition runs; this only guards a caught signal
 sys.exit(int(os.environ.get("FAKE_CLAUDE_EXIT", "0")))

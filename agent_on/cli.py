@@ -140,7 +140,14 @@ def main(argv: list[str] | None = None) -> int:
             from .harness import run_launch
             doc = run_launch(paths, args.route, args.claude_args, harness=args.harness, discover=args.discover, sonnet=args.sonnet,
                              haiku=args.haiku, dry_run=args.dry_run, claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"))
-            code = 0 if args.dry_run else int(doc["exit_code"])
+            if args.dry_run:
+                code = 0
+            else:
+                # subprocess.Popen.wait() returns a negative code (-N) for a child killed by signal N on POSIX;
+                # the shell shows that raw value as 256 - N (e.g. 241 for SIGTERM). Map it to the usual 128 + N
+                # (143) at this boundary only — the JSON envelope's exit_code keeps the raw value (§9).
+                raw = int(doc["exit_code"])
+                code = 128 - raw if raw < 0 else raw
             text = render_launch(doc)
         elif args.command == "qualify":
             from .qualify import run_qualify

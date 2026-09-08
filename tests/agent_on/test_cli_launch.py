@@ -94,6 +94,19 @@ class LaunchCliTest(unittest.TestCase):
             child_env = json.loads((sb.root / "out" / "env.json").read_text())
             self.assertEqual(child_env.get("CLAUDE_CONFIG_DIR"), str(sb.paths.claude_config_dir))
 
+    def test_a_child_killed_by_a_signal_maps_to_128_plus_n(self):
+        # F-fix 4: harness.spawn() returns subprocess.Popen.wait()'s raw code, negative for a signal death on
+        # POSIX (SIGTERM = -15); the shell would show that as 241. The CLI boundary maps it to 128 + N (143).
+        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            route = first_route(sb.paths)
+            env = sandboxed_env(sb, FAKE_CLAUDE_OUT=str(sb.root / "out"), FAKE_CLAUDE_SIGNAL="TERM", AGENT_ON_CLAUDE_BIN=FAKE)
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=True), redirect_stdout(out):
+                code = cli.main(["--json", "launch", route, "-p", "hi"])
+            self.assertEqual(code, 143)
+            doc = json.loads(out.getvalue().strip().splitlines()[-1])
+            self.assertEqual(doc["exit_code"], -15)                                   # the envelope keeps the raw value
+
 
 if __name__ == "__main__":
     unittest.main()
