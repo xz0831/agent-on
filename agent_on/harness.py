@@ -484,7 +484,7 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
         doc.update({"dry_run": True, "argv": [binary, *(["--settings", "<run-dir>/settings.json"] if key is not None else []), *args]})
         return doc
     run_dir, helper = write_run_dir(paths, launch_id, key=key, launch=launch, user_settings=user_settings)
-    argv = [binary, *(["--settings", str(helper)] if helper else []), *args]   # the helper file first: a user --settings merges after it
+    argv = [binary, *(["--settings", str(helper)] if helper else []), *args]   # a keyed source's --settings is always ours (F1): the user's was folded into it, or there is none
     if announce:
         print(line, file=sys.stderr)                                              # the §12 line, before spawning
     try:
