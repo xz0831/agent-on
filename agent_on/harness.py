@@ -457,7 +457,10 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     observed = read_observed(paths)
     obs_route = observed["routes"].get(route.name)
     warnings: list[str] = []
-    traps = knowledge_view(paths, route=route.name, source=route.source, action="launch")["traps"]   # D6: shown, never gating
+    kview = knowledge_view(paths, route=route.name, source=route.source, action="launch")             # D6: shown, never gating
+    traps = kview["traps"]
+    if kview.get("error"):
+        warnings.append(f"knowledge unreadable: {kview['error']}")
     # D6: one ≤2 s probe; unreachable → skip + warning, the launch proceeds
     probe = probe_source(source, timeout=probe_timeout)
     if not probe.reachable:

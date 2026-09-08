@@ -78,8 +78,16 @@ def applicable_traps(traps: list[dict], *, route: str | None, source: str | None
 
 
 def knowledge_view(paths: Paths, *, route: str | None, source: str | None, action: str, n: int = 3) -> dict:
-    """What status and the launch show for one route: the last n observations and the traps for the action in hand."""
+    """What status and the launch show for one route: the last n observations and the traps for the action in hand.
+
+    D6: inform, don't gate. A malformed line in either file must not take down every launch or plain `status` — it
+    is surfaced as `error` (naming file:line, from `read`'s SchemaError) with empty observations/traps, rather than
+    raised. `status --check`'s `knowledge.typed` invariant still fails on the same file; that is the gate."""
     if not paths.knowledge_dir.is_dir():
         return {"observations": [], "traps": [], "missing": True}
-    return {"observations": latest(read(paths, "observations"), route=route, n=n),
-            "traps": applicable_traps(active(read(paths, "traps")), route=route, source=source, action=action)}
+    try:
+        observations = latest(read(paths, "observations"), route=route, n=n)
+        traps = applicable_traps(active(read(paths, "traps")), route=route, source=source, action=action)
+    except SchemaError as e:
+        return {"observations": [], "traps": [], "error": str(e)}
+    return {"observations": observations, "traps": traps}

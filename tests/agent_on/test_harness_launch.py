@@ -179,6 +179,16 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual(obs[-1]["values"]["turns"], doc["last_session"]["this_run"]["turns"])
             self.assertEqual(obs[-1]["values"]["cost_usd"], doc["last_session"]["this_run"]["cost_usd"])
 
+    def test_a_corrupt_knowledge_line_does_not_gate_the_launch(self):  # D6: inform, don't gate
+        from agent_on import knowledge
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            knowledge.append(sb.paths, "traps", {"trap": "launch trap", "mechanism": "m", "avoid": "a", "evidence": "e", "found_by": "f", "applies_to": ["launch"]})
+            with open(sb.paths.knowledge_dir / "traps.jsonl", "a", encoding="utf-8") as f:
+                f.write("not json\n")
+            doc, _ = self.launch(sb, "a", ["-p", "hi"], dry_run=True)
+            self.assertEqual(doc["traps"], [])
+            self.assertTrue(any("knowledge unreadable" in w and "traps.jsonl:2" in w for w in doc["warnings"]), doc["warnings"])
+
     def test_task_launch_runs_in_the_worktree_with_the_prompt_last_and_marks_the_handoff_launched(self):
         from agent_on import knowledge, tasks
         with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:

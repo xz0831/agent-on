@@ -89,6 +89,8 @@ def render_text(doc: dict) -> str:
                 lines.append("  last session: " + (f"skipped ({ls['skipped']})" if "skipped" in ls else
                              f"{ls['id'][:8]} · this run {ls['this_run']['turns']} turns ${ls['this_run']['cost_usd']} · session {ls['session_total']['turns']} turns ${ls['session_total']['cost_usd']}"))
         k = v.get("knowledge") or {}
+        if k.get("error"):
+            lines.append(f"  knowledge: unreadable — {k['error']}")
         for o in k.get("observations", []):
             lines.append(f"  observation {o['ts']} {o['kind']}: {json.dumps(o['values'], sort_keys=True, ensure_ascii=False)}")
         for t in k.get("traps", []):

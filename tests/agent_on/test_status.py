@@ -124,6 +124,20 @@ class StatusTest(unittest.TestCase):
             self.assertIn('observation', text)
             self.assertNotIn("launch only", text)
 
+    def test_a_corrupt_knowledge_line_does_not_gate_status(self):  # D6: inform, don't gate
+        from agent_on import knowledge
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            knowledge.append(sb.paths, "traps", {"trap": "mind the gap", "mechanism": "m", "avoid": "step over", "evidence": "e", "found_by": "f", "applies_to": ["mock"]})
+            with open(sb.paths.knowledge_dir / "traps.jsonl", "a", encoding="utf-8") as f:
+                f.write("not json\n")
+            doc = build_status(sb.paths, route="a")
+            k = doc["routes"]["mock/alpha"]["knowledge"]
+            self.assertEqual(k["traps"], [])
+            self.assertIn("traps.jsonl:2", k["error"])
+            text = render_text(doc)
+            self.assertIn("knowledge: unreadable", text)
+            self.assertIn("traps.jsonl:2", text)
+
 
 if __name__ == "__main__":
     unittest.main()

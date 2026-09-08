@@ -105,6 +105,17 @@ class SelectionTest(unittest.TestCase):
             v = knowledge.knowledge_view(sb.paths, route="mock/alpha", source="mock", action="status")
             self.assertEqual(v, {"observations": [], "traps": [], "missing": True})
 
+    def test_knowledge_view_reports_a_corrupt_line_instead_of_raising(self):  # D6: inform, don't gate
+        with Sandbox(MOCK_ROUTES.format(base=BASE), tree=None) as sb:
+            knowledge.append(sb.paths, "traps", dict(TRAP))
+            with open(sb.paths.knowledge_dir / "traps.jsonl", "a", encoding="utf-8") as f:
+                f.write("not json\n")
+            v = knowledge.knowledge_view(sb.paths, route="mock/alpha", source="mock", action="status")
+            self.assertEqual(v["observations"], [])
+            self.assertEqual(v["traps"], [])
+            self.assertIn("traps.jsonl:2", v["error"])
+            self.assertNotIn("missing", v)
+
 
 if __name__ == "__main__":
     unittest.main()
