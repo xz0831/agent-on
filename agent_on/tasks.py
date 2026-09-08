@@ -46,15 +46,28 @@ def fold(events: list[dict]) -> dict[str, dict]:
             continue
         if t is None:
             continue                                                               # an event for an unknown task is ignored, not fatal
-        t["updated"] = e["ts"]
+        # append-only knowledge means a bad `index` (raw-written, or a race the D6/D3 finalize below no longer
+        # allows) can never be repaired in place. A handoff whose index isn't the next slot, or a launched/completed
+        # whose index doesn't name an existing handoff, is skipped — same "ignored, not fatal" stance as an event
+        # for an unknown task above — rather than IndexError-ing every future fold (and so every launch and `learn
+        # task` call) forever.
         if e["event"] == "handoff":
+            if e["index"] != len(t["handoffs"]) + 1:
+                continue
+            t["updated"] = e["ts"]
             t["handoffs"].append({"index": e["index"], "from_route": e["from_route"], "to_route": e["to_route"], "objective": e["objective"],
                                   "summary": e["summary"], "commit": e["commit"], "tests": e["tests"], "status": "pending", "created": e["ts"],
                                   "launched": None, "launch_id": None, "completed_at": None, "result_summary": None, "result_commit": None, "result_tests": None})
         elif e["event"] == "launched":
+            if not (1 <= e["index"] <= len(t["handoffs"])):
+                continue
+            t["updated"] = e["ts"]
             h = t["handoffs"][e["index"] - 1]
             h.update({"status": "launched", "launched": e["ts"], "launch_id": e["launch_id"]})
         elif e["event"] == "completed":
+            if not (1 <= e["index"] <= len(t["handoffs"])):
+                continue
+            t["updated"] = e["ts"]
             h = t["handoffs"][e["index"] - 1]
             h.update({"status": "completed", "completed_at": e["ts"], "result_summary": e["summary"], "result_commit": e["commit"], "result_tests": e["tests"]})
             if e["close"]:

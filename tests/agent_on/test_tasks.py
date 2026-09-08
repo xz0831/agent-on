@@ -66,6 +66,31 @@ class LedgerTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 tasks.select_handoff(task, "7")
 
+    def test_fold_tolerates_a_launched_event_with_an_out_of_range_index(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            wt = sb.root / "wt"; wt.mkdir()
+            t = tasks.create(sb.paths, "x", "goal", str(wt))
+            tasks.handoff(sb.paths, t["id"], to_route="a", objective="o")
+            before = tasks.load(sb.paths, t["id"])
+            knowledge.append(sb.paths, "tasks", {"task_id": t["id"], "event": "launched", "index": 5, "launch_id": "l", "route": "mock/alpha"})
+            after = tasks.load(sb.paths, t["id"])
+            self.assertEqual(after, before)                                              # the bad-index event is ignored, not fatal
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(sb.paths.home), "AGENT_ON_STATE": str(sb.paths.state), "AGENT_ON_CHECKOUT": str(sb.paths.checkout)}
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=True), redirect_stdout(out):
+                code = cli.main(["--json", "learn", "task", "show", t["id"]])
+            self.assertEqual(code, 0)
+
+    def test_fold_tolerates_a_handoff_event_whose_index_is_not_the_next_one(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            wt = sb.root / "wt"; wt.mkdir()
+            t = tasks.create(sb.paths, "x", "goal", str(wt))
+            before = tasks.load(sb.paths, t["id"])
+            knowledge.append(sb.paths, "tasks", {"task_id": t["id"], "event": "handoff", "index": 3, "from_route": None, "to_route": "mock/alpha",
+                                                  "objective": "o", "summary": None, "commit": None, "tests": None})
+            after = tasks.load(sb.paths, t["id"])
+            self.assertEqual(after, before)
+
     def test_task_event_schema_is_enforced_by_learn(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             with self.assertRaises(SchemaError):

@@ -66,6 +66,21 @@ class LearnTest(unittest.TestCase):
             code, doc = run(sb, ["learn", "task"])
             self.assertEqual(code, 2)                                                   # Task 6 replaces the stub
 
+    def test_raw_learn_tasks_is_refused_and_nothing_is_written(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            code, doc = run(sb, ["learn", "tasks", "--json-record",
+                                  '{"task_id": "20260908T000000Z-x-abcdef", "event": "launched", "index": 5, "launch_id": "l", "route": "mock/alpha"}'])
+            self.assertEqual(code, 2)
+            self.assertIn("hint", doc)
+            self.assertIn("agent-on learn task", doc["hint"])
+            self.assertFalse((sb.paths.knowledge_dir / "tasks.jsonl").exists())
+
+    def test_learn_task_with_json_record_is_a_usage_error(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            code, doc = run(sb, ["learn", "task", "list", "--json-record", "x"])
+            self.assertEqual(code, 2)
+            self.assertIn("error", doc)
+
 
 if __name__ == "__main__":
     unittest.main()

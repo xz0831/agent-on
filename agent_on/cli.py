@@ -186,8 +186,21 @@ def main(argv: list[str] | None = None) -> int:
             code = EXIT_OK if doc["written"] and all(doc["gates"].values()) else EXIT_FAIL
             text = render_qualify(doc)
         elif args.command == "learn":
+            if args.kind == "tasks":
+                # "tasks" (the raw knowledge/tasks.jsonl file name) is not a writable kind for a bare `learn`: the
+                # schema only checks key presence, so a raw record can carry an `index` that later breaks tasks.fold
+                # in a way append-only knowledge can never repair. Route operators to the verbs instead.
+                doc = {"command": "learn", "copy": describe_copy(paths), "error": "learn: kind 'tasks' is not writable directly",
+                       "hint": "task events are written by `agent-on learn task <verb> …`"}
+                print(json.dumps(doc, indent=1, sort_keys=True) if args.json else f"{copy_line(doc['copy'])}\nerror: {doc['error']}\nhint: {doc['hint']}")
+                return EXIT_USAGE
             if args.kind == "task":
-                from .tasks import run_task_verb                     # Task 6; until then a usage error
+                if args.json_record is not None:
+                    doc = {"command": "learn", "copy": describe_copy(paths), "error": "learn task: --json-record is not accepted; use the task verbs",
+                           "hint": "create|handoff|complete|show|list|prompt"}
+                    print(json.dumps(doc, indent=1, sort_keys=True) if args.json else f"{copy_line(doc['copy'])}\nerror: {doc['error']}\nhint: {doc['hint']}")
+                    return EXIT_USAGE
+                from .tasks import run_task_verb
                 doc, code = run_task_verb(paths, rest)
                 text = doc.get("text") or json.dumps(doc, indent=1, sort_keys=True)
             else:
