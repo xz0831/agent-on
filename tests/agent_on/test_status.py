@@ -54,10 +54,11 @@ class StatusTest(unittest.TestCase):
             obs = read_observed(sb.paths)
             self.assertEqual(obs["last_check"]["result"], "fail")
             self.assertIsNone(obs["last_gate_run"])
-            self.assertIn("credential.not_in_child_env", obs["last_check"]["skipped"])
+            self.assertNotIn("credential.not_in_child_env", obs["last_check"]["skipped"])
+            self.assertIn("copy.single", obs["last_check"]["skipped"])
             text = render_text(doc)
             self.assertIn("fail route.served[mock/gone]", text)
-            self.assertIn("skip credential.not_in_child_env", text)
+            self.assertIn("pass credential.not_in_child_env", text)
             self.assertIn("ORPHANED", text)
 
     def test_check_on_one_route_is_shown_but_never_persisted(self):

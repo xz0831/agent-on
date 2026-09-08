@@ -59,7 +59,7 @@ class LaunchTest(unittest.TestCase):
             self.assertNotIn("total_cost_usd", json.dumps(read_observed(sb.paths)))
             self.assertEqual(len(read_session_runs(sb.paths, rec["id"])), 1)
             self.assertEqual([i["id"] for i in doc["invariants"]], ["route.served", "credential.not_in_child_env", "harness.env.clean"])   # §9: the three, first (registry order)
-            self.assertEqual([i["result"] for i in doc["invariants"]], ["skip", "skip", "skip"])                                       # no shared settings in the sandbox home; credential.not_in_child_env is still the Task 3 stub (real in Task 6)
+            self.assertEqual([i["result"] for i in doc["invariants"]], ["skip", "pass", "skip"])                                       # no shared settings in the sandbox home; credential.not_in_child_env is real as of Task 6
             self.assertTrue(doc["cost_line"].startswith("paid/vendor/model-x  ctx ?"))
 
     def test_key_from_the_env_file_when_the_environment_has_none(self):

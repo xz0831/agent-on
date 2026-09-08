@@ -38,7 +38,8 @@ class GateTest(unittest.TestCase):
             self.assertGreaterEqual(g["mock_port"], 1024)
             self.assertNotEqual(g["mock_port"], 1)
             self.assertIn("route.served:mock/alpha", g["skipped"])             # never synced → skip, listed
-            self.assertIn("credential.not_in_child_env", g["skipped"])
+            self.assertNotIn("credential.not_in_child_env", g["skipped"])
+            self.assertEqual(g["invariants"]["credential.not_in_child_env"], "pass")
             self.assertTrue(any(s.startswith("tests:") for s in g["skipped"]))
             self.assertEqual(g["verifiers"], {"declared": [], "ran": []})
             self.assertEqual(g["invariants"]["route.served:mock/alpha"], "skip")

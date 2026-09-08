@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
+from .harness import child_env
 from .paths import Paths, describe_copy
 from .schemas.errors import RULES, SchemaError
 from .schemas.knowledge import validate_file
@@ -204,10 +205,21 @@ def copy_single(ctx: Context):
 
 
 @invariant("credential.not_in_child_env",
-           statement="a launched child's environment contains no source auth_env value",
-           fix="the launcher must scrub every source's auth_env before spawn (§11)")
+           statement="no source credential reaches the child environment of any route's launch",
+           fix="the launcher must scrub every source's auth_env and the routing denylist before spawn (§11)")
 def credential_not_in_child_env(ctx: Context):
-    return skip("no launcher yet — asserted by the launch unit test in Plan B")
+    if ctx.routes is None:
+        return skip(f"routes did not load: {ctx.routes_error}")
+    markers = {src.auth_env: f"SECRET-{src.auth_env}" for src in ctx.routes.sources.values() if src.auth_env}
+    parent = {**markers, "ANTHROPIC_API_KEY": "SECRET-inherited", "ANTHROPIC_AUTH_TOKEN": "SECRET-inherited", "PATH": "/usr/bin"}
+    leaks: list[str] = []
+    for route in ctx.routes.routes.values():
+        env = child_env(parent, ctx.routes, route, context=None, config_dir=Path("/nonexistent"))
+        leaks += [f"{route.name}:{k}" for k, v in env.items() if "SECRET-" in str(v)]
+    if leaks:
+        return fail(f"a credential reached the child environment: {leaks[:5]}")
+    names = ", ".join(sorted(markers)) or "none declared"
+    return ok(f"{len(ctx.routes.routes)} routes: no source credential ({names}) reaches the child environment")
 
 
 ENV_DENY = ("ANTHROPIC_*", "CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_MAX_*", "*_PROXY")

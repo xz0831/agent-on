@@ -41,7 +41,7 @@ class RegistryTest(unittest.TestCase):
             served = [r for r in res if r.id == "route.served"]
             self.assertTrue(served and all(r.result == "skip" for r in served))     # never synced → skip, not pass
             self.assertIn("route.served:mock/alpha", skipped_ids(res))
-            self.assertEqual([r.result for r in res if r.id == "credential.not_in_child_env"], ["skip"])
+            self.assertEqual([r.result for r in res if r.id == "credential.not_in_child_env"], ["pass"])
 
     def test_broken_routes_toml_fails_every_route_predicate_by_name(self):
         with Sandbox('version = 1\n[sources.mock]\nbase_url = "http://x"\n[routes."mock/m"]\naliases=["z"]\n[routes."mock/n"]\naliases=["z"]\n') as sb:
@@ -258,6 +258,14 @@ class CostAndQualificationTest(unittest.TestCase):
             self.assertEqual(r.result, "fail")
             self.assertIn(ctx.observed["_error"], r.reason)
             self.assertEqual(one(sb.paths, "route.unique").result, "pass")           # routes still load
+
+
+class CredentialTest(unittest.TestCase):
+    def test_no_source_credential_reaches_any_route_child_env(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            r = one(sb.paths, "credential.not_in_child_env")
+            self.assertEqual(r.result, "pass")
+            self.assertIn("MOCK_PAID_KEY", r.reason)
 
 
 if __name__ == "__main__":

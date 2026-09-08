@@ -3,6 +3,7 @@ evaluated and `last_check` written — never `last_gate_run`, which only the gat
 from __future__ import annotations
 
 from .cli import copy_line, invariant_lines
+from .harness import cost_line
 from .invariants import build_context, evaluate, skipped_ids
 from .paths import Paths, describe_copy
 from .state import update_observed
@@ -68,6 +69,12 @@ def render_text(doc: dict) -> str:
                      + f": wire={d['wire_model']} declared_in={lim.get('input') or '?'} ({lim.get('confidence') or '-'})"
                      + f" ctx={cm.get('context') or '?'} ({cm.get('context_basis') or '-'}) served={fmt(o.get('served'))}"
                      + f" checked={o.get('checked') or '-'}")
+        if v["observed"]:
+            lines.append("  " + cost_line(n, v["observed"]))
+            ls = v["observed"].get("last_session")
+            if ls:
+                lines.append("  last session: " + (f"skipped ({ls['skipped']})" if "skipped" in ls else
+                             f"{ls['id'][:8]} · this run {ls['this_run']['turns']} turns ${ls['this_run']['cost_usd']} · session {ls['session_total']['turns']} turns ${ls['session_total']['cost_usd']}"))
     if doc.get("shadowed"):
         lines.append(f"shadowed discovered: {', '.join(doc['shadowed'])}")
     if doc.get("orphaned"):

@@ -5,11 +5,23 @@ they hit the source itself."""
 from __future__ import annotations
 
 import json
+import os
 import socket
 import threading
 import time
 import urllib.error
 import urllib.request
+
+from .harness import run_launch
+from .ids import ulid
+from .invariants import build_context, claude_code_version, evaluate
+from .paths import Paths, describe_copy
+from .schemas.knowledge import validate_record
+from .schemas.observed import compute_context, empty_route
+from .schemas.routes import load_routes
+from .sources import probe_source
+from .state import read_observed, resolve_secret, update_observed
+from .util import utc_now
 
 GATES = ("text_sse", "claude_system_block_instructions", "forced_structured_tool", "streaming_input_json_delta",
          "tool_result_continuation", "claude_adaptive_effort_policy")
@@ -303,3 +315,90 @@ def probe_limits(wire: Wire, lo: int, hi: int, *, count_tokens: bool = True, max
             return {"verified": None, "basis": None, "probes": probes}
     basis = "count_tokens" if accepted in counted else "estimate"
     return {"verified": verified_size(accepted) if basis == "count_tokens" else None, "accepted_up_to": verified_size(accepted), "basis": basis, "probes": probes}
+
+
+# ---- the command (§9 qualify row) ----------------------------------------------------------------------------
+
+BASELINE_PROMPT = "Reply with exactly: OK"
+BASELINE_TOKENS_ESTIMATE = 50_000
+
+
+def _estimate_paid_usd(price: dict | None, tokens: int) -> float | None:
+    if not price or price.get("input") is None:
+        return None
+    return round(tokens * float(price["input"]) / 1_000_000, 4)
+
+
+def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool = False, allow_paid: bool = False,
+                env: dict | None = None, timeout: float = 90.0, claude_bin: str | None = None) -> dict:
+    parent = dict(os.environ if env is None else env)
+    table = load_routes(paths)
+    route = table.resolve(name)
+    source = table.sources[route.source]
+    paid = source.auth_env is not None
+    price = route.price.per_mtok() if route.price else None
+    doc: dict = {"command": "qualify", "copy": describe_copy(paths), "route": route.name, "refused": None, "gates": {}, "details": {},
+                 "probes": {}, "baseline": None, "fingerprint": None, "written": False, "invariants": []}
+    if paid and (baseline or limits) and not allow_paid:
+        lim = table.effective_limits(route)
+        est = _estimate_paid_usd(price, (BASELINE_TOKENS_ESTIMATE if baseline else 0) + (2 * (lim.input or 0) if limits and lim else 0))
+        doc["refused"] = (f"{route.source} bills per token: --baseline runs Claude Code (~{BASELINE_TOKENS_ESTIMATE} input tokens) and --limits "
+                          f"sends up to ~2× the input limit; estimated ${est if est is not None else '?'} — re-run with --allow-paid")
+        return doc
+    key = resolve_secret(paths, source.auth_env, parent) if source.auth_env else None
+    wire = Wire(source.base_url, route.wire_model, key, timeout)
+    probe = probe_source(source, timeout=5)
+    gates = run_gates(wire)
+    thr = probe_throughput(wire)
+    conc = probe_concurrency(wire)
+    cache = probe_caching(wire)
+    now = utc_now()
+    fp = {"effective_route_sha": table.effective_sha(route), "wire_model": route.wire_model,
+          "source_identity": probe.identity if probe.reachable else None, "claude_code": claude_code_version()}
+    qual = {"pass": gates["all_pass"], "gates": gates["gates"], "thinking_block_seen": gates["thinking_block_seen"],
+            "completed": gates["completed"], "at": now, "fingerprint": fp}
+    base_tokens = None
+    if baseline:
+        launch = run_launch(paths, route.name, ["-p", BASELINE_PROMPT], env=parent, claude_bin=claude_bin, announce=False)
+        first = (launch.get("last_session") or {}).get("first_request")
+        base_tokens = first["input_tokens_total"] if first else None
+    lim_result = None
+    if limits:
+        obs_route = read_observed(paths)["routes"].get(route.name) or {}
+        tier = (obs_route.get("limits") or {}).get("input") or {}
+        declared = (table.effective_limits(route).input if table.effective_limits(route) else None)
+        cands = [v for v in (declared, tier.get("configured"), tier.get("advertised")) if v]
+        lo = max(1024, min(cands) // 2) if cands else 1024
+        hi = int(max(cands) * 1.1) if cands else 262144
+        lim_result = probe_limits(wire, lo, hi, count_tokens=True)
+    doc.update({"gates": gates["gates"], "details": gates["details"], "fingerprint": fp, "baseline": base_tokens,
+                "probes": {"throughput": thr, "concurrency": conc, "caching": cache, "limits": lim_result}})
+
+    def mutate(d: dict) -> None:
+        r = d["routes"].setdefault(route.name, empty_route())
+        r["last_qualification"] = qual
+        cm = r["cost_model"]
+        cm.update({"tok_s": thr["tok_s"], "concurrency": conc["concurrency"], "caching": cache["caching"],
+                   "thinking": {"observed": gates["thinking_block_seen"], "tokens_on_probe": gates["thinking_tokens"]}, "checked": now})
+        if baseline:
+            cm["harness_baseline_tokens"] = {"value": base_tokens, "measured_by": "qualify --baseline", "claude_code": fp["claude_code"], "at": now}
+        if lim_result and lim_result["verified"] is not None:
+            r["limits"]["input"]["verified"] = lim_result["verified"]
+            r["limits"]["input"]["checked"] = now
+        lim = table.effective_limits(route)
+        ctx, basis = compute_context(lim.input if lim else None, r["limits"]["input"])
+        cm.update({"context": ctx, "context_basis": basis})
+
+    update_observed(paths, mutate)
+    doc["written"] = True
+    kdir = paths.checkout / "knowledge"
+    if kdir.is_dir():                                                              # Plan C creates it; until then observed.json is the record
+        record = {"id": f"qualifications-{ulid()}", "ts": now, "route": route.name, "fingerprint": fp, "gates": gates["gates"],
+                  "thinking_block_seen": gates["thinking_block_seen"], "completed": gates["completed"], "tok_s": thr["tok_s"],
+                  "concurrency": conc["concurrency"], "caching": cache["caching"], "commit": doc["copy"]["commit"]}
+        validate_record("qualifications", record)
+        with open(kdir / "qualifications.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, sort_keys=True) + "\n")
+        doc["knowledge"] = str(kdir / "qualifications.jsonl")
+    doc["invariants"] = [r.as_dict() for r in evaluate(build_context(paths, with_claude_code=True), ids=["route.served", "qualification.current"], route=route.name)]
+    return doc
