@@ -23,7 +23,7 @@ REQUIRED = {"decisions": ["decisions-D1", "decisions-D2", "decisions-D3", "decis
                              "observations-2026-08-23-qwen3-vl-text-baseline", "observations-2026-08-23-local-tokenizer-delta-819-vs-768", "observations-2026-08-23-reasoning-leak-is-the-thinking-flag"],
             "traps": ["traps-single-quoted-battery", "traps-installed-copy-selector", "traps-promotion-deadlock", "traps-budget-formula-in-code",
                       "traps-port-4000-collision", "traps-fabricated-cost-field", "traps-discovery-filter", "traps-child-env-credential",
-                      "traps-exo-thunderbolt-hijack", "traps-settings-last-wins", "traps-synthetic-error-turns"]}
+                      "traps-exo-thunderbolt-hijack", "traps-settings-last-wins", "traps-synthetic-error-turns", "traps-shim-cwd-shadows-package"]}
 
 
 class SeedsTest(unittest.TestCase):

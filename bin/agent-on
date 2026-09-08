@@ -8,4 +8,6 @@ if [[ -z "$py" ]] || ! "$py" -c 'import sys; raise SystemExit(0 if sys.version_i
   exit 3
 fi
 export PYTHONPATH="$checkout${PYTHONPATH:+:$PYTHONPATH}"
-exec "$py" -m agent_on "$@"
+# -P: don't prepend the caller's cwd to sys.path — without it, `-m` puts cwd ahead of PYTHONPATH,
+# so running this shim from inside another agent_on checkout would import that checkout's package.
+exec "$py" -P -m agent_on "$@"
