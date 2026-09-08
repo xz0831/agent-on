@@ -34,4 +34,5 @@ artifacts/
 
 # agent-on: the routes.toml writer lock and its temp file live in the checkout (§7.1 rev 6)
 .routes.lock
+.knowledge.lock
 routes.toml.tmp.*

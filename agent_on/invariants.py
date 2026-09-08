@@ -317,9 +317,9 @@ def test_names_derived(ctx: Context):
 
 @invariant("knowledge.typed",
            statement="every knowledge record validates against its kind's schema",
-           fix="fix or remove the offending line; `agent-on learn` validates before appending (Plan C)")
+           fix="fix or remove the offending line; `agent-on learn` validates before appending")
 def knowledge_typed(ctx: Context):
-    kdir = ctx.tree / "knowledge"
+    kdir = ctx.paths.knowledge_dir                     # §10: beside routes.toml, never the code tree (a sandbox lints real code but owns its knowledge)
     if not kdir.exists():
         return skip("no knowledge/ yet — Plan C")
     files = sorted(kdir.glob("*.jsonl"))

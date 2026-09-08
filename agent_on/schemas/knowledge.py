@@ -15,6 +15,7 @@ KINDS: dict[str, tuple[str, ...]] = {
     "tasks": ("task_id", "event"),
 }
 OBSERVATION_KINDS = ("tokens", "throughput", "quality", "liveness", "cost")
+APPLIES_TO_VERBS = ("status", "sync", "add", "gate", "launch", "qualify", "learn", "install")
 
 
 def validate_record(kind: str, rec) -> None:
@@ -29,17 +30,36 @@ def validate_record(kind: str, rec) -> None:
         raise SchemaError("knowledge.record", f"{kind}: id must start with '{kind}-', got {rec['id']!r}")
     if kind == "observations" and rec["kind"] not in OBSERVATION_KINDS:
         raise SchemaError("knowledge.record", f"observation kind must be one of {OBSERVATION_KINDS}, got {rec['kind']!r}")
+    if kind == "traps":
+        at = rec["applies_to"]
+        if not isinstance(at, list) or not at or not all(isinstance(a, str) and a for a in at):
+            raise SchemaError("knowledge.record", "traps: applies_to must be a non-empty list of verbs, sources, routes or '*'")
+    if "supersedes" in rec and not (isinstance(rec["supersedes"], str) and rec["supersedes"].startswith(f"{kind}-")):
+        raise SchemaError("knowledge.record", f"{kind}: supersedes must name an id of the same kind")
 
 
 def validate_file(path: Path) -> list[str]:
-    """Every non-blank line of knowledge/<kind>.jsonl; returns `<file>:<line>: <error>` strings."""
+    """Every non-blank line of knowledge/<kind>.jsonl; returns `<file>:<line>: <error>` strings. Cross-line rules:
+    ids are unique within the file and `supersedes` names an id that appears in it."""
     kind = path.stem
     errors: list[str] = []
+    seen: dict[str, int] = {}
+    supersedes: list[tuple[int, str]] = []
     for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
         try:
-            validate_record(kind, json.loads(line))
+            rec = json.loads(line)
+            validate_record(kind, rec)
         except (ValueError, SchemaError) as e:
             errors.append(f"{path.name}:{n}: {e}")
+            continue
+        if rec["id"] in seen:
+            errors.append(f"{path.name}:{n}: duplicate id {rec['id']} (first at line {seen[rec['id']]})")
+        seen.setdefault(rec["id"], n)
+        if "supersedes" in rec:
+            supersedes.append((n, rec["supersedes"]))
+    for n, target in supersedes:
+        if target not in seen:
+            errors.append(f"{path.name}:{n}: supersedes {target} not found in {path.name}")
     return errors

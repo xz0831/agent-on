@@ -39,6 +39,14 @@ class Paths:
         return self.checkout / ".routes.lock"
 
     @property
+    def knowledge_dir(self) -> Path:
+        return self.checkout / "knowledge"            # §10: git-tracked, beside routes.toml — never under $STATE
+
+    @property
+    def knowledge_lock(self) -> Path:
+        return self.checkout / ".knowledge.lock"      # keyed by the resource it protects, like .routes.lock (D13)
+
+    @property
     def discovered_toml(self) -> Path:
         return self.state / "routes.discovered.toml"
 

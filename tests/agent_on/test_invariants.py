@@ -209,7 +209,7 @@ class KnowledgeTest(unittest.TestCase):
             validate_record("observations", {"id": "observations-1", "ts": "x", "route": "r", "kind": "vibes", "values": {}, "evidence": "e"})
         with self.assertRaises(SchemaError):
             validate_record("decisions", {"id": "wrong-1", "ts": "x", "decision": "d", "rationale": "r", "by": "b"})
-        with Sandbox(MOCK_ROUTES.format(base=BASE), tree=None) as sb:
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             self.assertEqual(one(sb.paths, "knowledge.typed").result, "skip")
             k = sb.paths.checkout / "knowledge"
             k.mkdir()
@@ -218,6 +218,17 @@ class KnowledgeTest(unittest.TestCase):
             self.assertEqual(r.result, "fail")
             self.assertIn("decisions.jsonl:2", r.reason)
             self.assertEqual(len(validate_file(k / "decisions.jsonl")), 1)
+
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            k = sb.paths.checkout / "knowledge"
+            k.mkdir()
+            (k / "decisions.jsonl").write_text(
+                '{"id": "decisions-1", "ts": "2026-09-07T00:00:00Z", "decision": "d", "rationale": "r", "by": "b"}\n'
+                '{"id": "decisions-1", "ts": "2026-09-07T00:00:00Z", "decision": "d", "rationale": "r", "by": "b"}\n',
+                encoding="utf-8")
+            r = one(sb.paths, "knowledge.typed")
+            self.assertEqual(r.result, "fail")
+            self.assertIn("duplicate id", r.reason)
 
 
 class CostAndQualificationTest(unittest.TestCase):
