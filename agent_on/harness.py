@@ -320,10 +320,18 @@ def read_transcript(path: Path) -> dict:
             if not isinstance(usage, dict) or not isinstance(ts, str):
                 continue
             u = {k: int(usage.get(k) or 0) for k in USAGE_FIELDS}
+            # Claude Code 2.1.263 records an API error (429, provider error, "prompt too long") as an assistant
+            # line with message.model == "<synthetic>" and an all-zero usage. It is not a turn — pricing it reports
+            # "unknown" for a session whose only error cost nothing, and it must not be mistaken for first_request
+            # (final-fix item 1). A synthetic line with non-zero usage — none observed — is kept, so nothing real
+            # is dropped by this check.
+            if msg.get("model") == "<synthetic>" and not any(u.values()):
+                continue
             key = msg.get("id") or d.get("uuid") or f"line-{len(turns)}"
             turns[key] = {"timestamp": ts, "model": msg.get("model"), "usage": u}
-            if first is None:
-                first = {"input_tokens_total": u["input_tokens"] + u["cache_creation_input_tokens"] + u["cache_read_input_tokens"], "usage": u}
+            total = u["input_tokens"] + u["cache_creation_input_tokens"] + u["cache_read_input_tokens"]
+            if first is None and total > 0:
+                first = {"input_tokens_total": total, "usage": u}
     return {"turns": list(turns.values()), "first_request": first, **meta}
 
 

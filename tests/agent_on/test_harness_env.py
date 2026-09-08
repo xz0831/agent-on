@@ -180,6 +180,40 @@ class TranscriptTest(unittest.TestCase):
             self.assertEqual((t["version"], t["effort"], t["permission_mode"], t["session_id"]), ("2.1.263", "high", None, "s1"))
             self.assertNotIn("total_cost_usd", json.dumps(t))
 
+    def test_a_synthetic_zero_usage_error_line_is_not_a_turn_or_a_first_request_candidate(self):
+        # Claude Code 2.1.263 records API errors (429, provider errors, "prompt too long") as assistant lines with
+        # message.model == "<synthetic>" and an all-zero usage (final-fix item 1). One such line, followed by a
+        # real priced turn: the error must not become a phantom turn, and must not be mistaken for first_request.
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            p = sb.paths.transcript_path("s4", "/w")
+            zero = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+            real = {"input_tokens": 100, "output_tokens": 10, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+            self.write(p, [
+                {"type": "assistant", "timestamp": "2026-09-08T04:00:00Z", "sessionId": "s4", "version": "2.1.263",
+                 "message": {"id": "err1", "model": "<synthetic>", "usage": zero}},
+                {"type": "assistant", "timestamp": "2026-09-08T04:00:01Z", "message": {"id": "m1", "model": "alpha", "usage": real}},
+            ])
+            t = harness.read_transcript(p)
+            self.assertEqual(len(t["turns"]), 1)
+            self.assertEqual(t["turns"][0]["model"], "alpha")
+            self.assertEqual(t["first_request"]["input_tokens_total"], 100)
+            run = {"launch_id": "L", "route": "mock/alpha", "source": "mock", "wire_model": "alpha", "started": "2026-09-08T04:00:00Z",
+                   "ended": "2026-09-08T04:00:02Z", "price": harness.FREE, "priced_models": {"alpha": harness.FREE}}
+            from agent_on.cost import attribute_run
+            this_run = attribute_run(t["turns"], run)
+            self.assertNotEqual(this_run["cost_usd"], "unknown")
+            self.assertNotIn("<synthetic>", this_run["models_seen"])
+
+    def test_a_transcript_that_is_only_a_synthetic_error_has_no_turns_and_no_first_request(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            p = sb.paths.transcript_path("s5", "/w")
+            zero = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+            self.write(p, [{"type": "assistant", "timestamp": "2026-09-08T05:00:00Z", "sessionId": "s5", "version": "2.1.263",
+                            "message": {"id": "err1", "model": "<synthetic>", "usage": zero}}])
+            t = harness.read_transcript(p)
+            self.assertEqual(t["turns"], [])
+            self.assertIsNone(t["first_request"])
+
     def test_record_session_fresh_then_resumed_on_a_free_route_keeps_the_paid_cost(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             p = sb.paths.transcript_path("s2", "/w")

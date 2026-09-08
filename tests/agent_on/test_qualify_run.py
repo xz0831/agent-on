@@ -68,6 +68,17 @@ class RunQualifyTest(unittest.TestCase):
             argv = json.loads((sb.root / "out" / "argv.json").read_text())
             self.assertEqual(argv[-2:], ["-p", "Reply with exactly: OK"])
 
+    def test_a_synthetic_error_first_line_leaves_the_baseline_unmeasured_not_zero(self):
+        # final-fix item 1: a session whose first transcript line is a Claude Code API-error ("<synthetic>",
+        # all-zero usage) must never be recorded as harness_baseline_tokens.value == 0.
+        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(sb.paths.home), "FAKE_CLAUDE_OUT": str(sb.root / "out"),
+                   "FAKE_CLAUDE_SYNTHETIC_FIRST": "1"}
+            doc = run_qualify(sb.paths, "a", baseline=True, env=env, timeout=10, claude_bin=FAKE)
+            self.assertIsNone(doc["baseline"])
+            hb = read_observed(sb.paths)["routes"]["mock/alpha"]["cost_model"]["harness_baseline_tokens"]
+            self.assertIsNone(hb["value"])
+
     def test_limits_bisects_and_lowers_the_context_never_lifting_the_declared_cap(self):
         with MockSource(catalog=CATALOG, max_context=3000) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             doc = run_qualify(sb.paths, "a", limits=True, env={}, timeout=10)

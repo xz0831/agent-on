@@ -366,7 +366,9 @@ def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool
     if baseline:
         launch = run_launch(paths, route.name, ["-p", BASELINE_PROMPT], env=parent, claude_bin=claude_bin, announce=False)
         first = (launch.get("last_session") or {}).get("first_request")
-        base_tokens = first["input_tokens_total"] if first else None
+        # a transcript whose only turn was a synthetic API-error line has no first_request (or one with 0 total):
+        # never record that as a measured baseline of 0 (final-fix item 1).
+        base_tokens = first["input_tokens_total"] if first and first.get("input_tokens_total") else None
     lim_result = None
     if limits:
         obs_route = read_observed(paths)["routes"].get(route.name) or {}

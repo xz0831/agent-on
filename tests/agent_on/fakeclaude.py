@@ -61,6 +61,16 @@ if cfg and "--no-session-persistence" not in args:
     model = os.environ.get("FAKE_CLAUDE_MODEL") or os.environ.get("ANTHROPIC_DEFAULT_OPUS_MODEL", "unknown")
     turns = int(os.environ.get("FAKE_CLAUDE_TURNS", "2"))
     with open(path, "a") as f:
+        if os.environ.get("FAKE_CLAUDE_SYNTHETIC_FIRST"):
+            # Claude Code's only response was an API error (429, provider error, "prompt too long"): one assistant
+            # line, message.model == "<synthetic>", an all-zero usage, and nothing else (final-fix item 1's fixture
+            # for `qualify --baseline`, whose one-shot -p prompt gets exactly one response).
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+            zero = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+            f.write(json.dumps({"type": "assistant", "timestamp": ts, "sessionId": session_id, "version": "0.0.0-fake", "effort": "high",
+                                "permissionMode": "default", "message": {"id": f"msg_{uuid.uuid4().hex[:8]}", "model": "<synthetic>",
+                                "role": "assistant", "usage": zero, "content": [{"type": "text", "text": "API Error: 429"}]}}) + "\n")
+            turns = 0
         for i in range(turns):
             time.sleep(0.002)
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"      # real milliseconds, like Claude Code
