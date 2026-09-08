@@ -475,3 +475,17 @@ requires repeated low/high comparison and, ideally, an outbound provider trace.
 See [model runbook](docs/MODEL-RUNBOOK.md),
 [architecture](docs/ARCHITECTURE.md), [providers](docs/PROVIDERS.md), and
 [migration](docs/MIGRATION.md) for the maintained design contract.
+
+## agent-on (Plan A — additive preview)
+
+`bin/agent-on` is the successor CLI designed in `docs/superpowers/specs/2026-09-07-agent-on-design.md`. Plan A lands
+`status`, `sync`, `add` and `gate` beside `claude-litellm`; it reads `routes.toml` (the only route declarations),
+writes only `${XDG_STATE_HOME:-~/.local/state}/agent-on/` (override with `AGENT_ON_STATE=<dir>` for a scratch run),
+and needs nothing but `python3 ≥ 3.11`. Secrets come from the environment or a 0600 `$STATE/env` file.
+
+    ./bin/agent-on sync            # probe every source; served flags, limit tiers, spend → observed.json
+    ./bin/agent-on status --check  # declared beside observed; every invariant, with skips shown as skips
+    ./bin/agent-on gate            # unit tests + F1 smoke on a mock source + every invariant
+    ./bin/agent-on add openrouter/<vendor>/<model> --alias <a>
+
+Nothing is launched yet (Plan B); the old `claude-litellm` path is untouched until Plan D.
