@@ -20,6 +20,7 @@ RULES: dict[str, str] = {
     "observed.route.shape": "a route observation carries every key of the empty route record; unmeasured is null; caching is true, false or 'unknown'; served is true, false or null",
     "observed.no_claude_cost": "no key named total_cost_usd or costUSD anywhere — Claude Code's own cost figure is never copied (F11)",
     "observed.session.shape": "last_session is {skipped: reason} or the full record; this_run and session_total carry turns, usage (four fields) and cost_usd = number ≥ 0 or 'unknown'",
+    "observed.qualification.shape": "last_qualification has pass, gates{name: bool}, thinking_block_seen, completed, at, and a fingerprint with effective_route_sha, wire_model, source_identity, claude_code",
     # L5 — knowledge/*.jsonl (§10)
     "knowledge.record": "a record has id (prefixed by its kind), ts, and the fields of its kind",
 }

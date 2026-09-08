@@ -239,7 +239,7 @@ class CostAndQualificationTest(unittest.TestCase):
             sha = ctx.routes.effective_sha(ctx.routes.routes["mock/alpha"])
             def plant(doc):
                 doc["routes"]["mock/alpha"] = empty_route()
-                doc["routes"]["mock/alpha"]["last_qualification"] = {"pass": True, "at": "2026-09-07T00:00:00Z",
+                doc["routes"]["mock/alpha"]["last_qualification"] = {"pass": True, "at": "2026-09-07T00:00:00Z", "gates": {}, "thinking_block_seen": False, "completed": True,
                     "fingerprint": {"effective_route_sha": sha, "wire_model": "alpha", "source_identity": None, "claude_code": None}}
             update_observed(sb.paths, plant)
             self.assertEqual({x.subject: x.result for x in one(sb.paths, "qualification.current")}["mock/alpha"], "pass")

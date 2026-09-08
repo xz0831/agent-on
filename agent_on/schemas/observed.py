@@ -11,6 +11,8 @@ CACHING_VALUES = (True, False, "unknown")
 SESSION_KEYS = ("id", "at", "first_request", "this_run", "session_total", "scope_note", "duration_ms", "effort", "permission_mode", "claude_code")
 CHECK_KEYS = ("at", "commit", "result", "skipped")
 GATE_RUN_KEYS = ("at", "commit", "result", "tests", "verifiers", "invariants", "skipped", "skipped_reasons", "mock_port")
+QUALIFICATION_KEYS = ("pass", "gates", "thinking_block_seen", "completed", "at", "fingerprint")
+FINGERPRINT_KEYS = ("effective_route_sha", "wire_model", "source_identity", "claude_code")
 
 
 def empty_tier() -> dict:
@@ -88,6 +90,12 @@ def validate_route(r, where: str) -> None:
         raise SchemaError("observed.route.shape", f"{where}.cost_model.caching must be true, false or 'unknown'")
     if r["served"] not in (True, False, None):
         raise SchemaError("observed.route.shape", f"{where}.served must be true, false or null")
+    q = r["last_qualification"]
+    if q is not None:
+        _require_keys(q, QUALIFICATION_KEYS, f"{where}.last_qualification", "observed.qualification.shape")
+        _require_keys(q["fingerprint"], FINGERPRINT_KEYS, f"{where}.last_qualification.fingerprint", "observed.qualification.shape")
+        if not isinstance(q["gates"], dict) or not all(isinstance(v, bool) for v in q["gates"].values()):
+            raise SchemaError("observed.qualification.shape", f"{where}.last_qualification.gates must map gate names to booleans")
     if r["last_session"] is not None:
         validate_session(r["last_session"], f"{where}.last_session")
 
