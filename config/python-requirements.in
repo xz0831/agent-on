@@ -1,5 +1,0 @@
-# Direct runtime contract. Refresh python-requirements.lock intentionally when
-# bumping one of these pins or adopting newer compatible transitive releases.
-litellm[proxy]==1.92.0
-prisma==0.15.0
-pip==26.1.2

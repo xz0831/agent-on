@@ -7,160 +7,9 @@ on:
   pull_request:
 
 jobs:
-  check:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up production Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Verify production Python executable
-        run: python3.13 --version
-
-      - name: Set up pinned Rust for the LiteLLM macOS source build
-        run: |
-          rustup toolchain install 1.97.0 --profile minimal --no-self-update
-          echo "RUSTUP_TOOLCHAIN=1.97.0" >> "$GITHUB_ENV"
-          echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
-          echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
-
-      - name: Install jq and ripgrep
-        run: brew install jq ripgrep
-
-      - name: Run repository checks
-        run: ./scripts/check.zsh
-
-      - name: Run repository checks under a C/POSIX locale (encoding regression guard)
-        # Bare/non-interactive contexts (launchd, cron, minimal SSH/Docker) run
-        # with an unset or C locale, which makes Ruby default to US-ASCII. The
-        # UTF-8 em-dashes in litellm_config.yaml comments must not crash the
-        # inline-Ruby readers there; this re-run proves the fabric is locale-safe.
-        run: LC_ALL=C LANG=C ./scripts/check.zsh
-
-  token-clamp:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Set up pinned Rust for the LiteLLM macOS source build
-        run: |
-          rustup toolchain install 1.97.0 --profile minimal --no-self-update
-          echo "RUSTUP_TOOLCHAIN=1.97.0" >> "$GITHUB_ENV"
-          echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
-          echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
-
-      - name: Install LiteLLM
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install 'litellm[proxy]==1.92.0' 'prisma==0.15.0'
-
-      - name: Verify LiteLLM token clamp behavior
-        run: |
-          ./scripts/verify_litellm_token_clamp.py --json > clamp.json
-          python - <<'PY'
-          import json
-          payload = json.load(open("clamp.json"))
-          assert payload["plain_config_enforced_client_output_cap"] is False
-          assert payload["modify_params_enforced_client_output_cap"] is False
-          assert payload["hook_enforced_client_output_cap"] is True
-          assert payload["hook_enforced_cost_guardrail"] is True
-          assert payload["hook_enforced_cost_guardrail_tools"] is True
-          assert payload["recommended_policy"] == "async_pre_call_deployment_hook"
-          PY
-          PYTHONPATH="$PWD/config" ./scripts/verify_litellm_token_clamp.py \
-            --callback-module ai_litellm_callbacks.output_clamp.proxy_handler_instance \
-            --json > clamp-production.json
-          python - <<'PY'
-          import json
-          payload = json.load(open("clamp-production.json"))
-          assert payload["callback_module"] == "ai_litellm_callbacks.output_clamp.proxy_handler_instance"
-          assert payload["hook_enforced_client_output_cap"] is True
-          assert payload["hook_enforced_cost_guardrail"] is True
-          assert payload["hook_enforced_cost_guardrail_tools"] is True
-          assert payload["recommended_policy"] == "async_pre_call_deployment_hook"
-          PY
-
-  tool-fidelity:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Set up pinned Rust for the LiteLLM macOS source build
-        run: |
-          rustup toolchain install 1.97.0 --profile minimal --no-self-update
-          echo "RUSTUP_TOOLCHAIN=1.97.0" >> "$GITHUB_ENV"
-          echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
-          echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
-
-      - name: Install LiteLLM
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install 'litellm[proxy]==1.92.0' 'prisma==0.15.0'
-
-      - name: Verify tool-call translation fidelity
-        run: |
-          ./scripts/verify_tool_call_fidelity.py --json > fidelity.json
-          cat fidelity.json
-          python - <<'PY'
-          import json
-          p = json.load(open("fidelity.json"))["mock"]
-          # Anthropic <-> OpenAI tool translation must survive the round trip:
-          assert p["single_turn_tool_use_roundtrip"] is True
-          assert p["request_tools_translated"] is True
-          assert p["multiturn_tool_result_roundtrip"] is True
-          assert p["multiturn_history_translated"] is True
-          assert p["thinking_plus_tooluse_resume_ok"] is True
-          assert p["thinking_signature_forwarded"] is True
-          assert p["streaming_tool_arguments_roundtrip"] is True
-          assert p["output_config_effort_forwarded"] is True
-          assert p["drop_params_does_not_fake_effort_support"] is True
-          PY
-
-  oauth-adapters:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Set up pinned Rust for the LiteLLM macOS source build
-        run: |
-          rustup toolchain install 1.97.0 --profile minimal --no-self-update
-          echo "RUSTUP_TOOLCHAIN=1.97.0" >> "$GITHUB_ENV"
-          echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
-          echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
-
-      - name: Install pinned LiteLLM OAuth adapters
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install 'litellm[proxy]==1.92.0' 'prisma==0.15.0' PyYAML
-
-      - name: Verify OAuth routes, storage, and output redaction without network
-        run: ./scripts/verify_oauth_adapters.py
-
   agent-on:
-    # Plan A of docs/superpowers/specs/2026-09-07-agent-on-design.md: stdlib only, no LiteLLM, no Rust.
-    # Sources are unreachable on CI; the gate reports those as listed skips, never as passes.
+    # docs/superpowers/specs/2026-09-07-agent-on-design.md: stdlib only. Sources are unreachable on CI; the gate
+    # reports those as listed skips, never as passes.
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -171,8 +20,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      # The report lands in RUNNER_TEMP, not the checkout: a gate.json written beside the code would make the
-      # gate's own copy.dirty true and report the artifact as an uncommitted change.
+      # Reports land in RUNNER_TEMP, not the checkout: a file written beside the code would make copy.dirty true.
       - name: agent-on gate
         run: AGENT_ON_STATE="$RUNNER_TEMP/agent-on-state" ./bin/agent-on gate --json | tee "$RUNNER_TEMP/gate.json"
 
@@ -182,8 +30,25 @@ jobs:
           import json, os
           g = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "gate.json")))
           assert g["result"] == "pass", g["last_gate_run"]
-          assert g["tests"]["ok"] is True and g["tests"]["ran"] > 50, g["tests"]
+          assert g["tests"]["ok"] is True and g["tests"]["ran"] > 200, g["tests"]
           assert g["smoke"]["ok"] is True, g["smoke"]
-          assert g["last_gate_run"]["invariants"]["credential.not_in_child_env"] == "pass"
-          assert g["last_gate_run"]["invariants"]["knowledge.typed"] == "pass"
+          inv = g["last_gate_run"]["invariants"]
+          assert inv["credential.not_in_child_env"] == "pass"
+          assert inv["knowledge.typed"] == "pass"
+          assert inv["docs.current"] == "pass"
           PY
+
+      - name: install into a scratch bin dir, then dry-run every packaged route through the shim
+        run: |
+          set -euo pipefail
+          export AGENT_ON_STATE="$RUNNER_TEMP/agent-on-state"
+          ./bin/agent-on install --bin-dir "$RUNNER_TEMP/bin" --json | tee "$RUNNER_TEMP/install.json"
+          python - <<'PY'
+          import json, os
+          d = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "install.json")))
+          assert d["written"], d
+          assert {l["state"] for l in d["links"].values()} == {"linked"}, d["links"]
+          PY
+          for r in $(./bin/agent-on status --json | python -c 'import json,sys; print(" ".join(json.load(sys.stdin)["routes"]))'); do
+            "$RUNNER_TEMP/bin/claude-on" --dry-run "$r" -p hi --json > /dev/null
+          done

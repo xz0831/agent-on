@@ -1,6 +1,6 @@
 """`agent-on qualify <route>` (§7, §8, §9): the six fidelity gates on the direct wire, the throughput, concurrency,
 caching and thinking probes, the harness baseline and the enforced input limit. Every result is recorded with the
-fingerprint it was valid for. The gates are those scripts/verify_tool_call_fidelity.py ran through LiteLLM; here
+fingerprint it was valid for. The six gates are the old verifier's, ported 1:1 (decisions-verifier-folded-into-qualify); here
 they hit the source itself."""
 from __future__ import annotations
 

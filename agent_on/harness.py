@@ -31,7 +31,7 @@ PLACEHOLDER_TOKEN = "agent-on"          # a keyless source still needs a non-emp
 DISCOVERY_ENV = "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
 FREE = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
 SHARED_ITEMS = ("settings.json", "settings.local.json", "plugins", "skills", "keybindings.json", "CLAUDE.md")
-# The routing denylist the old launcher scrubbed (config/ai-litellm/harnesses/claude.json), kept whole: anything
+# The routing denylist the old launcher scrubbed, kept whole: anything
 # here in the parent would re-route or re-authenticate the child behind the launcher's back.
 SCRUB_ENV = (
     "OPENROUTER_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "OPENAI_API_BASE", "OPENAI_BASE_URL",
@@ -42,7 +42,7 @@ SCRUB_ENV = (
     "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES", "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
     "CLAUDE_CODE_ATTRIBUTION_HEADER", "CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
     "CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK", "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-    "GOOGLE_API_KEY", "GEMINI_API_KEY", "OLLAMA_HOST", "LITELLM_API_KEY", "LITELLM_MASTER_KEY",
+    "GOOGLE_API_KEY", "GEMINI_API_KEY", "OLLAMA_HOST",
     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_SKIP_BEDROCK_AUTH", "CLAUDE_CODE_SKIP_VERTEX_AUTH",
     "ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL", "AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_CUSTOM_HEADERS",
     "CLAUDE_CONFIG_DIR",

@@ -1,6 +1,6 @@
 # agent-on route table — L1, the only declarations (spec §6). Git-tracked; edited by hand or by `agent-on add`.
 # Route names are <source>/<model> (D10). Every numeric limit carries a confidence and a source.
-# The GPT and xAI OAuth routes packaged in litellm_config.yaml are deliberately absent (D3).
+# The GPT and xAI OAuth routes the old gateway packaged are deliberately absent (D3).
 version = 1
 
 [sources.openrouter]

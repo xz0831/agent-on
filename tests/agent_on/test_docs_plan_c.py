@@ -20,12 +20,11 @@ class DocsTest(unittest.TestCase):
             self.assertIn(needle, text)
         self.assertNotIn("131072", text)                                            # values live in routes.toml / observed.json, never in the skill (D5)
 
-    def test_readme_has_the_plan_c_section_and_architecture_lost_the_orca_paragraph(self):
+    def test_readme_has_the_plan_c_section(self):
+        # docs/ARCHITECTURE.md (and its "consumed by Orca" paragraph) was deleted whole in Plan D (§14 row D).
         readme = (REPO / "README.md").read_text(encoding="utf-8")
         self.assertIn("### Knowledge (Plan C)", readme)
         self.assertIn("agent-on learn", readme)
-        arch = (REPO / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
-        self.assertNotIn("consumed by Orca", arch)
 
     def test_spec_learn_row_names_the_real_flag(self):
         spec = (REPO / "docs" / "superpowers" / "specs" / "2026-09-07-agent-on-design.md").read_text(encoding="utf-8")

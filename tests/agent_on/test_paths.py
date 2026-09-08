@@ -81,7 +81,7 @@ class PathsTest(unittest.TestCase):
         self.assertEqual(p.run_dir, Path("/s/run"))
         self.assertEqual(p.claude_config_dir, Path("/s/claude-config"))
         self.assertEqual(project_slug("/Users/rick/.openclaw"), "-Users-rick--openclaw")
-        self.assertEqual(project_slug("/Users/rick/Projects/claude-litellm"), "-Users-rick-Projects-claude-litellm")
+        self.assertEqual(project_slug("/Users/rick/Projects/agent-on"), "-Users-rick-Projects-agent-on")
         self.assertEqual(p.transcript_path("abc-123", "/Users/rick/x y"), Path("/s/claude-config/projects/-Users-rick-x-y/abc-123.jsonl"))
 
     def test_ensure_state_creates_the_run_dir(self):

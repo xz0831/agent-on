@@ -1,38 +1,10 @@
 .DS_Store
 __pycache__/
 *.pyc
-
-# Runtime state. Installed packages keep state under
-# ${XDG_DATA_HOME:-~/.local/share}/ai-litellm/state; ~/.config/* paths
-# are legacy migration fallbacks only. Runtime state is not kept in this repo.
-*.log
-*.pid
-*.started_at
-*.sha256
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
-*.db
-*.db-shm
-*.db-wal
-history.jsonl
-sessions/
-cache/
-state/
-backups/
-claude-config/
-codex-home/
-
-# Un-rendered install placeholder. Running a bin/ wrapper from a checkout
-# (instead of the installed package) mkdir's literal __AI_LITELLM_HOME__ paths
-# under cwd; ignore the artifact so it never surfaces in git or gets committed.
-__AI_LITELLM_HOME__/
-
-# Local scratch.
-.tmp/
-artifacts/
-
-# agent-on: the routes.toml writer lock and its temp file live in the checkout (§7.1 rev 6)
+# agent-on: the routes.toml / knowledge writer locks and their temp files live in the checkout (§7.1 rev 6, §10)
 .routes.lock
 .knowledge.lock
 routes.toml.tmp.*
+# Local scratch
+.tmp/
+.claude/worktrees/
