@@ -1,0 +1,5 @@
+#!/usr/bin/env zsh
+# claude-on <route> [claude args…] — the Claude Code launcher shim (spec rev 8): agent-on launch --harness claude.
+# Launch options (--discover, --sonnet, --haiku, --dry-run, --json) go before the route; everything after it is Claude Code's.
+set -u
+exec "${0:A:h}/agent-on" launch --harness claude "$@"

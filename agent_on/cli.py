@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from .paths import default_paths, describe_copy
@@ -29,6 +30,20 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--alias")
     a.add_argument("--timeout", type=float, default=5.0)
     sub.add_parser("gate", parents=[common], help="unit tests + mock-source smoke + every invariant; writes last_gate_run")
+    l = sub.add_parser("launch", parents=[common], help="bind Claude Code to a route and run it; `claude-on <route>` is this verb (everything after the route goes to Claude Code)")
+    l.add_argument("--harness", default="claude", choices=["claude"])
+    l.add_argument("--discover", action="store_true", help="set CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 (D8: off by default)")
+    l.add_argument("--sonnet", metavar="ROUTE", help="bind the SONNET slot to another route on the same source")
+    l.add_argument("--haiku", metavar="ROUTE", help="bind the HAIKU slot to another route on the same source")
+    l.add_argument("--dry-run", action="store_true", help="print the environment keys, argv and cost line; spawn nothing")
+    l.add_argument("route", help="a route name or alias")
+    l.add_argument("claude_args", nargs=argparse.REMAINDER, help="passed to Claude Code unchanged")
+    q = sub.add_parser("qualify", parents=[common], help="six fidelity gates + throughput/concurrency/caching/thinking probes; --baseline and --limits (paid sources need --allow-paid)")
+    q.add_argument("route")
+    q.add_argument("--baseline", action="store_true")
+    q.add_argument("--limits", action="store_true")
+    q.add_argument("--allow-paid", action="store_true")
+    q.add_argument("--timeout", type=float, default=90.0)
     return p
 
 
@@ -70,6 +85,38 @@ def render_gate(doc: dict) -> str:
     return "\n".join(lines)
 
 
+def render_launch(doc: dict) -> str:
+    lines = [copy_line(doc["copy"]), doc["cost_line"]]
+    lines += [f"warning: {w}" for w in doc["warnings"]]
+    if doc.get("dry_run"):
+        lines.append("dry run — argv: " + " ".join(doc["argv"]))
+        lines.append("env: " + ", ".join(doc["env_keys"]))
+        return "\n".join(lines + invariant_lines(doc["invariants"]))
+    ls = doc.get("last_session") or {}
+    lines.append(f"exit {doc['exit_code']} · session {doc['session']['id'] or '?'} ({doc['session']['mode']})")
+    if "skipped" in ls:
+        lines.append(f"read-back skipped: {ls['skipped']}")
+    elif ls:
+        lines.append(f"this run: {ls['this_run']['turns']} turns, ${ls['this_run']['cost_usd']} · session: {ls['session_total']['turns']} turns, ${ls['session_total']['cost_usd']}")
+    return "\n".join(lines)
+
+
+def render_qualify(doc: dict) -> str:
+    lines = [copy_line(doc["copy"])]
+    if doc["refused"]:
+        return "\n".join(lines + [f"refused: {doc['refused']}"])
+    lines += [f"  {'pass' if ok else 'FAIL'} {g}" for g, ok in doc["gates"].items()]
+    p = doc["probes"]
+    lines.append(f"tok/s {p['throughput']['tok_s'] and round(p['throughput']['tok_s'])} · concurrency {p['concurrency']['concurrency']} (pair/serial {p['concurrency']['ratio']})"
+                 f" · caching {p['caching']['caching']} (cache_read {p['caching']['cache_read_second']})")
+    if doc["baseline"] is not None:
+        lines.append(f"harness baseline: {doc['baseline']} input tokens")
+    if p.get("limits"):
+        lines.append(f"verified input limit: {p['limits']['verified']} ({len(p['limits']['probes'])} probes)")
+    lines.append("fingerprint: " + json.dumps(doc["fingerprint"], sort_keys=True))
+    return "\n".join(lines + invariant_lines(doc["invariants"]))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     paths = default_paths()
@@ -89,6 +136,18 @@ def main(argv: list[str] | None = None) -> int:
             doc = run_add(paths, args.name, alias=args.alias, timeout=args.timeout)
             code = EXIT_OK if doc["written"] else EXIT_FAIL
             text = render_add(doc)
+        elif args.command == "launch":
+            from .harness import run_launch
+            doc = run_launch(paths, args.route, args.claude_args, harness=args.harness, discover=args.discover, sonnet=args.sonnet,
+                             haiku=args.haiku, dry_run=args.dry_run, claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"))
+            code = 0 if args.dry_run else int(doc["exit_code"])
+            text = render_launch(doc)
+        elif args.command == "qualify":
+            from .qualify import run_qualify
+            doc = run_qualify(paths, args.route, baseline=args.baseline, limits=args.limits, allow_paid=args.allow_paid, timeout=args.timeout,
+                              claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"))
+            code = EXIT_OK if doc["written"] and all(doc["gates"].values()) else EXIT_FAIL
+            text = render_qualify(doc)
         else:
             from .gate import run_gate
             doc = run_gate(paths)
@@ -112,7 +171,10 @@ def main(argv: list[str] | None = None) -> int:
         doc = {"command": args.command, "copy": describe_copy(paths), "error": f"{type(e).__name__}: {e}", "hint": hint}
         code = EXIT_FAIL
         text = f"{copy_line(doc['copy'])}\nerror: {doc['error']}" + (f"\nhint: {hint}" if hint else "")
-    print(json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) if args.json else text)
+    if args.json and args.command == "launch" and not getattr(args, "dry_run", False):
+        print("\n" + json.dumps(doc, sort_keys=True, ensure_ascii=False))          # one line after the child's own stdout: take the last line
+    else:
+        print(json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) if args.json else text)
     return code
 
 
