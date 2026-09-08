@@ -515,7 +515,7 @@ shows each route's last qualification outcome; a failed gate is shown, never a r
     ./bin/agent-on status glm                    # … plus the last observations and the traps that apply
     ./bin/agent-on learn traps --json-record '{…}'
     ./bin/agent-on learn task create … / handoff … / complete …
-    ./bin/claude-on huihui --task <id>           # the handoff prompt, in the task's worktree
+    ./bin/claude-on --task <id> huihui           # the handoff prompt, in the task's worktree (options before the route)
 
 `knowledge/` is git-tracked, append-only JSONL beside `routes.toml`: decisions (with supersession), traps (with
 `applies_to`), observations, and the durable twins of qualifications and gate runs. `qualify`, the gate and the

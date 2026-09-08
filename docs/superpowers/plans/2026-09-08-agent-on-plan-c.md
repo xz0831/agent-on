@@ -4,7 +4,7 @@
 
 **Goal:** Land L5 — a git-tracked, append-only, typed `knowledge/` that every action writes and every session (and peer) reads — so the next session starts from what the last one learned.
 
-**Architecture:** One new module `agent_on/knowledge.py` owns the JSONL contract (mint id + ts, validate, lock, append, read, fold supersession, select observations and traps). Actions that already run (`qualify`, the gate, the launch) append their records through it; `agent-on learn` is the operator's/agent's write verb; `status` and the launch show the last observations and the traps that apply to the route and the action in hand. The old task ledger (`scripts/task-ledger.py`, PR #12) is re-expressed as event-sourced `tasks.jsonl` under `learn task …`, and `claude-on <route> --task <id>` injects the handoff prompt as the old `task launch` did. Seeds carry the measured facts, the thirteen decisions and the traps this repo has paid for, with **stable human-readable ids**; `learn` mints ULIDs. A project skill tells an agent inside Claude Code how to read and write it.
+**Architecture:** One new module `agent_on/knowledge.py` owns the JSONL contract (mint id + ts, validate, lock, append, read, fold supersession, select observations and traps). Actions that already run (`qualify`, the gate, the launch) append their records through it; `agent-on learn` is the operator's/agent's write verb; `status` and the launch show the last observations and the traps that apply to the route and the action in hand. The old task ledger (`scripts/task-ledger.py`, PR #12) is re-expressed as event-sourced `tasks.jsonl` under `learn task …`, and `claude-on --task <id> <route>` injects the handoff prompt as the old `task launch` did. Seeds carry the measured facts, the thirteen decisions and the traps this repo has paid for, with **stable human-readable ids**; `learn` mints ULIDs. A project skill tells an agent inside Claude Code how to read and write it.
 
 **Tech Stack:** Python ≥ 3.11 standard library only (`json`, `fcntl`, `tomllib`, `argparse`, `unittest`); zsh shims; JSONL under git.
 
@@ -1321,7 +1321,7 @@ git commit -m "feat(agent-on): learn task — the task ledger as events in knowl
 
 ---
 
-### Task 7: `claude-on <route> --task <id> [--handoff n|latest]` injects the handoff
+### Task 7: `claude-on --task <id> [--handoff n|latest] <route>` injects the handoff
 
 **Files:**
 - Modify: `agent_on/harness.py` (`run_launch`), `agent_on/cli.py` (two options + render), `tests/agent_on/fakeclaude.py` (record cwd)
@@ -1516,7 +1516,7 @@ work that produced it.
 
     ./bin/agent-on learn task create <name> --goal '…' [--worktree <dir>]
     ./bin/agent-on learn task handoff <id> --to <route> --objective '…' [--from <route>] [--summary '…'] [--commit <sha>] [--tests '…']
-    ./bin/claude-on <route> --task <id> [--handoff n|latest] [claude args…]      # runs in the worktree with the handoff prompt injected
+    ./bin/claude-on --task <id> [--handoff n|latest] <route> [claude args…]      # runs in the worktree; the handoff prompt is Claude's last argument — give list options as --opt=value
     ./bin/agent-on learn task complete <id> --summary '…' [--commit <sha>] [--tests '…'] [--close]
 
 A dispatcher (Orca or another) reads `learn task prompt <id> --json` to pick a host and invokes the same launcher.
@@ -1530,7 +1530,7 @@ A dispatcher (Orca or another) reads `learn task prompt <id> --json` to pick a h
     ./bin/agent-on status glm                    # … plus the last observations and the traps that apply
     ./bin/agent-on learn traps --json-record '{…}'
     ./bin/agent-on learn task create … / handoff … / complete …
-    ./bin/claude-on huihui --task <id>           # the handoff prompt, in the task's worktree
+    ./bin/claude-on --task <id> huihui           # the handoff prompt, in the task's worktree (options before the route)
 
 `knowledge/` is git-tracked, append-only JSONL beside `routes.toml`: decisions (with supersession), traps (with
 `applies_to`), observations, and the durable twins of qualifications and gate runs. `qualify`, the gate and the
@@ -1587,7 +1587,7 @@ Expected: one `throughput` and one `cost` observation appended (route `omlx/root
 ```bash
 TID=$(./bin/agent-on learn task create 'Plan C smoke' --goal 'Read README.md and reply with only its first heading line' --worktree "$PWD")
 ./bin/agent-on learn task handoff "$TID" --to huihui --objective 'Use the Read tool to read README.md in this directory and reply with only its first heading line.' --summary 'Plan C acceptance' --commit "$(git rev-parse HEAD)"
-./bin/claude-on huihui --task "$TID" -p --allowedTools Read; echo "exit $?"
+./bin/claude-on --task "$TID" huihui --allowedTools=Read -p; echo "exit $?"
 ./bin/agent-on learn task complete "$TID" --summary 'answered' --close
 ./bin/agent-on learn task show "$TID" | python3 -c 'import json,sys; t=json.load(sys.stdin)["task"]; print(t["status"], t["handoffs"][0]["status"], t["handoffs"][0]["launch_id"])'
 ```

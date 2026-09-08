@@ -641,7 +641,7 @@ field, the discovery filter (§1.1b), the child-env credential exposure
 ### 10.1 The task ledger
 
 `task create/handoff/launch/complete` (PR #12) stays as a kind of knowledge,
-event-sourced into `tasks.jsonl`, and `claude-on <route> --task <id>` injects
+event-sourced into `tasks.jsonl`, and `claude-on --task <id> <route>` injects
 the handoff prompt exactly as `task launch` does. Its local-route pre-probe
 becomes `route.served` at launch. The Orca/dispatcher paragraph in
 `ARCHITECTURE.md` is dropped: nothing consumes it.

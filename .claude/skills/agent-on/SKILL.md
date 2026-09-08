@@ -40,7 +40,7 @@ work that produced it.
 
     ./bin/agent-on learn task create <name> --goal '…' [--worktree <dir>]
     ./bin/agent-on learn task handoff <id> --to <route> --objective '…' [--from <route>] [--summary '…'] [--commit <sha>] [--tests '…']
-    ./bin/claude-on <route> --task <id> [--handoff n|latest] [claude args…]      # runs in the worktree with the handoff prompt injected
+    ./bin/claude-on --task <id> [--handoff n|latest] <route> [claude args…]      # runs in the worktree; the handoff prompt is Claude's last argument — give list options as --opt=value
     ./bin/agent-on learn task complete <id> --summary '…' [--commit <sha>] [--tests '…'] [--close]
 
 A dispatcher (Orca or another) reads `learn task prompt <id> --json` to pick a host and invokes the same launcher.
