@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -73,9 +74,10 @@ def probe_source(source: Source, timeout: float = 5.0, headers: dict | None = No
 
 
 def probe_all(sources: dict[str, Source], timeout: float = 5.0) -> dict[str, Probe]:
-    """Every source concurrently on daemon threads, so a stalled resolver or a black-holed host cannot pin `sync`:
-    a probe that has not returned by timeout + 2 s is recorded unreachable ('timeout') and its thread dies with the
-    process instead of blocking exit."""
+    """Every source concurrently on daemon threads, so any number of stalled resolvers or black-holed hosts
+    cannot pin `sync` past one shared window: all probes race against a single deadline set once, at
+    timeout + 2 s from the start of this call — not timeout + 2 s per source. A probe that has not returned
+    by then is recorded unreachable ('timeout') and its thread dies with the process instead of blocking exit."""
     results: dict[str, Probe] = {}
 
     def run(name: str, src: Source) -> None:
@@ -84,8 +86,9 @@ def probe_all(sources: dict[str, Source], timeout: float = 5.0) -> dict[str, Pro
     threads = [threading.Thread(target=run, args=(n, s), daemon=True, name=f"probe-{n}") for n, s in sources.items()]
     for t in threads:
         t.start()
+    deadline = time.monotonic() + timeout + 2
     for t in threads:
-        t.join(timeout + 2)
+        t.join(max(0.0, deadline - time.monotonic()))
     for n in sources:
         results.setdefault(n, Probe(False, utc_now(), error=f"timeout: no answer within {timeout + 2:.0f}s"))
     return results

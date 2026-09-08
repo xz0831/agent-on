@@ -74,6 +74,23 @@ class ProbeTest(unittest.TestCase):
             self.assertIsNotNone(res["hole"].error)
             self.assertLess(time.monotonic() - t0, 5.0)
 
+    def test_probe_all_bounds_total_time_with_several_stalled_sources(self):
+        # three simultaneously black-holed sources must still come back inside the ONE shared deadline
+        # window, not N * (timeout + 2) — that is what a sequential per-thread join would produce (~9s here).
+        import time
+        holes = {
+            "hole1": src("hole1", "http://192.0.2.1:8000"),
+            "hole2": src("hole2", "http://192.0.2.2:8000"),
+            "hole3": src("hole3", "http://192.0.2.3:8000"),
+        }
+        t0 = time.monotonic()
+        res = probe_all(holes, timeout=1)
+        elapsed = time.monotonic() - t0
+        for name in holes:
+            self.assertFalse(res[name].reachable)
+            self.assertIsNotNone(res[name].error)
+        self.assertLess(elapsed, 5.0)
+
     def test_loopback_detection_and_settings_path(self):
         self.assertTrue(is_loopback("http://127.0.0.1:8000"))
         self.assertTrue(is_loopback("http://localhost:8000"))
