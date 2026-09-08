@@ -46,7 +46,7 @@ def render_sync(doc: dict) -> str:
     lines = [copy_line(doc["copy"])]
     for n, s in doc["sources"].items():
         lines.append(f"source {n}: " + ("reachable, catalog " + str(s["catalog_count"]) if s["reachable"] else f"unreachable ({s['error']})"))
-    lines.append(f"discovered {len(doc['discovered'])} route(s); shadowed {len(doc['shadowed'])}; orphaned packaged: {doc['orphans'] or 'none'}")
+    lines.append(f"discovered {len(doc['discovered'])} route(s); shadowed {len(doc['shadowed'])}; orphaned packaged: {doc['orphaned'] or 'none'}")
     for n, sp in doc["spend"].items():
         lines.append(f"spend {n}: " + (f"error {sp['error']}" if sp.get("error") else f"used ${sp['usd_used']} · limit ${sp['usd_limit']}/{sp['limit_reset']} · remaining ${sp['usd_remaining']} · today ${sp['usd_used_daily']}"))
     return "\n".join(lines + invariant_lines(doc["invariants"]))
@@ -100,6 +100,18 @@ def main(argv: list[str] | None = None) -> int:
     except KeyError as e:  # RouteTable.resolve(): unknown route or alias
         doc = {"command": args.command, "copy": describe_copy(paths), "error": str(e.args[0])}
         code, text = EXIT_USAGE, f"{copy_line(doc['copy'])}\nerror: {e.args[0]}"
+    except (OSError, ValueError) as e:
+        # An operator's broken state file or permissions is a reportable condition, not a traceback: `--json`
+        # callers must still get the envelope (copy.*, error, hint), and the hint must say what to do.
+        if isinstance(e, json.JSONDecodeError) or "observed.json" in str(e):
+            hint = "observed.json is unreadable: move it aside and run `agent-on sync` to rebuild it"
+        elif isinstance(e, PermissionError) and "env" in str(e):
+            hint = "$STATE/env must be mode 0600"
+        else:
+            hint = None
+        doc = {"command": args.command, "copy": describe_copy(paths), "error": f"{type(e).__name__}: {e}", "hint": hint}
+        code = EXIT_FAIL
+        text = f"{copy_line(doc['copy'])}\nerror: {doc['error']}" + (f"\nhint: {hint}" if hint else "")
     print(json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) if args.json else text)
     return code
 

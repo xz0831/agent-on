@@ -68,8 +68,10 @@ def default_paths(env: dict | None = None) -> Paths:
 
 def ensure_state(paths: Paths) -> None:
     for d in (paths.state, paths.observed_lock.parent, paths.sessions_dir):
+        existed = d.exists()
         d.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(d, 0o700)
+        if not existed:
+            os.chmod(d, 0o700)   # only a directory *we* created is ours to re-mode; an operator's own mode stands
 
 
 def describe_copy(paths: Paths) -> dict:

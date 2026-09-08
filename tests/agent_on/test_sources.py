@@ -98,6 +98,8 @@ class ProbeTest(unittest.TestCase):
         home = Path("/h")
         self.assertEqual(omlx_settings_path(src("omlx", "http://127.0.0.1:8000"), home), home / ".omlx" / "settings.json")
         self.assertIsNone(omlx_settings_path(src("omlx@morty", "http://mortys-mac-studio:8000"), home))
+        self.assertIsNone(omlx_settings_path(src("exo", "http://127.0.0.1:52415"), home))   # loopback, but not oMLX
+        self.assertEqual(omlx_settings_path(src("omlx-tp2", "http://127.0.0.1:8003"), home), home / ".omlx" / "settings.json")
 
 
 class ConfiguredLimitsTest(unittest.TestCase):

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -36,6 +38,22 @@ class CliTest(unittest.TestCase):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
             cli.main(["frobnicate"])
         self.assertEqual(cm.exception.code, 2)
+
+    def test_operator_errors_are_reported_in_the_envelope_not_as_tracebacks(self):
+        # A corrupt observed.json is an operator condition, not a crash: `--json` must still print the envelope
+        # (copy.*, error, hint) and exit 1. `status --check` writes last_check, so it goes through read_observed.
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state"
+            state.mkdir()
+            (state / "observed.json").write_text("not json", encoding="utf-8")
+            proc = subprocess.run([sys.executable, "-m", "agent_on", "--json", "status", "--check"], cwd=REPO,
+                                  env={**os.environ, "AGENT_ON_STATE": str(state), "PYTHONPATH": str(REPO)},
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 1, proc.stderr)
+            doc = json.loads(proc.stdout)
+            self.assertIn("observed.json", doc["error"])
+            self.assertIn("sync", doc["hint"])
+            self.assertNotIn("Traceback", proc.stderr)
 
     def test_shim_runs_the_package_and_checks_the_interpreter(self):
         shim = REPO / "bin" / "agent-on"

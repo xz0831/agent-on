@@ -52,7 +52,10 @@ def atomic_write(path: Path, text: str) -> None:
 def read_observed(paths: Paths) -> dict:
     if not paths.observed_json.exists():
         return empty_observed()
-    doc = json.loads(paths.observed_json.read_text(encoding="utf-8"))
+    try:
+        doc = json.loads(paths.observed_json.read_text(encoding="utf-8"))
+    except ValueError as e:   # a corrupt observed.json must name itself: the CLI turns this into an operator hint
+        raise ValueError(f"{paths.observed_json}: {e}") from e
     validate_observed(doc)
     return doc
 

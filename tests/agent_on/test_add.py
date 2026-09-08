@@ -11,26 +11,29 @@ from helpers import MOCK_ROUTES, REPO, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
-from agent_on.add import HOLD_ENV, run_add  # noqa: E402
+from agent_on.add import HOLD_ENV, route_from_catalog, run_add  # noqa: E402
 from agent_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
 from agent_on.paths import Paths  # noqa: E402
 from agent_on.schemas.errors import SchemaError  # noqa: E402
-from agent_on.schemas.routes import load_routes  # noqa: E402
+from agent_on.schemas.routes import Source, load_routes  # noqa: E402
+from agent_on.sources import normalize_catalog  # noqa: E402
 
 CATALOG = [omlx_entry("alpha"), omlx_entry("beta", 131072), openrouter_entry("vendor/model-y", 200000, 8000, "0.000001", "0.000002", None)]
 
 ADD_SCRIPT = """
-import sys; sys.path.insert(0, {repo!r})
+import sys, time; sys.path.insert(0, {repo!r})
 from pathlib import Path
 from agent_on.paths import Paths
 from agent_on.add import run_add
 from agent_on.schemas.errors import SchemaError
 p = Paths(checkout=Path({co!r}), state=Path({st!r}), home=Path({home!r}))
+t0 = time.monotonic()
 try:
     r = run_add(p, {name!r}, timeout=3)
 except SchemaError as e:
     print(f"schema:{{e.rule}}", file=sys.stderr)
     raise SystemExit(3)
+print(f"took:{{time.monotonic() - t0:.3f}}")
 raise SystemExit(0 if r["written"] else 1)
 """
 
@@ -57,6 +60,13 @@ class AddTest(unittest.TestCase):
             self.assertEqual((y.reasoning.confidence, y.reasoning.efforts), ("provider", ()))
             self.assertIn("paid.pricing", y.price.source)
             self.assertEqual(list(sb.paths.checkout.glob("routes.toml.tmp.*")), [])
+
+    def test_an_unparseable_catalog_price_is_an_absent_price_not_a_crash(self):
+        entry = normalize_catalog({"data": [openrouter_entry("vendor/model-z", prompt="n/a")]})["vendor/model-z"]
+        source = Source("paid", "http://127.0.0.1:9", "MOCK_PAID_KEY", "/v1/models", False, None)
+        route = route_from_catalog("paid/vendor/model-z", source, entry, (), "2026-09-08")
+        self.assertIsNone(route.price)
+        self.assertIsNotNone(route.limits)      # the rest of the entry is still read
 
     def test_unserved_model_is_refused_and_unreachable_source_proceeds_with_a_skip(self):
         with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
@@ -87,10 +97,18 @@ class AddTest(unittest.TestCase):
         with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             other_state = sb.root / "scratch-state"
             script = lambda st, name: ADD_SCRIPT.format(repo=str(REPO), co=str(sb.paths.checkout), st=str(st), home=str(sb.paths.home), name=name)
-            a = subprocess.Popen([sys.executable, "-c", script(sb.paths.state, "mock/beta")], env={**os.environ, HOLD_ENV: "600"})
+            a = subprocess.Popen([sys.executable, "-c", script(sb.paths.state, "mock/beta")], env={**os.environ, HOLD_ENV: "600"},
+                                 stdout=subprocess.PIPE, text=True)
             time.sleep(0.15)
-            b = subprocess.Popen([sys.executable, "-c", script(other_state, "paid/vendor/model-y")], env={**os.environ, HOLD_ENV: "0"})
-            self.assertEqual((a.wait(), b.wait()), (0, 0))
+            b = subprocess.Popen([sys.executable, "-c", script(other_state, "paid/vendor/model-y")], env={**os.environ, HOLD_ENV: "0"},
+                                 stdout=subprocess.PIPE, text=True)
+            a_out, _ = a.communicate(timeout=60)
+            b_out, _ = b.communicate(timeout=60)
+            self.assertEqual((a.returncode, b.returncode), (0, 0))
+            # Non-vacuous: B really blocked on A's lock. A holds it 600 ms after its re-read and B starts 150 ms
+            # in, so B cannot finish in under ~0.45 s unless the two never contended for the same lock at all.
+            b_took = float(b_out.split("took:")[1].strip())
+            self.assertGreaterEqual(b_took, 0.3, f"B did not wait for A's hold (a={a_out!r} b={b_out!r})")
             table = load_routes(sb.paths)
             self.assertIn("mock/beta", table.routes)
             self.assertIn("paid/vendor/model-y", table.routes)

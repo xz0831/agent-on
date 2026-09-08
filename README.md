@@ -480,8 +480,10 @@ See [model runbook](docs/MODEL-RUNBOOK.md),
 
 `bin/agent-on` is the successor CLI designed in `docs/superpowers/specs/2026-09-07-agent-on-design.md`. Plan A lands
 `status`, `sync`, `add` and `gate` beside `claude-litellm`; it reads `routes.toml` (the only route declarations),
-writes only `${XDG_STATE_HOME:-~/.local/state}/agent-on/` (override with `AGENT_ON_STATE=<dir>` for a scratch run),
-and needs nothing but `python3 ≥ 3.11`. Secrets come from the environment or a 0600 `$STATE/env` file.
+writes its state root — `${XDG_STATE_HOME:-~/.local/state}/agent-on/`, overridden by `AGENT_ON_STATE=<dir>` for a
+scratch run — and needs nothing but `python3 ≥ 3.11`. `add` is the one command that writes inside the checkout: it
+appends to `routes.toml` (and takes `.routes.lock` beside it). Secrets come from the environment or a 0600
+`$STATE/env` file.
 
     ./bin/agent-on sync            # probe every source; served flags, limit tiers, spend → observed.json
     ./bin/agent-on status --check  # declared beside observed; every invariant, with skips shown as skips

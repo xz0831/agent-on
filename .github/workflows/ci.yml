@@ -171,14 +171,16 @@ jobs:
         with:
           python-version: "3.13"
 
+      # The report lands in RUNNER_TEMP, not the checkout: a gate.json written beside the code would make the
+      # gate's own copy.dirty true and report the artifact as an uncommitted change.
       - name: agent-on gate
-        run: AGENT_ON_STATE="$RUNNER_TEMP/agent-on-state" ./bin/agent-on gate --json | tee gate.json
+        run: AGENT_ON_STATE="$RUNNER_TEMP/agent-on-state" ./bin/agent-on gate --json | tee "$RUNNER_TEMP/gate.json"
 
       - name: Assert the gate passed with its skips listed
         run: |
           python - <<'PY'
-          import json
-          g = json.load(open("gate.json"))
+          import json, os
+          g = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "gate.json")))
           assert g["result"] == "pass", g["last_gate_run"]
           assert g["tests"]["ok"] is True and g["tests"]["ran"] > 50, g["tests"]
           assert g["smoke"]["ok"] is True, g["smoke"]

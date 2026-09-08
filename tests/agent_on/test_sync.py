@@ -28,7 +28,7 @@ class SyncTest(unittest.TestCase):
             before = sb.paths.routes_toml.read_bytes()
             report = run_sync(sb.paths, timeout=3, env={"MOCK_PAID_KEY": "k-1"})
             self.assertEqual(sb.paths.routes_toml.read_bytes(), before, "sync never touches routes.toml")
-            self.assertEqual(report["orphans"], ["mock/gone"])                      # F1: declared but not served
+            self.assertEqual(report["orphaned"], ["mock/gone"])                      # F1: declared but not served
             # alpha is packaged → shadowed, not discovered; the OpenRouter-shaped entry is also in `mock`'s catalog (one mock, two sources)
             self.assertEqual(report["discovered"], ["mock/beta", "mock/vendor/model-x"])
             self.assertEqual(report["shadowed"], [])
@@ -36,13 +36,14 @@ class SyncTest(unittest.TestCase):
             self.assertTrue(obs["sources"]["mock"]["reachable"])
             self.assertEqual(obs["sources"]["mock"]["catalog"], ["alpha", "beta", "vendor/model-x"])
             self.assertEqual(obs["sources"]["mock"]["identity"], "owned_by=omlx")
-            self.assertEqual(obs["sources"]["mock"]["configured_limits"]["input"], 131072)
+            # R1: `mock` is loopback but not an oMLX source, so ~/.omlx/settings.json is not its configuration
+            self.assertIsNone(obs["sources"]["mock"]["configured_limits"])
             self.assertEqual(set(obs["sources"]["paid"]["catalog"]), {"vendor/model-x"})   # non-discover: declared entries only
             self.assertEqual(obs["sources"]["paid"]["catalog_count"], 3)
             r = obs["routes"]["mock/alpha"]
             self.assertTrue(r["served"])
-            self.assertEqual(r["limits"]["input"], {"configured": 131072, "advertised": 262144, "verified": None, "checked": r["checked"]})
-            self.assertEqual(r["limits"]["output"]["configured"], 32768)
+            self.assertEqual(r["limits"]["input"], {"configured": None, "advertised": 262144, "verified": None, "checked": r["checked"]})
+            self.assertIsNone(r["limits"]["output"]["configured"])
             self.assertEqual((r["cost_model"]["context"], r["cost_model"]["context_basis"]), (8192, "declared"))   # source limit 8192 wins
             self.assertEqual(r["cost_model"]["usd_per_mtok"], {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
             self.assertEqual(r["cost_model"]["caching"], "unknown")                   # never inferred from a price
@@ -72,6 +73,21 @@ class SyncTest(unittest.TestCase):
             self.assertEqual(report["discovered"], ["mock/vendor/model-x"])
             self.assertTrue(read_observed(sb.paths)["routes"]["mock/beta"]["served"])
 
+    def test_configured_limits_reach_observed_only_for_an_omlx_source(self):
+        # The same fixture with its loopback source named `omlxmock`: now ~/.omlx/settings.json IS its configuration,
+        # and the tier reaches both the source record and every route it serves (§7 `sources.omlx*`).
+        routes = MOCK_ROUTES.replace("mock", "omlxmock")   # an oMLX-named source the checkout does not declare
+        with MockSource(catalog=CATALOG) as m, Sandbox(routes.format(base=m.base_url)) as sb:
+            settings = sb.paths.home / ".omlx" / "settings.json"
+            settings.parent.mkdir()
+            settings.write_text(json.dumps({"sampling": {"max_context_window": 131072, "max_tokens": 32768}}), encoding="utf-8")
+            run_sync(sb.paths, timeout=3, env={})
+            obs = read_observed(sb.paths)
+            self.assertEqual(obs["sources"]["omlxmock"]["configured_limits"]["input"], 131072)
+            self.assertEqual(obs["sources"]["omlxmock"]["configured_limits"]["source"], "~/.omlx/settings.json")
+            self.assertEqual(obs["routes"]["omlxmock/alpha"]["limits"]["input"]["configured"], 131072)
+            self.assertEqual(obs["routes"]["omlxmock/alpha"]["limits"]["output"]["configured"], 32768)
+
     def test_unreachable_source_records_the_error_and_leaves_served_unmeasured(self):
         with Sandbox(MOCK_ROUTES.format(base="http://127.0.0.1:9")) as sb:
             report = run_sync(sb.paths, timeout=1, env={})
@@ -80,7 +96,7 @@ class SyncTest(unittest.TestCase):
             self.assertIn(":9", obs["sources"]["mock"]["error"])
             self.assertIsNone(obs["routes"]["mock/alpha"]["served"])
             self.assertIsNone(obs["routes"]["mock/alpha"]["limits"]["input"]["advertised"])
-            self.assertEqual(report["orphans"], [])
+            self.assertEqual(report["orphaned"], [])
             self.assertEqual(report["discovered"], [])
             self.assertIn("MOCK_PAID_KEY", obs["spend"]["paid"]["error"])            # no key anywhere → said where it looked
             self.assertTrue(sb.paths.discovered_toml.exists())

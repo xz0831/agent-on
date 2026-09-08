@@ -25,13 +25,20 @@ def route_from_catalog(name: str, source: Source, entry: dict | None, aliases: t
         if entry.get("max_input") or entry.get("max_output"):
             limits = Limits(entry.get("max_input"), entry.get("max_output"), "provider",
                             f"{src}.top_provider.context_length / max_completion_tokens ({today})")
-        pricing = entry.get("pricing") or {}
-        if pricing.get("prompt") is not None and pricing.get("completion") is not None:
-            def per_mtok(v):
+        pricing = entry.get("pricing")
+        pricing = pricing if isinstance(pricing, dict) else {}
+
+        def per_mtok(v):
+            """A catalog price we cannot read as a number is an absent price, not a crash (some entries say 'n/a')."""
+            try:
                 return None if v is None else round(float(v) * 1_000_000, 6)
+            except (TypeError, ValueError):
+                return None
+
+        if per_mtok(pricing.get("prompt")) is not None and per_mtok(pricing.get("completion")) is not None:
             price = Price(per_mtok(pricing["prompt"]), per_mtok(pricing["completion"]), per_mtok(pricing.get("input_cache_read")),
                           per_mtok(pricing.get("input_cache_write")),
-                          f"{src}.pricing ({today})" + ("" if pricing.get("input_cache_write") is not None else "; no cache-write price published"))
+                          f"{src}.pricing ({today})" + ("" if per_mtok(pricing.get("input_cache_write")) is not None else "; no cache-write price published"))
         params = entry.get("supported_parameters")
         if params is not None:
             reasoning_params = [p for p in params if p in ("reasoning", "reasoning_effort")]
@@ -57,7 +64,8 @@ def run_add(paths: Paths, name: str, *, alias: str | None = None, timeout: float
         served = Result("route.served", "fail", f"{model!r} not in the {src_name} catalog ({probe.catalog_count} ids)", name,
                         "check the id against `agent-on sync` / the source's catalog; nothing was written")
     if served.result == "fail":
-        return {"command": "add", "copy": describe_copy(paths), "route": name, "written": False, "invariants": [served.as_dict()]}
+        return {"command": "add", "copy": describe_copy(paths), "route": name, "written": False, "block": None,
+                "invariants": [served.as_dict()]}
     route = route_from_catalog(name, source, probe.catalog.get(model), (alias,) if alias else (), utc_now()[:10])
     block = route_block(route)
     with checkout_locked(paths):

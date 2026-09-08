@@ -1,5 +1,5 @@
 """`agent-on sync` (§9): probe every source; refresh catalogs, served flags, configured/advertised limits and spend;
-rewrite routes.discovered.toml; report orphans. Never writes `verified` (that is `qualify --limits`), never touches
+rewrite routes.discovered.toml; report orphaned packaged routes. Never writes `verified` (that is `qualify --limits`), never touches
 routes.toml, never dirties a tracked file (D13)."""
 from __future__ import annotations
 
@@ -54,10 +54,11 @@ def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> 
                            "source": f"openrouter GET {src.base_url.rstrip('/')}/v1/auth/key", "checked": now,
                            "error": f"no {src.auth_env} in the environment or in {paths.env_file}"}
 
-    orphans: list[str] = []
+    orphaned: list[str] = []
+    copy = describe_copy(paths)   # resolved here, outside the lock: `mutate` never spawns a subprocess while holding it
 
     def mutate(doc: dict) -> None:
-        doc["copy"] = describe_copy(paths)
+        doc["copy"] = copy
         for name, src in srcs.items():
             pr = probes[name]
             s = doc["sources"].setdefault(name, empty_source())
@@ -79,7 +80,7 @@ def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> 
             if pr.reachable:
                 r["served"] = route.wire_model in pr.catalog
                 if route.packaged and not r["served"]:
-                    orphans.append(rname)
+                    orphaned.append(rname)
                 entry = pr.catalog.get(route.wire_model) or {}
                 advertised = {"input": entry.get("max_input"), "output": entry.get("max_output")}
             else:
@@ -104,5 +105,5 @@ def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> 
     invariants = [r.as_dict() for r in evaluate(build_context(paths), ids=["route.unique"])]
     return {"command": "sync", "copy": doc["copy"],
             "sources": {n: {"reachable": p.reachable, "error": p.error, "catalog_count": p.catalog_count} for n, p in probes.items()},
-            "discovered": [r.name for r in discovered], "shadowed": list(table.shadowed), "orphans": sorted(orphans),
+            "discovered": [r.name for r in discovered], "shadowed": list(table.shadowed), "orphaned": sorted(orphaned),
             "spend": spend, "invariants": invariants}

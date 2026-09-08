@@ -95,8 +95,12 @@ def probe_all(sources: dict[str, Source], timeout: float = 5.0) -> dict[str, Pro
 
 
 def omlx_settings_path(source: Source, home: Path) -> Path | None:
-    """Only a loopback oMLX's settings file is ours to read; a tailnet host's file is its own (§7 `configured`)."""
-    return home / ".omlx" / "settings.json" if is_loopback(source.base_url) else None
+    """Only a loopback *oMLX* source's settings file is ours to read: a tailnet host's file is its own, and a
+    non-oMLX loopback server (exo, vLLM, …) is not configured by ~/.omlx/settings.json at all. Spec §7 names the
+    tier `sources.omlx*`, so the source name's part before any `@` must start with `omlx`."""
+    if not is_loopback(source.base_url) or not source.name.partition("@")[0].startswith("omlx"):
+        return None
+    return home / ".omlx" / "settings.json"
 
 
 def read_configured_limits(path: Path, home: Path) -> dict | None:
