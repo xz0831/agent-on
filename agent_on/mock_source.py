@@ -11,6 +11,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 MARKERS = ("SYSTEM_BLOCK_ALPHA", "SYSTEM_BLOCK_BETA")
 GATE_NAMES = ("text_sse", "claude_system_block_instructions", "forced_structured_tool", "streaming_input_json_delta",
               "tool_result_continuation", "claude_adaptive_effort_policy", "thinking")
+# a provider quirk, not a failure: F2 measured GLM-5.2 through OpenRouter returning a correct tool_use block with
+# stop_reason: "end_turn" — Claude Code completed the tool-call loop on that route regardless.
+QUIRKS = ("end_turn_on_tool",)
 
 
 def omlx_entry(model_id: str, max_model_len: int = 262144) -> dict:
@@ -45,14 +48,18 @@ def _system_text(system) -> str:
 class MockSource:
     def __init__(self, catalog: list[dict] | None = None, spend: dict | None = None, expect_key: str | None = None, *,
                  caching: bool = True, delay_s: float = 0.0, serialize: bool = False, max_context: int | None = None,
-                 fail_gates: tuple[str, ...] = ()):
+                 fail_gates: tuple[str, ...] = (), quirks: tuple[str, ...] = ()):
         bad = set(fail_gates) - set(GATE_NAMES)
         if bad:
             raise ValueError(f"unknown fail_gates {sorted(bad)}")
+        bad = set(quirks) - set(QUIRKS)
+        if bad:
+            raise ValueError(f"unknown quirks {sorted(bad)}")
         self.catalog = list(catalog or [])
         self.spend = spend
         self.expect_key = expect_key
         self.caching, self.delay_s, self.serialize, self.max_context, self.fail_gates = caching, delay_s, serialize, max_context, tuple(fail_gates)
+        self.quirks = tuple(quirks)
         self.requests: list[tuple[str, dict]] = []
         self.messages: list[dict] = []
         self._seen_system: set[str] = set()
@@ -102,7 +109,7 @@ class MockSource:
         markers = [m for m in MARKERS if m in sys_text]
         if body.get("tools") and not has_tool_result and "forced_structured_tool" not in self.fail_gates:
             content.append({"type": "tool_use", "id": "toolu_mock_1", "name": body["tools"][0]["name"], "input": {"city": "Seoul"}})
-            stop = "tool_use"
+            stop = "end_turn" if "end_turn_on_tool" in self.quirks else "tool_use"
         elif has_tool_result:
             if "tool_result_continuation" not in self.fail_gates:
                 content.append({"type": "text", "text": "It is 18C and sunny in Seoul."})

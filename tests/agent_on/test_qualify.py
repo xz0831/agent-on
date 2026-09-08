@@ -43,6 +43,19 @@ class GatesTest(unittest.TestCase):
             self.assertFalse(r["thinking_block_seen"])
         self.assertEqual(set(GATE_NAMES) - {"thinking"}, set(GATES))
 
+    def test_forced_structured_tool_ignores_stop_reason_but_records_it(self):  # F2
+        # GLM-5.2 through OpenRouter's Anthropic wire returned a correct tool_use block with stop_reason: "end_turn"
+        # (measured 2026-09-08); Claude Code completed the tool-call loop on that route regardless. The gate is
+        # stricter than Claude Code — drop the stop_reason requirement, but keep recording what was seen.
+        with MockSource() as m:
+            r = run_gates(Wire(m.base_url, "x", timeout=10))
+            self.assertEqual(r["details"]["forced_structured_tool_stop_reason"], "tool_use")
+        with MockSource(quirks=("end_turn_on_tool",)) as m:
+            r = run_gates(Wire(m.base_url, "x", timeout=10))
+            self.assertTrue(r["all_pass"], r)
+            self.assertTrue(r["gates"]["forced_structured_tool"])
+            self.assertEqual(r["details"]["forced_structured_tool_stop_reason"], "end_turn")
+
     def test_auth_and_unreachable_are_statuses_not_exceptions(self):
         with MockSource(expect_key="k") as m:
             r = run_gates(Wire(m.base_url, "x", key="wrong", timeout=10))

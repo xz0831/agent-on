@@ -165,9 +165,14 @@ def run_gates(wire: Wire) -> dict:
     status, resp = wire.post(forced)
     tool = _blocks(resp.get("content"), "tool_use")[0] if status == 200 and _blocks(resp.get("content"), "tool_use") else None
     tool_id = tool.get("id") if tool else None
-    gates["forced_structured_tool"] = bool(status == 200 and resp.get("stop_reason") == "tool_use" and tool and isinstance(tool_id, str) and tool_id.strip()
+    # F2: stop_reason is not checked — GLM-5.2 through OpenRouter's Anthropic wire returned a correct tool_use block
+    # (id present, input == {"city": "Seoul"}) with stop_reason: "end_turn" twice in a row (measured 2026-09-08), and
+    # Claude Code completed the tool-call loop on that route regardless. The gate judges the tool block, not the
+    # stop reason; the raw value is still recorded so the observation is not lost.
+    gates["forced_structured_tool"] = bool(status == 200 and tool and isinstance(tool_id, str) and tool_id.strip()
                                            and tool.get("name") == "get_weather" and _valid_city(tool.get("input")))
     details["forced_structured_tool_status"] = status
+    details["forced_structured_tool_stop_reason"] = resp.get("stop_reason")   # raw value; may be None
 
     status, events = wire.stream(forced)
     start, streamed_input, saw_delta = _streamed_tool(events)
