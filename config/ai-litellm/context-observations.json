@@ -59,7 +59,7 @@
       "provider_model": "openai/Qwen3-VL-32B-Instruct-4bit",
       "status": "tokenizer_delta",
       "observed_input_tokens": 768,
-      "evidence": "The identical prompt text counted 819 prompt_tokens on Huihui-Qwen3.8-27B-oQ4e-mtp and 768 on Qwen3-VL-32B-Instruct-4bit \u2014 a 6.6% spread between two models on the same local runtime. Relevant to adapterConfig.outputReservation.tokenizerHeadroom (8192), which exists to absorb exactly this class of mismatch; this is the first measured local datapoint for it. Raw: same directory, compare prompt_tokens across smoke_20260823.json and smoke_20260823_attempt4.json"
+      "evidence": "The identical prompt text counted 819 prompt_tokens on Huihui-Qwen3.8-27B-oQ4e-mtp and 768 on Qwen3-VL-32B-Instruct-4bit — a 6.6% spread between two models on the same local runtime. Relevant to adapterConfig.outputReservation.tokenizerHeadroom (8192), which exists to absorb exactly this class of mismatch; this is the first measured local datapoint for it. Raw: same directory, compare prompt_tokens across smoke_20260823.json and smoke_20260823_attempt4.json"
     },
     {
       "id": "2026-08-23-huihui-reasoning-leak-is-thinking-flag-not-model",
@@ -114,6 +114,17 @@
       "observed_input_tokens": 48312,
       "observed_output_tokens": 1,
       "evidence": "A single `claude-litellm use <route> -p 'Reply with exactly: OK' --output-format json` spent 48312 input tokens to produce 1 output token, taking 157s wall (138.8s api). That is Claude Code's own baseline prompt, before any task content: 37% of this route's 131072 max_input_tokens is consumed before useful work begins, which is the number that decides whether the cap is comfortable for a multi-step agentic run. Also note the response reported total_cost_usd 0.241585 for a free local model -- Claude Code prices by its own table, so that field is meaningless on local routes and must not be used as cost telemetry. The launcher additionally warned that the implicit effort=xhigh is stripped at the gateway, and Claude Code logged [claude-code:unrecognized_model]."
+    },
+    {
+      "id": "2026-09-08-omlx-concurrency-scales-per-model",
+      "timestamp": "2026-09-08T06:35:00Z",
+      "scope": "backend",
+      "model_name": "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp-omlx",
+      "provider_model": "openai/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp",
+      "status": "healthy",
+      "observed_input_tokens": 20,
+      "observed_output_tokens": 120,
+      "evidence": "Qualifies 2026-09-06-omlx-serializes-concurrent-requests: that result is model-specific, not an oMLX property. Direct /v1/messages, oMLX 0.6.4 (scheduler max_concurrent_requests 8, decode_fairness true), 20-token prompt, 120 output tokens each, N identical requests in flight. root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp (MTP speculative decoding): N=1 2.3s 53 tok/s; N=2 4.7s wall (1.04x N*serial, i.e. no gain); N=4 6.4s 74.7 tok/s aggregate (0.71x); N=8 11.5s 83.1 tok/s (0.64x), so 8 sessions share ~1.6x the single-stream throughput and each waits ~5x longer. GLM-5.3-Flash-Alis-4bit (no MTP): N=1 4.7s 25.7 tok/s; N=2 6.4s (0.69x); N=4 8.9s 54.1 tok/s (0.47x); N=8 13.1s 73.4 tok/s (0.35x) -- 2.9x aggregate at 8. Mixed wires (2 /v1/messages + 2 /v1/chat/completions) on GLM: 8.8s, identical to 4 same-wire, so Anthropic and OpenAI wires share one engine with no penalty. Consequence: the per-route `concurrency` probe in claude-on qualify is the right design; a fleet should size workers per (host, model), not per host: a Huihui host takes ~2 workers usefully, a GLM-5.3-Flash host ~8."
     }
   ]
 }

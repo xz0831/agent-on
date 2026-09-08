@@ -53,7 +53,12 @@ Rev 7 records two shapes Plan A's review found the examples got wrong
 such as OpenRouter's names parameters and never effort levels (§6, §9); and
 `last_gate_run.verifiers` is `{declared, ran}`, not a count, because only the
 object lets `gate.no_silent_skip` fail on a verifier declared but never run
-(§7, §10; F6).
+(§7, §10; F6). A measurement the same day (§12 `concurrency`) corrected a
+belief this document had carried since 2026-09-06: oMLX does not serialise
+concurrent requests as such — batching gain is a property of the model (MTP
+models barely gain; a plain 4-bit model gains ~3× at 8 in flight), which is
+why `concurrency` is measured per route by `qualify` and must never be
+inherited from the source.
 
 ## 0. One paragraph
 
@@ -666,7 +671,7 @@ Every route's `observed.cost_model`:
 | `tok_s` | output tokens per second at short context | `qualify` |
 | `usd_per_mtok` | `{input, output, cache_read, cache_write}`; 0 for local. Cache write is priced separately by every provider that caches (Anthropic: 1.25× input for 5-minute, 2× for 1-hour; OpenRouter passes the provider's rates), so a session's cost is `Σ usage_field × its price` over all four fields | L1 `price` |
 | `caching` | `true` / `false` from the two-turn probe; `unknown` until run | `qualify` |
-| `concurrency` | parallel requests before serialisation (oMLX: 1; 26% worse than serial) | `qualify` |
+| `concurrency` | parallel requests before serialisation — **per route, not per source**: measured 2026-09-08 direct on oMLX 0.6.4 (`max_concurrent_requests` 8, `decode_fairness`), Huihui-Qwen3.8 (MTP) gains nothing at 2 and 1.6× aggregate at 8, while GLM-5.3-Flash-4bit gains 2.9× at 8; Anthropic and OpenAI wires mixed in flight cost nothing extra. The 2026-09-06 "26% worse than serial" was Huihui through the proxy | `qualify` |
 | `thinking` | `{observed, tokens_on_probe}` — what the source's template did, not a setting | `qualify` |
 
 The launch prints one line before spawning:
