@@ -62,6 +62,9 @@ def run_add(paths: Paths, name: str, *, alias: str | None = None, timeout: float
     block = route_block(route)
     with checkout_locked(paths):
         current = paths.routes_toml.read_text(encoding="utf-8")   # re-read under the lock: another add may have landed
+        _, packaged_now, _ = parse_routes_text(current, packaged=True)
+        if name in packaged_now:
+            raise SchemaError("routes.unique", f"{name!r} is already packaged (added concurrently)")
         hold = float(os.environ.get(HOLD_ENV, "0"))
         if hold:
             time.sleep(hold / 1000)

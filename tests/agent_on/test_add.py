@@ -24,8 +24,13 @@ import sys; sys.path.insert(0, {repo!r})
 from pathlib import Path
 from agent_on.paths import Paths
 from agent_on.add import run_add
+from agent_on.schemas.errors import SchemaError
 p = Paths(checkout=Path({co!r}), state=Path({st!r}), home=Path({home!r}))
-r = run_add(p, {name!r}, timeout=3)
+try:
+    r = run_add(p, {name!r}, timeout=3)
+except SchemaError as e:
+    print(f"schema:{{e.rule}}", file=sys.stderr)
+    raise SystemExit(3)
 raise SystemExit(0 if r["written"] else 1)
 """
 
@@ -89,6 +94,28 @@ class AddTest(unittest.TestCase):
             table = load_routes(sb.paths)
             self.assertIn("mock/beta", table.routes)
             self.assertIn("paid/vendor/model-y", table.routes)
+
+    def test_two_adds_of_the_same_route_refuse_the_loser_under_routes_unique(self):
+        # Same race as above, but both processes target "mock/beta": the loser's pre-lock read predates the
+        # winner's write, so it must be refused in-lock under routes.unique rather than corrupting the merge.
+        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            other_state = sb.root / "scratch-state"
+            script = lambda st, name: ADD_SCRIPT.format(repo=str(REPO), co=str(sb.paths.checkout), st=str(st), home=str(sb.paths.home), name=name)
+            a = subprocess.Popen([sys.executable, "-c", script(sb.paths.state, "mock/beta")], env={**os.environ, HOLD_ENV: "600"},
+                                  stderr=subprocess.PIPE, text=True)
+            time.sleep(0.15)
+            b = subprocess.Popen([sys.executable, "-c", script(other_state, "mock/beta")], env={**os.environ, HOLD_ENV: "0"},
+                                  stderr=subprocess.PIPE, text=True)
+            _, a_err = a.communicate(timeout=60)
+            _, b_err = b.communicate(timeout=60)
+            codes = {a.returncode, b.returncode}
+            self.assertEqual(codes, {0, 3})
+            loser_err = a_err if a.returncode == 3 else b_err
+            self.assertIn("schema:routes.unique", loser_err)
+            table = load_routes(sb.paths)
+            self.assertIn("mock/beta", table.routes)
+            text = sb.paths.routes_toml.read_text(encoding="utf-8")
+            self.assertEqual(text.count('[routes."mock/beta"]'), 1)
 
 
 if __name__ == "__main__":
