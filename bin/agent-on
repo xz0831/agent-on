@@ -1,0 +1,11 @@
+#!/usr/bin/env zsh
+# agent-on shim. The checkout is the installation (D9): nothing here but "find python3 >= 3.11 and exec the package".
+set -u
+checkout="${0:A:h:h}"
+py="${AGENT_ON_PYTHON:-$(command -v python3 2>/dev/null || true)}"
+if [[ -z "$py" ]] || ! "$py" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+  print -u2 -- "agent-on: python3 >= 3.11 not found on PATH (or AGENT_ON_PYTHON is not one)"
+  exit 3
+fi
+export PYTHONPATH="$checkout${PYTHONPATH:+:$PYTHONPATH}"
+exec "$py" -m agent_on "$@"

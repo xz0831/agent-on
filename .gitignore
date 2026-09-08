@@ -31,3 +31,7 @@ __AI_LITELLM_HOME__/
 # Local scratch.
 .tmp/
 artifacts/
+
+# agent-on: the routes.toml writer lock and its temp file live in the checkout (§7.1 rev 6)
+.routes.lock
+routes.toml.tmp.*
