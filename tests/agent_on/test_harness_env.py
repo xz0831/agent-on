@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import stat
 import sys
 import time
 from pathlib import Path
@@ -75,6 +76,7 @@ class ConfigDirTest(unittest.TestCase):
             (native / "settings.json").write_text("{}")
             cfg = harness.prepare_config_dir(sb.paths, "/work/dir")
             self.assertEqual(cfg, sb.paths.claude_config_dir)
+            self.assertEqual(stat.S_IMODE(sb.paths.state.stat().st_mode), 0o700)
             for item in harness.SHARED_ITEMS:
                 self.assertTrue((cfg / item).is_symlink(), item)
                 self.assertEqual(os.readlink(cfg / item), str(native / item))
@@ -148,6 +150,10 @@ class CostLineTest(unittest.TestCase):
         obs = {"cost_model": {"context": 200000, "harness_baseline_tokens": None, "tok_s": None, "usd_per_mtok": {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_write": None},
                               "caching": False, "concurrency": 4, "thinking": {"observed": False, "tokens_on_probe": None}}}
         self.assertEqual(harness.cost_line("paid/x", obs), "paid/x  ctx 200000 · ? tok/s · $1.0/5.0 per Mtok · cache ✗ · 4× concurrent · thinking off")
+        obs = {"cost_model": {"usd_per_mtok": {"input": 1.0, "output": None, "cache_read": None, "cache_write": None}}}
+        self.assertEqual(harness.cost_line("mock/half", obs), "mock/half  ctx ? · ? tok/s · $? · cache ? · concurrency ? · thinking ?")
+        obs = {"cost_model": {"usd_per_mtok": {"input": 0, "output": None, "cache_read": None, "cache_write": None}}}
+        self.assertEqual(harness.cost_line("mock/half2", obs), "mock/half2  ctx ? · ? tok/s · $? · cache ? · concurrency ? · thinking ?")
 
 
 class TranscriptTest(unittest.TestCase):
@@ -201,6 +207,18 @@ class TranscriptTest(unittest.TestCase):
             self.assertEqual(rec["session_total"]["cost_usd"], 1.0)                 # rev-6 P2: paid + 0, never 0
             self.assertIn("2 run(s)", rec["scope_note"])
             self.assertEqual(len(read_session_runs(sb.paths, "s2")), 2)
+
+    def test_a_transcript_with_no_assistant_turn_records_null_first_request(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            p = sb.paths.transcript_path("s3", "/w")
+            self.write(p, [{"type": "user", "timestamp": "2026-09-08T03:00:00Z", "sessionId": "s3", "version": "2.1.263"}])
+            launch = {"launch_id": "L3", "route": "mock/alpha", "source": "mock", "wire_model": "alpha", "started": "2026-09-08T03:00:00Z",
+                      "session_id": "s3", "price": harness.FREE, "priced_models": {"alpha": harness.FREE}}
+            rec = harness.record_session(sb.paths, launch, ended="2026-09-08T03:00:01Z", transcript=p, mode="fresh")
+            self.assertIsNone(rec["first_request"])
+            self.assertEqual(rec["this_run"]["turns"], 0)
+            self.assertEqual(rec["session_total"]["cost_usd"], 0.0)
+            self.assertIsNone(read_observed(sb.paths)["routes"]["mock/alpha"]["last_session"]["first_request"])
 
     def test_skipped_records(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:

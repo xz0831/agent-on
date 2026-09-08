@@ -91,21 +91,22 @@ def prepare_config_dir(paths: Paths, cwd: str) -> Path:
     ~/.claude (dangling links are fine — they light up when the native file appears); transcripts, history and
     auto-memory stay per-launcher. The project is marked trusted, because the apiKeyHelper only runs for a
     trusted project. Existing keys of .claude.json are preserved; the write is serialised under a state lock."""
+    ensure_state(paths)
     cfg = paths.claude_config_dir
     cfg.mkdir(parents=True, exist_ok=True, mode=0o700)
     native = paths.home / ".claude"
-    for item in SHARED_ITEMS:
-        link, target = cfg / item, native / item
-        if link.is_symlink():
-            if os.readlink(link) != str(target):
-                link.unlink()
-                link.symlink_to(target)
-            continue
-        if link.exists():
-            link.rename(link.with_name(f"{item}.isolated.bak"))
-        link.symlink_to(target)
     dotfile = cfg / ".claude.json"
     with locked(paths.state / "locks" / "config.lock"):
+        for item in SHARED_ITEMS:
+            link, target = cfg / item, native / item
+            if link.is_symlink():
+                if os.readlink(link) != str(target):
+                    link.unlink()
+                    link.symlink_to(target)
+                continue
+            if link.exists():
+                link.rename(link.with_name(f"{item}.isolated.bak"))
+            link.symlink_to(target)
         doc: dict = {}
         if dotfile.exists():
             try:
@@ -219,7 +220,7 @@ def cost_line(route_name: str, observed_route: dict | None) -> str:
     tok = cm.get("tok_s")
     tok_s = f"{tok:.0f} tok/s" if isinstance(tok, (int, float)) and not isinstance(tok, bool) else "? tok/s"
     usd = cm.get("usd_per_mtok")
-    if isinstance(usd, dict) and usd.get("input") is not None:
+    if isinstance(usd, dict) and usd.get("input") is not None and usd.get("output") is not None:
         usd_s = "$0" if not usd.get("input") and not usd.get("output") else f"${usd['input']}/{usd.get('output')} per Mtok"
     else:
         usd_s = "$?"
@@ -298,6 +299,8 @@ def record_session(paths: Paths, launch: dict, *, ended: str, transcript: Path |
     """Write last_session for the route and one ledger line for the session (§11 item 4). Best-effort: a missing
     transcript is recorded as {skipped}, never raised."""
     route = launch["route"]
+    session_id = None
+    this_line = None
     if mode == "no-persistence":
         rec: dict = {"skipped": "no-session-persistence"}
     elif transcript is None or not transcript.exists():
@@ -308,8 +311,8 @@ def record_session(paths: Paths, launch: dict, *, ended: str, transcript: Path |
         run = {"launch_id": launch["launch_id"], "route": route, "source": launch["source"], "wire_model": launch["wire_model"],
                "started": launch["started"], "ended": ended, "price": launch["price"], "priced_models": launch.get("priced_models") or {}}
         this_run = attribute_run(t["turns"], run)
-        append_session_run(paths, session_id, {**this_run, "session_id": session_id, "mode": mode})
-        runs = read_session_runs(paths, session_id)
+        this_line = {**this_run, "session_id": session_id, "mode": mode}
+        runs = read_session_runs(paths, session_id) + [this_line]
         total = fold_session(t["turns"], runs)
         fresh = mode in ("fresh", "user-session-id") and len(runs) == 1
         rec = {"id": session_id, "at": ended,
@@ -323,4 +326,6 @@ def record_session(paths: Paths, launch: dict, *, ended: str, transcript: Path |
         doc["routes"].setdefault(route, empty_route())["last_session"] = rec
 
     update_observed(paths, mutate)
+    if this_line is not None:
+        append_session_run(paths, session_id, this_line)
     return rec

@@ -68,7 +68,8 @@ def validate_session(s, where: str) -> None:
             raise SchemaError("observed.session.shape", f"{where}.skipped must say why")
         return
     _require_keys(s, SESSION_KEYS, where, "observed.session.shape")
-    _require_keys(s["first_request"], ("input_tokens_total", "usage"), f"{where}.first_request", "observed.session.shape")
+    if s["first_request"] is not None:
+        _require_keys(s["first_request"], ("input_tokens_total", "usage"), f"{where}.first_request", "observed.session.shape")
     for part, extra in (("this_run", ("models_seen",)), ("session_total", ("covered_turns", "uncovered_turns"))):
         p = s[part]
         _require_keys(p, ("turns", "usage", "cost_usd") + extra, f"{where}.{part}", "observed.session.shape")
