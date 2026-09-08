@@ -349,6 +349,22 @@ def schema_complete(ctx: Context):
     return ok(f"{len(RULES)} rules, all registered and raised")
 
 
+@invariant("docs.current",
+           statement="docs/ROUTES.md is the render of routes.toml (a stale page is a lie about L1)",
+           fix="run scripts/routes-doc.py and commit docs/ROUTES.md")
+def docs_current(ctx: Context):
+    page = ctx.tree / "docs" / "ROUTES.md"
+    if not page.exists():
+        return skip("no docs/ROUTES.md in this tree")
+    from .docs import render_routes_doc
+    from .paths import Paths
+    try:
+        table = load_routes(Paths(checkout=ctx.tree, state=ctx.paths.state, home=ctx.home, tree=ctx.tree))
+    except (SchemaError, OSError) as e:
+        return fail(f"routes.toml unreadable: {e}")
+    return ok("current") if page.read_text(encoding="utf-8") == render_routes_doc(table) else fail("docs/ROUTES.md is stale — run scripts/routes-doc.py")
+
+
 @invariant("cost.not_copied",
            statement="no L2 field is sourced from Claude Code's total_cost_usd",
            fix="compute cost from usage × the route's price (§12)")

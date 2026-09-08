@@ -18,7 +18,8 @@ from agent_on.state import update_observed  # noqa: E402
 
 EXPECTED_IDS = {"route.served", "route.unique", "source.limits.propagated", "limits.declared_vs_observed", "copy.single",
                 "credential.not_in_child_env", "harness.env.clean", "gate.no_silent_skip", "gate.mock.ephemeral",
-                "test.names.derived", "knowledge.typed", "schema.complete", "cost.not_copied", "qualification.current"}
+                "test.names.derived", "knowledge.typed", "schema.complete", "cost.not_copied", "qualification.current",
+                "docs.current"}
 BASE = "http://127.0.0.1:1"
 TS = "2026-09-07T00:00:00Z"
 
@@ -29,7 +30,7 @@ def one(paths, inv_id, route=None):
 
 
 class RegistryTest(unittest.TestCase):
-    def test_the_fourteen_predicates_are_registered_with_statement_and_fix(self):
+    def test_the_fifteen_predicates_are_registered_with_statement_and_fix(self):
         self.assertEqual(set(REGISTRY), EXPECTED_IDS)
         for inv in REGISTRY.values():
             self.assertTrue(inv.statement and inv.fix, inv.id)
