@@ -185,4 +185,5 @@ jobs:
           assert g["tests"]["ok"] is True and g["tests"]["ran"] > 50, g["tests"]
           assert g["smoke"]["ok"] is True, g["smoke"]
           assert g["last_gate_run"]["invariants"]["credential.not_in_child_env"] == "pass"
+          assert g["last_gate_run"]["invariants"]["knowledge.typed"] == "pass"
           PY
