@@ -4,6 +4,7 @@ import io
 import json
 import os
 import sys
+import threading
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -65,6 +66,31 @@ class LedgerTest(unittest.TestCase):
                 self.assertIn(needle, p)
             with self.assertRaises(ValueError):
                 tasks.select_handoff(task, "7")
+
+    def test_concurrent_handoffs_get_distinct_indexes(self):  # the index is derived under the knowledge lock, not from a pre-lock load
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            wt = sb.root / "wt"; wt.mkdir()
+            t = tasks.create(sb.paths, "x", "goal", str(wt))
+            barrier = threading.Barrier(2)
+            results = []
+            errors = []
+
+            def go():
+                barrier.wait()
+                try:
+                    results.append(tasks.handoff(sb.paths, t["id"], to_route="a", objective="o"))
+                except Exception as e:                                                    # pragma: no cover - failure path only
+                    errors.append(e)
+
+            threads = [threading.Thread(target=go) for _ in range(2)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join()
+            self.assertEqual(errors, [])
+            task = tasks.load(sb.paths, t["id"])
+            self.assertEqual([h["index"] for h in task["handoffs"]], [1, 2])
+            self.assertEqual(sorted(r["index"] for r in results), [1, 2])
 
     def test_fold_tolerates_a_launched_event_with_an_out_of_range_index(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:

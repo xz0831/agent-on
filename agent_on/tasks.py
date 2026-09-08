@@ -118,11 +118,18 @@ def handoff(paths: Paths, task_id: str, *, to_route: str, objective: str, from_r
     if t["status"] != "active":
         raise ValueError("learn task: cannot add a handoff to a closed task")
     route = load_routes(paths).resolve(to_route).name                             # KeyError → the CLI's usage envelope
-    rec = {"task_id": task_id, "event": "handoff", "index": len(t["handoffs"]) + 1, "from_route": limited(from_route, "from route", 256),
+    rec = {"task_id": task_id, "event": "handoff", "from_route": limited(from_route, "from route", 256),
            "to_route": route, "objective": limited(objective, "objective"), "summary": limited(summary, "summary"),
            "commit": limited(commit, "commit", 512), "tests": limited(tests, "tests", MAX_EVIDENCE)}
-    append(paths, "tasks", rec)
-    return load(paths, task_id)["handoffs"][-1]
+    # the index must be derived from the records `append` re-reads under the knowledge lock, not from `t` (loaded
+    # before we ever take the lock) — two concurrent handoffs both reading `t` first would otherwise both compute
+    # the same "next" index (§ knowledge.append's `finalize`).
+    finalize = lambda existing, r: {**r, "index": 1 + sum(1 for e in existing if e["task_id"] == task_id and e["event"] == "handoff")}
+    written = append(paths, "tasks", rec, finalize=finalize)
+    # index the reload by the index `finalize` actually assigned, not `[-1]`: under concurrent handoffs another
+    # caller's append can land between this one returning and the reload below, so the newest handoff in the
+    # reload is not necessarily this call's own.
+    return load(paths, task_id)["handoffs"][written["index"] - 1]
 
 
 def launched(paths: Paths, task_id: str, *, launch_id: str, route: str, handoff: str = "latest") -> dict:

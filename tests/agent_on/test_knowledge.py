@@ -117,5 +117,29 @@ class SelectionTest(unittest.TestCase):
             self.assertNotIn("missing", v)
 
 
+class FinalizeTest(unittest.TestCase):
+    def test_finalize_runs_under_the_lock_with_the_existing_records_and_an_invalid_result_writes_nothing(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE), tree=None) as sb:
+            knowledge.append(sb.paths, "decisions", {"decision": "a", "rationale": "r", "by": "rick"})
+            seen = []
+
+            def finalize(existing, rec):
+                seen.append(len(existing))
+                return {**rec, "decision": f"{rec['decision']}-{len(existing)}"}
+
+            written = knowledge.append(sb.paths, "decisions", {"decision": "b", "rationale": "r", "by": "rick"}, finalize=finalize)
+            self.assertEqual(seen, [1])
+            self.assertEqual(written["decision"], "b-1")
+            self.assertEqual(knowledge.read(sb.paths, "decisions")[-1]["decision"], "b-1")
+
+            def bad_finalize(existing, rec):
+                return {k: v for k, v in rec.items() if k != "rationale"}          # invalid: drops a required key
+
+            before = len(knowledge.read(sb.paths, "decisions"))
+            with self.assertRaises(SchemaError):
+                knowledge.append(sb.paths, "decisions", {"decision": "c", "rationale": "r", "by": "rick"}, finalize=bad_finalize)
+            self.assertEqual(len(knowledge.read(sb.paths, "decisions")), before)
+
+
 if __name__ == "__main__":
     unittest.main()

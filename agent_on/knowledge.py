@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Callable
 
 from .ids import ulid
 from .paths import Paths
@@ -38,17 +39,25 @@ def read(paths: Paths, kind: str) -> list[dict]:
     return out
 
 
-def append(paths: Paths, kind: str, rec: dict, *, now: str | None = None) -> dict:
+def append(paths: Paths, kind: str, rec: dict, *, now: str | None = None,
+           finalize: Callable[[list[dict], dict], dict] | None = None) -> dict:
     """Validate, then append one line under the knowledge lock. id and ts are minted when absent (§9); a caller that
     brings its own id (the seeds) keeps it. `supersedes` must name an existing id of the same kind. Nothing is
-    written when validation fails."""
+    written when validation fails.
+
+    `finalize`, when given, runs *inside* the lock as `rec = finalize(existing, rec)`, before validation and the
+    duplicate/supersedes checks — so a caller that must derive a value from the current state (`tasks.handoff`'s
+    index) sees the truly-current `existing`, closing the load-then-append race a pre-lock computation would leave:
+    two concurrent callers reading `existing` before either has appended would otherwise derive the same value."""
     p = _path(paths, kind)
     rec = dict(rec)
     rec.setdefault("id", f"{kind}-{ulid()}")
     rec.setdefault("ts", now or utc_now())
-    validate_record(kind, rec)
     with locked(paths.knowledge_lock):
         existing = read(paths, kind)
+        if finalize is not None:
+            rec = finalize(existing, rec)
+        validate_record(kind, rec)
         if any(r["id"] == rec["id"] for r in existing):
             raise SchemaError("knowledge.record", f"{kind}: id {rec['id']} already exists")
         if "supersedes" in rec and not any(r["id"] == rec["supersedes"] for r in existing):
