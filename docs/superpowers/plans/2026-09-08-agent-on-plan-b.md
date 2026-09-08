@@ -18,10 +18,10 @@
 - **D7:** all four tier slots and the subagent slot are bound to the launch route's `wire_model`; `--sonnet`/`--haiku` may override one slot with a route on the same source. **D8:** discovery only with `--discover`. **D6:** liveness and qualification are shown, never gate a launch. **D12:** no `thinking:` field anywhere; `qualify` reports what the template did.
 - **Session rules (§9):** the launcher passes `--session-id <uuid4>` unless the user passed `--session-id` (theirs is used), `--resume`/`--continue` (the resumed file is read after exit), or `--no-session-persistence` (`last_session = {"skipped": "no-session-persistence"}`). Read-back is best-effort and never a reason to refuse arguments; `--model`, `--settings`, `--fallback-model` pass through (a user `--settings` is merged after the helper file).
 - **§11 item 4 read-back:** `first_request` (raw first assistant usage + `input_tokens_total`), `this_run` (the ledger line from `cost.attribute_run` with the price snapshot taken at spawn), `session_total` (`cost.fold_session` over the whole transcript and every ledger line for the session); `total_cost_usd`/`costUSD` are never read (F11). Verified transcript fields only: per-line `timestamp`, `message.model`, `message.usage.{input_tokens,output_tokens,cache_read_input_tokens,cache_creation_input_tokens}`, top-level `version`, `effort`, `permissionMode` (recorded when present).
-- **§7 qualify:** `verified` limits are written only by `qualify --limits`; `harness_baseline_tokens` only by `qualify --baseline` with the fixed prompt `Reply with exactly: OK`; `caching` becomes `true`/`false` only from the two-turn probe; the fingerprint is `{effective_route_sha, wire_model, source_identity, claude_code}`. A paid probe (`--limits` on a keyed source) is refused without `--allow-paid` and prints its estimated cost first.
+- **§7 qualify:** `verified` limits are written only by `qualify --limits`; `harness_baseline_tokens` only by `qualify --baseline` with the fixed prompt `Reply with exactly: OK`; `caching` becomes `true`/`false` only from the two-turn probe; the fingerprint is `{effective_route_sha, wire_model, source_identity, claude_code}`.
 - **State root**: `AGENT_ON_STATE`, else `$XDG_STATE_HOME/agent-on`, else `~/.local/state/agent-on`. Storage rules of §7.1 (locks, temp+rename, O_APPEND ledgers) are Plan A's `state.py` and are reused, never re-implemented.
 - **Do not restart or stop oMLX on :8000**; the old proxy on :4000 is stopped and stays stopped (owner's decision 2026-09-08). Real launches in tests are forbidden: unit tests use the fake `claude` and the mock source; only Task 10 (acceptance) runs the real binary, against oMLX (free) first and OpenRouter (cents) second.
-- **Commit style**: `<type>(agent-on): <imperative summary>`; one commit per task; end each message with the attribution trailer shown in Task 1.
+- **Commit style**: `<type>(agent-on): <imperative summary>`; one commit per task; end each message with the two attribution trailer lines — the `Claude-Session` URL is the *executing* session's own (the templates below show this plan's authoring session as the format).
 - **Test discipline**: tests in `tests/agent_on/` (no `__init__.py`), the sys.path preamble, `helpers.Sandbox`; no route-name literal a test uses may be absent from `routes.toml` (the tree lint) — tests use the mock source names `mock`/`paid` and the fake-claude harness.
 
 ---
@@ -634,7 +634,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 - Consumes: `paths.{Paths, ensure_state, project_slug}`, `schemas.routes.{Route, RouteTable}`, `schemas.observed.{USAGE_FIELDS, empty_route}`, `state.{locked, append_session_run, read_session_runs, update_observed}`, `cost.{attribute_run, fold_session, zero_usage}`, `util.{utc_now, parse_utc}`.
 - Produces: `SCRUB_ENV`, `PASS_THROUGH`, `SHARED_ITEMS`, `TIERS`, `PLACEHOLDER_TOKEN`, `DISCOVERY_ENV`, `FREE`, `child_env(...)`, `prepare_config_dir(paths, cwd)`, `sweep_run_dirs(paths)`, `write_run_dir(paths, launch_id, *, key, launch)`, `session_args(claude_args)`, `cost_line(route_name, observed_route)`, `read_transcript(path)`, `record_session(paths, launch, *, ended, transcript, mode)`, `find_transcript(paths, session_id, cwd, mode, started)`.
 
-Rulings recorded here (the spec leaves them open): (1) `ANTHROPIC_API_KEY` is *removed* for a keyed source rather than set to `""` — the scrub already guarantees no inherited key reaches the child, and the `apiKeyHelper` is consulted only when no key variable is present; (2) an assistant API response is written by Claude Code as one transcript line per content block with the same `message.id` and identical `usage`, so turns are de-duplicated by `message.id` (last line wins) — counting lines would double-bill; (3) the subagent slot is bound to the launch route (D7), `--sonnet`/`--haiku` override only their own tier slot.
+Rulings recorded here: (1) deviating from §11 item 2's literal `ANTHROPIC_API_KEY=""`, the variable is *removed* for a keyed source — the scrub already guarantees no inherited key reaches the child, Claude Code treats an empty variable as absent and consults the `apiKeyHelper` either way, and an empty string in the environment is one more thing to explain; (2) an assistant API response is written by Claude Code as one transcript line per content block with the same `message.id` and identical `usage`, so turns are de-duplicated by `message.id` (last line wins) — counting lines would double-bill; (3) the subagent slot is bound to the launch route (D7), `--sonnet`/`--haiku` override only their own tier slot.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -887,7 +887,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .cost import attribute_run, fold_session, zero_usage
+from .cost import attribute_run, fold_session
 from .ids import ulid
 from .paths import Paths, describe_copy, ensure_state, project_slug
 from .schemas.observed import USAGE_FIELDS, empty_route
@@ -1184,7 +1184,7 @@ def record_session(paths: Paths, launch: dict, *, ended: str, transcript: Path |
         total = fold_session(t["turns"], runs)
         fresh = mode in ("fresh", "user-session-id") and len(runs) == 1
         rec = {"id": session_id, "at": ended,
-               "first_request": t["first_request"] or {"input_tokens_total": 0, "usage": zero_usage()},
+               "first_request": t["first_request"],                                    # null when the transcript had no assistant turn
                "this_run": this_run, "session_total": total,
                "scope_note": "fresh session; this_run == session_total" if fresh else f"{mode}: this_run is this launch's turns; session_total folds {len(runs)} run(s)",
                "duration_ms": int((parse_utc(ended) - parse_utc(launch["started"])).total_seconds() * 1000),
@@ -1222,9 +1222,9 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 - Test: `tests/agent_on/test_harness_launch.py`
 
 **Interfaces:**
-- Produces: `utc_ceil() -> str`; `spawn(argv, env, cwd) -> int`; `run_launch(paths, name, claude_args, *, harness="claude", discover=False, sonnet=None, haiku=None, dry_run=False, env=None, claude_bin=None, cwd=None, probe_timeout=2.0, announce=True) -> dict` with keys `command, copy, route, wire_model, base_url, launch_id, session{id, mode}, cost_line, invariants[], env_keys[], swept[], warnings[]`, plus `dry_run, argv` when dry, else `exit_code, last_session, transcript`.
+- Produces: `utc_ceil() -> str`; `spawn(argv, env, cwd) -> int`; `run_launch(` — its `invariants` list is `route.served` (fresh probe), `harness.env.clean`, `credential.not_in_child_env` (§9), every `fail` also a warning; `run_launch(paths, name, claude_args, *, harness="claude", discover=False, sonnet=None, haiku=None, dry_run=False, env=None, claude_bin=None, cwd=None, probe_timeout=2.0, announce=True) -> dict` with keys `command, copy, route, wire_model, base_url, launch_id, session{id, mode}, cost_line, invariants[], env_keys[], swept[], warnings[]`, plus `dry_run, argv` when dry, else `exit_code, last_session, transcript`.
 
-Rulings: run windows are second-precision — `started` is floored, `ended` is rounded up (`utc_ceil`) so the last turn's milliseconds are inside the window; a relaunch of the same session within the same second would overlap and the fold reports `unknown` (honest, and not a real scenario). With a controlling terminal the child receives Ctrl-C from the tty itself, so the launcher **ignores SIGINT** (it must survive to do the read-back) and forwards **SIGTERM** only; forwarding SIGINT too would deliver a double interrupt, which Claude Code treats as "exit now".
+Rulings: run windows are second-precision — `started` is floored, `ended` is rounded up (`utc_ceil`) so the last turn's milliseconds are inside the window; a relaunch of the same session within the same second would overlap and the fold reports `unknown` (honest, and not a real scenario). A user `--settings` is passed after the helper file on the assumption that Claude Code merges repeated `--settings` (Task 8 step 4 measures it; if it does not merge, `run_launch` must fold the user's settings into the per-launch file). With a controlling terminal the child receives Ctrl-C from the tty itself, so the launcher **ignores SIGINT** (it must survive to do the read-back) and forwards **SIGTERM** only; forwarding SIGINT too would deliver a double interrupt, which Claude Code treats as "exit now".
 
 - [ ] **Step 1: Write the fake `claude` and the failing tests**
 
@@ -1367,8 +1367,8 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual(rec["effort"], "high")
             self.assertNotIn("total_cost_usd", json.dumps(read_observed(sb.paths)))
             self.assertEqual(len(read_session_runs(sb.paths, rec["id"])), 1)
-            self.assertEqual([i["id"] for i in doc["invariants"]], ["route.served"])
-            self.assertEqual(doc["invariants"][0]["result"], "skip")
+            self.assertEqual([i["id"] for i in doc["invariants"]], ["route.served", "credential.not_in_child_env", "harness.env.clean"])   # §9: the three, first (registry order)
+            self.assertEqual([i["result"] for i in doc["invariants"]], ["skip", "pass", "skip"])                                       # no shared settings in the sandbox home
             self.assertTrue(doc["cost_line"].startswith("paid/vendor/model-x  ctx ?"))
 
     def test_key_from_the_env_file_when_the_environment_has_none(self):
@@ -1417,6 +1417,15 @@ class LaunchTest(unittest.TestCase):
             self.assertIn("--session-id", doc["argv"])
             self.assertFalse((out / "env.json").exists())                                # nothing was spawned
             self.assertIn("ANTHROPIC_BASE_URL", doc["env_keys"])
+
+    def test_a_routing_key_in_the_shared_settings_is_warned_about_not_gated(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            (sb.paths.home / ".claude").mkdir()
+            (sb.paths.home / ".claude" / "settings.json").write_text(json.dumps({"env": {"ANTHROPIC_API_KEY": "sk-shared"}}))
+            doc, out = self.launch(sb, "a", ["-p", "x"])
+            self.assertEqual(doc["exit_code"], 0)                                          # D6: informed, never gated
+            self.assertEqual({i["id"]: i["result"] for i in doc["invariants"]}["harness.env.clean"], "fail")
+            self.assertTrue(any("harness.env.clean" in w for w in doc["warnings"]))
 
     def test_tier_override_and_a_missing_key_are_reported(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
@@ -1508,6 +1517,11 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     else:
         served = {"id": "route.served", "result": "fail", "reason": f"{route.wire_model!r} not in {route.source} catalog", "subject": route.name, "fix": "run `agent-on sync`"}
         warnings.append(f"{route.wire_model!r} is not in the {route.source} catalog right now; launching anyway (D6)")
+    from .invariants import build_context, evaluate                                # local: invariants imports this module
+    lint = [r.as_dict() for r in evaluate(build_context(paths), ids=["harness.env.clean", "credential.not_in_child_env"])]
+    for r in lint:
+        if r["result"] == "fail":
+            warnings.append(f"{r['id']}: {r['reason']} — launching anyway (D6)")
     context = ((obs_route or {}).get("cost_model") or {}).get("context")
     if context is None:                                                            # never synced: the declared cap is still better than
         lim = table.effective_limits(route)                                        # Claude Code's 200k assumption for an unknown model
@@ -1528,7 +1542,7 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     cenv = child_env(parent, table, route, context=context, config_dir=config_dir, discover=discover, sonnet=sonnet_r, haiku=haiku_r)
     line = cost_line(route.name, obs_route)
     doc = {"command": "launch", "copy": describe_copy(paths), "route": route.name, "wire_model": route.wire_model, "base_url": source.base_url,
-           "launch_id": launch_id, "session": {"id": session_id, "mode": mode}, "cost_line": line, "invariants": [served],
+           "launch_id": launch_id, "session": {"id": session_id, "mode": mode}, "cost_line": line, "invariants": [served, *lint],
            "env_keys": sorted(k for k in cenv if k.startswith(("ANTHROPIC_", "CLAUDE_"))), "swept": swept, "warnings": warnings}
     binary = claude_bin or shutil.which("claude") or "claude"
     if dry_run:
@@ -1573,7 +1587,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 - Test: `tests/agent_on/test_qualify.py`
 
 **Interfaces:**
-- Produces: `errors.RULES["observed.qualification.shape"]`; `observed.QUALIFICATION_KEYS`, `observed.FINGERPRINT_KEYS`, validation of `last_qualification`; `qualify.GATES`, `qualify.Wire(base_url, model, key=None, timeout=90.0)` with `.post(payload) -> (status, body)`, `.stream(payload) -> (status, events)`, `.count_tokens(payload) -> int | None`; `run_gates(wire) -> {"gates": {name: bool}, "details": {…}, "thinking_block_seen": bool, "completed": bool, "thinking_tokens": int | None, "all_pass": bool}`; `probe_throughput(wire) -> {"tok_s", "output_tokens", "seconds"}`; `probe_concurrency(wire) -> {"concurrency", "serial_s", "pair_s", "ratio"}`; `probe_caching(wire) -> {"caching": bool, "cache_read_second": int, "status": int}`; `probe_limits(wire, lo, hi, *, count_tokens=True, max_probes=10) -> {"verified": int | None, "basis": "count_tokens" | "estimate" | None, "probes": [...]}` — `verified` is the *counted* size of the largest accepted probe when the source serves `count_tokens`, else the requested size.
+- Produces: `errors.RULES["observed.qualification.shape"]`; `observed.QUALIFICATION_KEYS`, `observed.FINGERPRINT_KEYS`, validation of `last_qualification`; `qualify.GATES`, `qualify.Wire(base_url, model, key=None, timeout=90.0)` with `.post(payload) -> (status, body)`, `.stream(payload) -> (status, events)`, `.count_tokens(payload) -> int | None`; `run_gates(wire) -> {"gates": {name: bool}, "details": {…}, "thinking_block_seen": bool | None (None when the adaptive-effort request did not return 200), "completed": bool, "thinking_tokens": int | None, "all_pass": bool}`; `probe_throughput(wire) -> {"tok_s", "output_tokens", "seconds"}`; `probe_concurrency(wire) -> {"concurrency", "serial_s", "pair_s", "ratio"}`; `probe_caching(wire) -> {"caching": bool | "unknown", "cache_read_second": int | None, "status": int}` (`"unknown"` when either request did not return 200); `probe_limits(wire, lo, hi, *, count_tokens=True, max_probes=10) -> {"verified": int | None, "accepted_up_to": int | None, "basis": "count_tokens" | "estimate" | None, "probes": [...]}` — `verified` is set only when the source refused something above it **and** the accepted size was counted by the source (`count_tokens`); an accepted top-of-range or an estimated size is reported as `accepted_up_to`, never as `verified`.
 
 The six gates are the ones `scripts/verify_tool_call_fidelity.py` has run since 2026-08 (text SSE, Claude's list-valued system blocks, forced native tool call, streamed `input_json_delta`, exact `tool_result` continuation, adaptive-effort request shape), ported to the direct wire: the request goes to `<base_url>/v1/messages` with both `x-api-key` and `Authorization: Bearer` when the source has a key (OpenRouter honours either; oMLX ignores both). `concurrency` is a two-level probe: two concurrent requests against one; a pair that completes in under 1.5× the single request's time reports `2`, else `1` — the 2026-09-08 measurement showed batching gain is per model, so this is measured per route and never inherited. `caching` needs a cacheable prefix: the probe sends a ~6,500-token system block with `cache_control` twice and reads `cache_read_input_tokens` on the second reply — oMLX caches in 4,096-token blocks (measured 2026-09-08: 1,770 tokens → never cached, 4,618 → 4,096 read back), so a small prefix would report a false `false`. `probe_limits` bisects the enforced input boundary with `max_tokens: 1` requests of a repeated word, calibrated with `count_tokens` where the source serves it (oMLX does; the mock does), otherwise one word ≈ one token; a 4xx whose message mentions `long`/`context`/`maximum`/`exceed` counts as "over".
 
@@ -1636,6 +1650,7 @@ class GatesTest(unittest.TestCase):
         r = run_gates(Wire("http://127.0.0.1:9", "x", timeout=2))
         self.assertFalse(r["all_pass"])
         self.assertEqual(r["details"]["text_sse_status"], 0)
+        self.assertIsNone(r["thinking_block_seen"])
 
 
 class ProbesTest(unittest.TestCase):
@@ -1668,10 +1683,14 @@ class ProbesTest(unittest.TestCase):
             self.assertLessEqual(len(r["probes"]), 10)
             self.assertEqual(r["probes"][1]["tokens"], 100)                                   # lo is verified, not assumed
             self.assertTrue(all(p["status"] in (200, 400) for p in r["probes"]))
-        with MockSource() as m:                                                          # nothing enforced below hi
+        with MockSource() as m:                                                          # nothing enforced below hi: no boundary measured
             r = probe_limits(Wire(m.base_url, "x", timeout=10), 100, 400, count_tokens=False)
-            self.assertEqual(r["verified"], 400)
-            self.assertEqual(r["basis"], "estimate")
+            self.assertIsNone(r["verified"])
+            self.assertEqual((r["accepted_up_to"], r["basis"]), (400, "estimate"))
+        with MockSource(max_context=500) as m:                                           # refused, but only estimated: still not `verified`
+            r = probe_limits(Wire(m.base_url, "x", timeout=10), 100, 2000, count_tokens=False)
+            self.assertIsNone(r["verified"])
+            self.assertTrue(200 <= r["accepted_up_to"] < 500, r)                              # requested units (one word ≈ one token): an estimate, so never `verified`
 
 
 class QualificationShapeTest(unittest.TestCase):
@@ -1713,6 +1732,13 @@ In `tests/agent_on/test_invariants.py` (`test_qualification_goes_stale_when_the_
 ```python
 QUALIFICATION_KEYS = ("pass", "gates", "thinking_block_seen", "completed", "at", "fingerprint")
 FINGERPRINT_KEYS = ("effective_route_sha", "wire_model", "source_identity", "claude_code")
+```
+
+and in `validate_session`, guard the first-request check so a transcript with no assistant turn records `null` rather than a fabricated zero — replace `    _require_keys(s["first_request"], ("input_tokens_total", "usage"), f"{where}.first_request", "observed.session.shape")` with:
+
+```python
+    if s["first_request"] is not None:
+        _require_keys(s["first_request"], ("input_tokens_total", "usage"), f"{where}.first_request", "observed.session.shape")
 ```
 
 and in `validate_route`, before the `last_session` check:
@@ -1914,7 +1940,8 @@ def run_gates(wire: Wire) -> dict:
     thinking_chars = sum(len(b.get("thinking", "")) for b in thinking)
     completed = status == 200 and resp.get("stop_reason") == "end_turn" and bool(text.strip())
 
-    return {"gates": gates, "details": details, "thinking_block_seen": bool(thinking), "completed": completed,
+    seen = bool(thinking) if status == 200 else None                              # the request never ran: unmeasured, not "off"
+    return {"gates": gates, "details": details, "thinking_block_seen": seen, "completed": completed,
             "thinking_tokens": (thinking_chars // 4) if thinking else None, "all_pass": all(gates.values())}
 
 
@@ -1964,10 +1991,14 @@ def probe_caching(wire: Wire) -> dict:
     prefix = ("This system prompt exists only to be long enough to be cached by the provider. " * 400).strip()
     payload = {"max_tokens": 8, "system": [{"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}}],
                "messages": [{"role": "user", "content": "Reply with exactly: OK"}]}
-    wire.post(payload)
+    first_status, _ = wire.post(payload)
     status, resp = wire.post(payload)
+    if first_status != 200:
+        status = first_status
     read = int((resp.get("usage") or {}).get("cache_read_input_tokens") or 0)
-    return {"caching": status == 200 and read > 0, "cache_read_second": read, "status": status}
+    if status != 200:
+        return {"caching": "unknown", "cache_read_second": None, "status": status}   # the probe did not run: not a measurement
+    return {"caching": read > 0, "cache_read_second": read, "status": status}
 
 
 def _over_limit(status: int, body: dict) -> bool:
@@ -2004,8 +2035,8 @@ def probe_limits(wire: Wire, lo: int, hi: int, *, count_tokens: bool = True, max
     probes: list[dict] = []
     status, body = attempt(hi)
     probes.append({"tokens": hi, "status": status, "counted": counted.get(hi)})
-    if status == 200:
-        return {"verified": verified_size(hi), "basis": "count_tokens" if hi in counted else "estimate", "probes": probes}
+    if status == 200:                                                              # nothing refused: no boundary was measured
+        return {"verified": None, "accepted_up_to": verified_size(hi), "basis": "count_tokens" if hi in counted else "estimate", "probes": probes}
     if not _over_limit(status, body):
         return {"verified": None, "basis": None, "probes": probes}
     accepted, refused = lo, hi
@@ -2027,7 +2058,8 @@ def probe_limits(wire: Wire, lo: int, hi: int, *, count_tokens: bool = True, max
             refused = mid
         else:
             return {"verified": None, "basis": None, "probes": probes}
-    return {"verified": verified_size(accepted), "basis": "count_tokens" if accepted in counted else "estimate", "probes": probes}
+    basis = "count_tokens" if accepted in counted else "estimate"
+    return {"verified": verified_size(accepted) if basis == "count_tokens" else None, "accepted_up_to": verified_size(accepted), "basis": basis, "probes": probes}
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -2056,7 +2088,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 - Consumes: Task 3–5 modules, `invariants.{build_context, evaluate, claude_code_version}`, `state.{read_observed, update_observed, resolve_secret}`, `schemas.observed.{compute_context, empty_route}`, `schemas.knowledge.validate_record`, `ids.ulid`, `paths.describe_copy`.
 - Produces: `run_qualify(paths, name, *, baseline=False, limits=False, allow_paid=False, env=None, timeout=90.0, claude_bin=None) -> dict` with keys `command, copy, route, refused (str|None), gates{}, details{}, probes{throughput, concurrency, caching, limits|None}, baseline (int|None), fingerprint{}, written (bool), invariants[]`. `credential.not_in_child_env` becomes a real predicate: for every route it computes `harness.child_env` from a parent that carries a marker value for every source's `auth_env` and an inherited `ANTHROPIC_API_KEY`, and fails if any marker survives.
 
-Rulings: a paid probe is one that runs Claude Code (`--baseline`, ~48K input tokens) or bisects the context (`--limits`, up to ~2× the limit in input tokens) on a source with an `auth_env`; both need `--allow-paid` and the estimate is printed first. The six gates and the three short probes on a keyed source cost about a cent at GLM-5.2 prices (the caching probe alone sends ~13K input tokens) and run without the flag. `knowledge/qualifications.jsonl` is appended only when `knowledge/` exists (Plan C creates it); until then the record lives in `observed.json` only, and the doc says so.
+Rulings (the plan's own, not spec rules): a paid probe is one that runs Claude Code (`--baseline`, ~50K input tokens) or bisects the context (`--limits`, up to ~2× the limit in input tokens) on a source with an `auth_env`; both need `--allow-paid` and the estimate is printed first. The six gates and the three short probes on a keyed source cost about a cent at GLM-5.2 prices (the caching probe alone sends ~13K input tokens) and run without the flag. `knowledge/qualifications.jsonl` is appended only when `knowledge/` exists (Plan C creates it); until then the record lives in `observed.json` only, and the doc says so.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2142,9 +2174,11 @@ class RunQualifyTest(unittest.TestCase):
             self.assertEqual(r["limits"]["input"]["verified"], v)
             self.assertEqual((r["cost_model"]["context"], r["cost_model"]["context_basis"]), (v, "verified"))   # declared 8192 > verified
         with MockSource(catalog=CATALOG, max_context=100000) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
-            run_qualify(sb.paths, "a", limits=True, env={}, timeout=10)
+            doc = run_qualify(sb.paths, "a", limits=True, env={}, timeout=10)
             r = read_observed(sb.paths)["routes"]["mock/alpha"]
-            self.assertEqual(r["cost_model"]["context_basis"], "declared")                    # verified ≥ declared: the cap stands
+            self.assertIsNone(r["limits"]["input"]["verified"])                              # nothing refused: no boundary, nothing written
+            self.assertIsNotNone(doc["probes"]["limits"]["accepted_up_to"])
+            self.assertEqual(r["cost_model"]["context_basis"], "declared")                    # the cap stands
 
     def test_paid_probes_need_allow_paid_and_gates_alone_do_not(self):
         with MockSource(catalog=CATALOG, expect_key="k-1") as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
@@ -2158,6 +2192,10 @@ class RunQualifyTest(unittest.TestCase):
             doc = run_qualify(sb.paths, "x", env={"MOCK_PAID_KEY": "wrong"}, timeout=10)
             self.assertFalse(doc["gates"]["text_sse"])
             self.assertEqual(doc["details"]["text_sse_status"], 401)
+            cm = read_observed(sb.paths)["routes"]["paid/vendor/model-x"]["cost_model"]
+            self.assertEqual(cm["caching"], "unknown")                                     # a probe that got 401 measured nothing
+            self.assertIsNone(cm["thinking"]["observed"])
+            self.assertIsNone(cm["tok_s"])
 
 
 if __name__ == "__main__":
@@ -2569,6 +2607,7 @@ Expected: `OK` printed and exit 0 (a `-p` on Huihui takes 2–3 minutes: the ~50
 
 ```bash
 ./bin/agent-on qualify huihui; echo "exit $?"
+./bin/agent-on qualify uncensored8; echo "exit $?"
 ./bin/agent-on qualify huihui --baseline --limits; echo "exit $?"
 ./bin/agent-on status huihui | sed -n '1,8p'
 ```
@@ -2578,32 +2617,34 @@ Expected: six `pass` lines (6/6 measured through the materialized build on 2026-
 - [ ] **Step 4: The paid lane (OpenRouter, cents)**
 
 ```bash
-./bin/agent-on qualify glm; echo "exit $?"                                 # six gates + short probes: ≈ $0.01–0.02
-./bin/agent-on qualify glm --baseline --allow-paid; echo "exit $?"         # one Claude Code -p run: ~48K input ≈ $0.05
+for r in deepseek kimi mimo glm; do ./bin/agent-on qualify $r; echo "$r exit $?"; done   # six gates + probes per packaged route: ≈ $0.01–0.02 each
+./bin/agent-on qualify glm --baseline --allow-paid; echo "exit $?"         # one Claude Code -p run: ~50K input ≈ $0.05
 ./bin/claude-on glm -p 'Reply with exactly: OK'; echo "exit $?"
+./bin/claude-on glm --settings '{"permissions":{}}' -p 'Reply with exactly: OK'; echo "exit $?"   # a user --settings must not displace the helper file
 ./bin/agent-on status glm --json | python3 -c 'import json,sys; v=next(iter(json.load(sys.stdin)["routes"].values()))["observed"]; print(v["cost_model"]["caching"], v["last_session"]["this_run"]["cost_usd"], v["last_session"]["session_total"]["cost_usd"])'
 ```
 
-Expected: gates pass (30/30 direct on 2026-08-20; `[thinking, text]` on 2026-09-07); `caching` recorded as `true` or `false` — **never inferred**: if the second probe reply shows no cache reads it is `false` and that is the finding; the `-p` session's `cost_usd` is a number (all four price fields present? GLM publishes no cache-write price — if the first request carries `cache_creation_input_tokens`, the run is `"unknown"` with the reason; record whichever happened).
+Expected: gates pass on all four (30/30 direct on 2026-08-20; `[thinking, text]` on 2026-09-07) — if one route fails a gate, that is the finding, recorded; the `--settings` run prints `OK` (Claude Code merges repeated `--settings`; if it does not, `run_launch` must merge the user's settings into the per-launch file and pass one `--settings` — fix with a test, and say so); `caching` recorded per route as `true` or `false` — **never inferred**: if the second probe reply shows no cache reads it is `false` and that is the finding; the `-p` session's `cost_usd` is a number (all four price fields present? GLM publishes no cache-write price — if the first request carries `cache_creation_input_tokens`, the run is `"unknown"` with the reason; record whichever happened).
 
 - [ ] **Step 5: The credential contract with the real binary (cents)**
 
 ```bash
-./bin/claude-on glm -p 'Run the shell command `printenv` and reply with only the names of any variables among OPENROUTER_API_KEY, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN that are present, or the word NONE.' --allowedTools 'Bash(printenv)'; echo "exit $?"
-( unset OPENROUTER_API_KEY; ./bin/claude-on glm -p 'Reply with exactly: OK' ); echo "exit $?"               # key only in $STATE/env
-mv ~/.local/state/agent-on/env /tmp/agent-on-env.bak; OPENROUTER_API_KEY="$(security find-generic-password -s openrouter-api-key -a rick -w)" ./bin/claude-on glm -p 'Reply with exactly: OK'; echo "exit $?"; mv /tmp/agent-on-env.bak ~/.local/state/agent-on/env   # key only in the environment
+PROMPT='Run the shell command `printenv` and reply with only the names of any variables among OPENROUTER_API_KEY, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN that are present, or the word NONE.'
+( unset OPENROUTER_API_KEY; ./bin/claude-on glm -p "$PROMPT" --allowedTools 'Bash(printenv)' ); echo "file-only exit $?"          # key only in $STATE/env
+( set -e; ENVF=~/.local/state/agent-on/env; BAK="$(mktemp -d)"; chmod 700 "$BAK"; trap 'mv "$BAK/env" "$ENVF"' EXIT; mv "$ENVF" "$BAK/env"
+  OPENROUTER_API_KEY="$(security find-generic-password -s openrouter-api-key -a rick -w)" ./bin/claude-on glm -p "$PROMPT" --allowedTools 'Bash(printenv)'; echo "env-only exit $?" )   # key only in the environment; the trap restores the file even on failure
 ```
 
-Expected: `NONE` (the model's own `printenv` finds no key — §1.1c closed on the direct wire), then `OK` twice: the key reached the helper from the file alone and from the environment alone (the rev-4 P1). Never print the key.
+Expected: `NONE` **in both supply modes** — the model's own `printenv` finds no key whether the key came from the file alone or from the environment alone (§1.1c closed on the direct wire; the rev-4 P1). The env file is back in place afterwards (`ls -l ~/.local/state/agent-on/env` shows `-rw-------`). Never print the key.
 
-- [ ] **Step 6: S2 — an in-session model switch is process-global**
+- [ ] **Step 6: `--model` at launch is read back; S2 itself stays open**
 
 ```bash
 ./bin/claude-on huihui --model Qwen3.8-27B-Uncensored-8bit -p 'Reply with exactly: OK'; echo "exit $?"
 ./bin/agent-on status huihui --json | python3 -c 'import json,sys; v=next(iter(json.load(sys.stdin)["routes"].values()))["observed"]["last_session"]; print(v["this_run"]["models_seen"], v["this_run"]["cost_usd"])'
 ```
 
-Expected: `models_seen` names the other oMLX model; `cost_usd` `0.0` because both are priced (free) on the same source; `CLAUDE_CODE_MAX_CONTEXT_TOKENS` stayed the launch route's 131072 (the same on both routes today, so nothing breaks — record the observation: the budget is process-global, a `--model` switch to a route with a different context would keep the launch route's cap; the launcher prints no warning today — note it for Plan C's traps).
+Expected: `models_seen` names the other oMLX model and `cost_usd` is `0.0` (both priced, free, on the same source). This does **not** decide S2 (whether Claude Code re-derives its context budget on an in-session `/model` switch): that needs an interactive session — `./bin/claude-on huihui`, `/context`, `/model Qwen3.8-27B-Uncensored-8bit`, `/context` again — which the owner can run and record; the rule to implement then is "warn iff the switched-to route's `cost_model.context` differs from the launch route's". S2 is listed open in the Self-review.
 
 - [ ] **Step 7: Everything still true**
 
@@ -2641,10 +2682,13 @@ git add README.md
 git commit -m "docs: agent-on Plan B acceptance — measured on <date>
 
 huihui: -p OK exit 0; Read-tool loop exit 0; first_request <N> tokens; qualify 6/6, <tok/s> tok/s,
-concurrency <1|2>, caching <true|false>, thinking on (~<n> tok/probe), baseline <N>, verified <N>.
-glm: qualify 6/6, caching <true|false>, baseline <N> ($<x>); -p OK cost $<y>|unknown (<reason>).
-credential: printenv → NONE; key from $STATE/env alone OK; key from environment alone OK.
-S2: --model switch recorded in models_seen; context is process-global (noted for Plan C traps).
+concurrency <1|2>, caching <true|false>, thinking on (~<n> tok/probe), baseline <N>, verified <N|none refused>.
+uncensored8: qualify <gates>, caching <true|false>.
+deepseek/kimi/mimo/glm: qualify <gates each>, caching <true|false each>; glm baseline <N> ($<x>);
+glm -p OK cost $<y>|unknown (<reason>); user --settings merged: <OK|fixed>.
+unreachable (omlx@morty, omlx-tp2, exo): unknown, reported.
+credential: printenv → NONE with the key from $STATE/env alone and from the environment alone.
+--model at launch recorded in models_seen; S2 left open (interactive /model switch not observed).
 status --check pass; gate pass; claude-litellm status unaffected.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
@@ -2674,11 +2718,11 @@ Replace every `<…>` with the observed value. If a step's expectation does not 
 | six gates direct per packaged OpenRouter route; two-turn cache probe records true/false, never inferred | 5, 6, 8 steps 3–4 |
 | `verified` only from `qualify --limits`; context = min(declared, verified) (§7) | 5 (`probe_limits`), 6 (`compute_context` re-run) |
 | fingerprint `{effective_route_sha, wire_model, source_identity, claude_code}` and `qualification.current` | 5 (schema), 6 |
-| S2 measured | 8 step 6 |
+| S2 | **open** — Task 8 step 6 observes `--model` at launch only; the in-session switch is the owner's interactive check |
 | both launchers coexist; `claude-litellm` still launches | 8 step 7 |
 | `claude-on <route>` = `agent-on launch --harness claude` (rev 8) | 7 |
 
-Deferred by design: `knowledge/qualifications.jsonl` is written only once `knowledge/` exists (Plan C); the `sonnet[1m]` tier-alias minor from Plan A's ledger belongs to the harness lint and stays deferred; no `--task <id>` injection yet (§10.1, Plan C).
+Deviations and deferrals, by design: `ANTHROPIC_API_KEY` is removed rather than set to `""` (Task 3 ruling 1, §11 item 2); `--allow-paid` is the plan's own guard, not a spec rule (Task 6); S2 stays **open** — Task 8 observes `--model` at launch, and the in-session `/model` switch must be watched interactively (see Task 8 step 6); `knowledge/qualifications.jsonl` is written only once `knowledge/` exists (Plan C); the `sonnet[1m]` tier-alias minor from Plan A's ledger belongs to the harness lint and stays deferred; no `--task <id>` injection yet (§10.1, Plan C).
 
 **Placeholder scan:** none; the `<…>` tokens are only in Task 8's commit template.
 
