@@ -16,6 +16,7 @@ accumulate; this one only tells you where the accumulated facts are and how to a
   `knowledge.traps` (what applies to `status` on that route).
 - `./bin/agent-on status --check` — every invariant with its result and fix; `last_check` is written. What an
   action must not break is the list of invariants that name it (Q10).
+- `./bin/agent-on install` — links the two shims into `~/.local/bin` and creates the state root; idempotent.
 - `knowledge/decisions.jsonl` — the settled decisions with rationale; a record with `supersedes` replaces the one it
   names. Read the active set before proposing a change that touches one.
 - `knowledge/traps.jsonl` — mechanisms that have bitten this repo, with `applies_to` (a verb, a source, a route or

@@ -20,10 +20,11 @@ class DocsTest(unittest.TestCase):
             self.assertIn(needle, text)
         self.assertNotIn("131072", text)                                            # values live in routes.toml / observed.json, never in the skill (D5)
 
-    def test_readme_has_the_plan_c_section(self):
-        # docs/ARCHITECTURE.md (and its "consumed by Orca" paragraph) was deleted whole in Plan D (§14 row D).
+    def test_readme_has_the_knowledge_section(self):
+        # The README's staged Plan A/B/C sections were folded into one operator page in Plan D (§14 row D);
+        # the "## Knowledge" section is what test_docs_plan_c's "### Knowledge (Plan C)" heading became.
         readme = (REPO / "README.md").read_text(encoding="utf-8")
-        self.assertIn("### Knowledge (Plan C)", readme)
+        self.assertIn("## Knowledge", readme)
         self.assertIn("agent-on learn", readme)
 
     def test_spec_learn_row_names_the_real_flag(self):
