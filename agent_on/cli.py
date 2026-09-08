@@ -44,6 +44,14 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--limits", action="store_true")
     q.add_argument("--allow-paid", action="store_true")
     q.add_argument("--timeout", type=float, default=90.0)
+    n = sub.add_parser("learn", parents=[common], help="validate and append one record to knowledge/<kind>.jsonl (id and ts minted when absent); `learn task …` is the task ledger")
+    n.add_argument("kind", help="observations | decisions | traps | qualifications | gate-runs | tasks — or `task` for the ledger verbs")
+    n.add_argument("--json-record", metavar="JSON", help="the record; when absent, one JSON object is read from stdin")
+    # No `rest = REMAINDER` here (deliberately, see main()): a REMAINDER positional placed after `kind` in the
+    # same parser greedily swallows any later recognized optional too — including --json-record — because
+    # argparse's REMAINDER pattern matches both positional and optional tokens once its turn comes. `learn
+    # decisions --json-record X` would parse json_record as None and rest as ["--json-record", "X"]. Routing
+    # `learn task …` untouched to Task 6's parser is instead done via parse_known_args()'s leftover list.
     return p
 
 
@@ -117,8 +125,22 @@ def render_qualify(doc: dict) -> str:
     return "\n".join(lines + invariant_lines(doc["invariants"]))
 
 
+def render_learn(doc: dict) -> str:
+    lines = [copy_line(doc["copy"])]
+    lines.append(f"learned {doc['record']['id']} → {doc['path']}" if doc["written"] else "NOT learned")
+    return "\n".join(lines + invariant_lines(doc["invariants"]))
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    # parse_known_args, not parse_args: `learn task …` must reach Task 6's task parser with its own arguments
+    # untouched (see build_parser()'s note on why `rest` isn't a REMAINDER positional). Every other command keeps
+    # parse_args's strict behavior — any leftover token still raises the usual "unrecognized arguments" usage
+    # error (this replicates what parse_args does internally: parse_known_args, then error() on leftovers).
+    args, extra = parser.parse_known_args(argv)
+    rest = extra if args.command == "learn" and getattr(args, "kind", None) == "task" else []
+    if extra and not rest:
+        parser.error("unrecognized arguments: %s" % " ".join(extra))
     paths = default_paths()
     try:
         if args.command == "status":
@@ -155,6 +177,30 @@ def main(argv: list[str] | None = None) -> int:
                               claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"))
             code = EXIT_OK if doc["written"] and all(doc["gates"].values()) else EXIT_FAIL
             text = render_qualify(doc)
+        elif args.command == "learn":
+            if args.kind == "task":
+                from .tasks import run_task_verb                     # Task 6; until then a usage error
+                doc, code = run_task_verb(paths, rest)
+                text = doc.get("text") or json.dumps(doc, indent=1, sort_keys=True)
+            else:
+                from .knowledge import append
+                from .invariants import build_context, evaluate
+                raw = args.json_record if args.json_record is not None else sys.stdin.read()
+                if not raw.strip():
+                    doc = {"command": "learn", "copy": describe_copy(paths), "error": "learn: no record given (use --json-record or stdin)", "hint": "pass one JSON object"}
+                    print(json.dumps(doc, indent=1, sort_keys=True) if args.json else f"{copy_line(doc['copy'])}\nerror: {doc['error']}")
+                    return EXIT_USAGE
+                try:
+                    rec = json.loads(raw)
+                except json.JSONDecodeError as e:
+                    doc = {"command": "learn", "copy": describe_copy(paths), "error": f"record is not JSON: {e}", "hint": "pass one JSON object"}
+                    print(json.dumps(doc, indent=1, sort_keys=True) if args.json else f"{copy_line(doc['copy'])}\nerror: {doc['error']}")
+                    return EXIT_USAGE
+                written = append(paths, args.kind, rec)
+                doc = {"command": "learn", "copy": describe_copy(paths), "kind": args.kind, "written": True, "record": written,
+                       "path": str(paths.knowledge_dir / f"{args.kind}.jsonl"),
+                       "invariants": [r.as_dict() for r in evaluate(build_context(paths), ids=["knowledge.typed"])]}
+                code, text = EXIT_OK, render_learn(doc)
         else:
             from .gate import run_gate
             doc = run_gate(paths)
