@@ -1,28 +1,28 @@
-# claude-on Plan A Implementation Plan
+# agent-on Plan A Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land the `claude_on/` package with `routes.toml`, the observed-state layer, the invariant registry, and the four commands `status`, `sync`, `add`, `gate` — purely additive, beside the running `claude-litellm`, deleting nothing.
+**Goal:** Land the `agent_on/` package (repo, package and tower CLI are `agent-on` — spec rev 8; `claude-on` and `codex-on` are the per-harness launchers of Plans B and F) with `routes.toml`, the observed-state layer, the invariant registry, and the four commands `status`, `sync`, `add`, `gate` — purely additive, beside the running `claude-litellm`, deleting nothing.
 
 **Architecture:** One stdlib-only Python package is the whole system: L1 declarations in `routes.toml` (+ a machine-written `routes.discovered.toml` in the state root), L2 measurements in `$STATE/observed.json` written only by actions under one lock, L3 named predicates over `(routes, observed, tree, home)`, L4 the commands. Every command prints `copy.*`, accepts `--json`, and names the invariants it evaluated. The gate reproduces F1 on every run against an in-process mock source on an ephemeral port.
 
 **Tech Stack:** Python ≥ 3.11 from `PATH` (`tomllib`, `fcntl`, `http.server`, `urllib`, `unittest`), a ≤20-line zsh shim. No third-party packages, no venv.
 
-**Spec:** `docs/superpowers/specs/2026-09-07-claude-on-design.md` (rev 7). Section references below (§n, Dn, Fn, Qn) point into it. This plan is §14 row **A**, plus the two rev-6 P2s the owner asked to carry into Plan A's contract: the `add` lock location (§7.1) and per-run cost attribution (§11).
+**Spec:** `docs/superpowers/specs/2026-09-07-agent-on-design.md` (rev 8). Section references below (§n, Dn, Fn, Qn) point into it. This plan is §14 row **A**, plus the two rev-6 P2s the owner asked to carry into Plan A's contract: the `add` lock location (§7.1) and per-run cost attribution (§11).
 
 ## Global Constraints
 
 - **Additive only.** No existing file under `bin/`, `config/`, `scripts/`, `tests/test_*.py`, or `docs/*.md` is modified or deleted except the three named edits: `.gitignore` (two ignore lines), `.github/workflows/ci.yml` (one new job appended), `README.md` (one new section appended). `claude-litellm` must still launch after every task (§14: "Until this plan lands, `git revert` of any A–C commit restores the old path intact").
-- **Standard library only** (D4). `import` of anything outside the stdlib in `claude_on/` or `tests/claude_on/` is a defect. Python floor is 3.11 (`tomllib`); CI runs 3.13; the machine's `python3` is 3.14.7.
+- **Standard library only** (D4). `import` of anything outside the stdlib in `agent_on/` or `tests/agent_on/` is a defect. Python floor is 3.11 (`tomllib`); CI runs 3.13; the machine's `python3` is 3.14.7.
 - **One home per fact** (D5). Route names live only in `routes.toml`. No test or package file may contain a route-name literal that `routes.toml` does not declare (`test.names.derived`); tests derive names from the loaded table or use the mock source name `mock`.
 - **Unmeasured is `null`, never absent; a skip is never a pass** (§7, §8). `caching` is `true | false | "unknown"`. `cost_usd` is a number or the string `"unknown"`.
 - **Never copy Claude Code's own cost figure** (F11): the keys `total_cost_usd` and `costUSD` are rejected anywhere in `observed.json`.
-- **Storage rules** (§7.1): `observed.json` and `routes.discovered.toml` are written under `$STATE/locks/observed.lock` by read-modify-write on the freshly re-read document, temp+fsync+rename; `routes.toml` is written only by `add` under `<checkout>/.routes.lock` (rev 6: keyed by the resource, so every `CLAUDE_ON_STATE` shares it); knowledge and session ledgers are `O_APPEND` single lines.
-- **State root**: `CLAUDE_ON_STATE`, else `$XDG_STATE_HOME/claude-on`, else `~/.local/state/claude-on` (D13). `sync` never dirties a tracked file.
+- **Storage rules** (§7.1): `observed.json` and `routes.discovered.toml` are written under `$STATE/locks/observed.lock` by read-modify-write on the freshly re-read document, temp+fsync+rename; `routes.toml` is written only by `add` under `<checkout>/.routes.lock` (rev 6: keyed by the resource, so every `AGENT_ON_STATE` shares it); knowledge and session ledgers are `O_APPEND` single lines.
+- **State root**: `AGENT_ON_STATE`, else `$XDG_STATE_HOME/agent-on`, else `~/.local/state/agent-on` (D13). `sync` never dirties a tracked file.
 - **Secrets**: an environment variable, else a `KEY=value` line in `$STATE/env` (mode 0600 enforced); the environment wins (§9). No Keychain reads in this package.
 - **Commit style**: this repository's messages are `<type>: <imperative summary>` (`feat:`, `test:`, `docs:`, `fix:`, `ci:`); one commit per task, tests and code together; end each message with the session's attribution trailer shown in Task 1.
 - **Do not restart or stop oMLX on :8000** — another session uses it. Reads (`GET /v1/models`) are fine.
-- **Test discipline**: every test lives in `tests/claude_on/` (no `__init__.py`, so the old `check.zsh` discovery does not pick them up), starts with the sys.path preamble in Task 1, and uses `helpers.Sandbox` for a throwaway checkout/state/home. Run the suite with `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`.
+- **Test discipline**: every test lives in `tests/agent_on/` (no `__init__.py`, so the old `check.zsh` discovery does not pick them up), starts with the sys.path preamble in Task 1, and uses `helpers.Sandbox` for a throwaway checkout/state/home. Run the suite with `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`.
 
 ---
 
@@ -30,51 +30,51 @@
 
 | path | responsibility |
 |---|---|
-| `bin/claude-on` | zsh shim: find `python3 ≥ 3.11`, `exec python3 -m claude_on` with the checkout on `PYTHONPATH` |
-| `claude_on/__init__.py`, `__main__.py` | package marker + `python -m` entry |
-| `claude_on/util.py` | `utc_now`, `parse_utc`, `canonical_json`, `sha16` |
-| `claude_on/paths.py` | `Paths` (checkout, state, home, code tree; every derived path), `default_paths`, `ensure_state`, `describe_copy` (§7 `copy.*`) |
-| `claude_on/schemas/errors.py` | `RULES` registry + `SchemaError(rule, detail)` — F14: a rule must be registered to be raised |
-| `claude_on/schemas/routes.py` | L1: dataclasses, TOML parse/validate, packaged-wins merge, inheritance, `effective_sha`, TOML emit |
-| `claude_on/schemas/observed.py` | L2 shape: empty records, `validate_observed`, `compute_context`, `forbid_claude_cost` |
-| `claude_on/schemas/knowledge.py` | L5 record kinds (§10) and `validate_file` for `knowledge.typed` |
-| `claude_on/cost.py` | §11 cost attribution: `price_usage`, `attribute_run`, `fold_session` |
-| `claude_on/state.py` | §7.1: locks, atomic writes, `update_observed`, `write_discovered`, `checkout_locked`, `$STATE/env`, session ledger |
-| `claude_on/sources.py` | L0 reads: `probe_source`/`probe_all`, catalog normalisation, oMLX settings, OpenRouter spend |
-| `claude_on/mock_source.py` | in-process HTTP source for tests and the gate (ephemeral port) |
-| `claude_on/sync.py` | `sync` |
-| `claude_on/invariants.py` | L3 registry + the fourteen predicates |
-| `claude_on/status.py` | `status [route] [--check]` + text rendering |
-| `claude_on/gate.py` | `gate`: unit tests → mock smoke (F1) → invariants → `last_gate_run` |
-| `claude_on/add.py` | `add <source>/<model>` |
-| `claude_on/cli.py` | argparse, `--json`, exit codes, renderers |
+| `bin/agent-on` | zsh shim: find `python3 ≥ 3.11`, `exec python3 -m agent_on` with the checkout on `PYTHONPATH` |
+| `agent_on/__init__.py`, `__main__.py` | package marker + `python -m` entry |
+| `agent_on/util.py` | `utc_now`, `parse_utc`, `canonical_json`, `sha16` |
+| `agent_on/paths.py` | `Paths` (checkout, state, home, code tree; every derived path), `default_paths`, `ensure_state`, `describe_copy` (§7 `copy.*`) |
+| `agent_on/schemas/errors.py` | `RULES` registry + `SchemaError(rule, detail)` — F14: a rule must be registered to be raised |
+| `agent_on/schemas/routes.py` | L1: dataclasses, TOML parse/validate, packaged-wins merge, inheritance, `effective_sha`, TOML emit |
+| `agent_on/schemas/observed.py` | L2 shape: empty records, `validate_observed`, `compute_context`, `forbid_claude_cost` |
+| `agent_on/schemas/knowledge.py` | L5 record kinds (§10) and `validate_file` for `knowledge.typed` |
+| `agent_on/cost.py` | §11 cost attribution: `price_usage`, `attribute_run`, `fold_session` |
+| `agent_on/state.py` | §7.1: locks, atomic writes, `update_observed`, `write_discovered`, `checkout_locked`, `$STATE/env`, session ledger |
+| `agent_on/sources.py` | L0 reads: `probe_source`/`probe_all`, catalog normalisation, oMLX settings, OpenRouter spend |
+| `agent_on/mock_source.py` | in-process HTTP source for tests and the gate (ephemeral port) |
+| `agent_on/sync.py` | `sync` |
+| `agent_on/invariants.py` | L3 registry + the fourteen predicates |
+| `agent_on/status.py` | `status [route] [--check]` + text rendering |
+| `agent_on/gate.py` | `gate`: unit tests → mock smoke (F1) → invariants → `last_gate_run` |
+| `agent_on/add.py` | `add <source>/<model>` |
+| `agent_on/cli.py` | argparse, `--json`, exit codes, renderers |
 | `routes.toml` | the six packaged routes (four OpenRouter, two oMLX) and five sources |
-| `tests/claude_on/helpers.py` | `REPO`, `Sandbox`, `MOCK_ROUTES` |
-| `tests/claude_on/test_*.py` | one file per module |
+| `tests/agent_on/helpers.py` | `REPO`, `Sandbox`, `MOCK_ROUTES` |
+| `tests/agent_on/test_*.py` | one file per module |
 | `.gitignore` | `+ .routes.lock`, `+ routes.toml.tmp.*` |
-| `.github/workflows/ci.yml` | `+ claude-on` job |
-| `README.md` | `+ ## claude-on (Plan A)` section |
+| `.github/workflows/ci.yml` | `+ agent-on` job |
+| `README.md` | `+ ## agent-on (Plan A)` section |
 
 Public interfaces every later task relies on (exact names; a task's implementer sees only their task):
 
 ```python
-# claude_on.paths
+# agent_on.paths
 Paths(checkout: Path, state: Path, home: Path, tree: Path | None = None)   # .code_tree, .routes_toml, .routes_lock, .discovered_toml, .observed_json, .observed_lock, .sessions_dir, .env_file, .shim
 default_paths(env=None) -> Paths ; ensure_state(paths) -> None ; describe_copy(paths) -> dict
-# claude_on.schemas.routes
+# agent_on.schemas.routes
 parse_routes_text(text, *, packaged: bool, sources=None) -> (dict[str, Source], dict[str, Route], tuple[str, ...])
 load_routes(paths) -> RouteTable        # .sources .routes .shadowed .resolve() .effective_limits() .effective_sha() .by_source()
 route_block(route) -> str ; discovered_text(routes, written_at) -> str
-# claude_on.schemas.observed
+# agent_on.schemas.observed
 empty_observed() ; empty_source() ; empty_route() ; validate_observed(doc) ; compute_context(declared, tier) -> (int|None, str|None) ; forbid_claude_cost(obj)
-# claude_on.state
+# agent_on.state
 update_observed(paths, mutate) -> dict ; read_observed(paths) -> dict ; write_discovered(paths, text) ; checkout_locked(paths) ; atomic_write(path, text)
 resolve_secret(paths, name, env=None) -> str|None ; append_session_run(paths, session_id, record) ; read_session_runs(paths, session_id) -> list
-# claude_on.sources
+# agent_on.sources
 probe_source(source, timeout=5.0, headers=None) -> Probe ; probe_all(sources, timeout=5.0) -> dict[str, Probe] ; read_configured_limits(path, home) ; fetch_openrouter_spend(base_url, key, timeout)
-# claude_on.invariants
+# agent_on.invariants
 build_context(paths, *, with_claude_code=False) -> Context ; evaluate(ctx, ids=None, route=None) -> list[Result] ; skipped_ids(results) -> list[str] ; REGISTRY
-# claude_on.sync / status / gate / add
+# agent_on.sync / status / gate / add
 run_sync(paths, *, timeout=5.0, env=None) -> dict ; build_status(paths, *, route=None, check=False) -> dict ; run_gate(paths) -> dict ; run_add(paths, name, *, alias=None, timeout=5.0) -> dict
 ```
 
@@ -82,8 +82,8 @@ run_sync(paths, *, timeout=5.0, env=None) -> dict ; build_status(paths, *, route
 ### Task 1: Package skeleton, paths, `copy.*`, shim, CLI parser
 
 **Files:**
-- Create: `bin/claude-on`, `claude_on/__init__.py`, `claude_on/__main__.py`, `claude_on/util.py`, `claude_on/paths.py`, `claude_on/cli.py`
-- Create: `tests/claude_on/helpers.py`, `tests/claude_on/test_paths.py`, `tests/claude_on/test_cli.py`
+- Create: `bin/agent-on`, `agent_on/__init__.py`, `agent_on/__main__.py`, `agent_on/util.py`, `agent_on/paths.py`, `agent_on/cli.py`
+- Create: `tests/agent_on/helpers.py`, `tests/agent_on/test_paths.py`, `tests/agent_on/test_cli.py`
 - Modify: `.gitignore` (append two lines)
 
 **Interfaces:**
@@ -91,10 +91,10 @@ run_sync(paths, *, timeout=5.0, env=None) -> dict ; build_status(paths, *, route
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/helpers.py` (not collected — no `test_` prefix; every test file imports it after the preamble):
+`tests/agent_on/helpers.py` (not collected — no `test_` prefix; every test file imports it after the preamble):
 
 ```python
-"""Shared fixtures for the claude-on tests."""
+"""Shared fixtures for the agent-on tests."""
 from __future__ import annotations
 
 import sys
@@ -105,7 +105,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from claude_on.paths import Paths  # noqa: E402
+from agent_on.paths import Paths  # noqa: E402
 
 # Two sources on one mock server: `mock` is oMLX-shaped and discoverable, `paid` is OpenRouter-shaped and keyed.
 MOCK_ROUTES = """version = 1
@@ -173,7 +173,7 @@ class Sandbox:
         self.cleanup()
 ```
 
-`tests/claude_on/test_paths.py`:
+`tests/agent_on/test_paths.py`:
 
 ```python
 from __future__ import annotations
@@ -187,22 +187,22 @@ from helpers import REPO  # noqa: E402
 
 import unittest  # noqa: E402
 
-from claude_on.paths import CHECKOUT, Paths, default_paths, describe_copy, ensure_state  # noqa: E402
+from agent_on.paths import CHECKOUT, Paths, default_paths, describe_copy, ensure_state  # noqa: E402
 
 
 class PathsTest(unittest.TestCase):
     def test_default_state_root_follows_xdg_then_home(self):
         p = default_paths(env={"HOME": "/h"})
-        self.assertEqual(p.state, Path("/h/.local/state/claude-on"))
+        self.assertEqual(p.state, Path("/h/.local/state/agent-on"))
         p = default_paths(env={"HOME": "/h", "XDG_STATE_HOME": "/x"})
-        self.assertEqual(p.state, Path("/x/claude-on"))
-        p = default_paths(env={"HOME": "/h", "XDG_STATE_HOME": "/x", "CLAUDE_ON_STATE": "/s"})
+        self.assertEqual(p.state, Path("/x/agent-on"))
+        p = default_paths(env={"HOME": "/h", "XDG_STATE_HOME": "/x", "AGENT_ON_STATE": "/s"})
         self.assertEqual(p.state, Path("/s"))
         self.assertEqual(p.checkout, CHECKOUT)
         self.assertEqual(p.code_tree, CHECKOUT)
 
     def test_routes_lock_is_keyed_by_the_checkout_not_the_state_root(self):
-        # rev-6 P2: two runs with different CLAUDE_ON_STATE must take the same lock for the same routes.toml
+        # rev-6 P2: two runs with different AGENT_ON_STATE must take the same lock for the same routes.toml
         a = Paths(checkout=Path("/co"), state=Path("/s1"), home=Path("/h"))
         b = Paths(checkout=Path("/co"), state=Path("/s2"), home=Path("/h"))
         self.assertEqual(a.routes_lock, b.routes_lock)
@@ -217,7 +217,7 @@ class PathsTest(unittest.TestCase):
         self.assertEqual(p.observed_json, Path("/s/observed.json"))
         self.assertEqual(p.sessions_dir, Path("/s/sessions"))
         self.assertEqual(p.env_file, Path("/s/env"))
-        self.assertEqual(p.shim, Path("/h/.local/bin/claude-on"))
+        self.assertEqual(p.shim, Path("/h/.local/bin/agent-on"))
 
     def test_ensure_state_creates_private_dirs(self):
         import tempfile, stat
@@ -250,7 +250,7 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-`tests/claude_on/test_cli.py`:
+`tests/agent_on/test_cli.py`:
 
 ```python
 from __future__ import annotations
@@ -267,7 +267,7 @@ from helpers import REPO  # noqa: E402
 
 import unittest  # noqa: E402
 
-from claude_on import cli  # noqa: E402
+from agent_on import cli  # noqa: E402
 
 
 class CliTest(unittest.TestCase):
@@ -293,13 +293,13 @@ class CliTest(unittest.TestCase):
         self.assertEqual(cm.exception.code, 2)
 
     def test_shim_runs_the_package_and_checks_the_interpreter(self):
-        shim = REPO / "bin" / "claude-on"
-        self.assertTrue(shim.exists() and shim.stat().st_mode & 0o111, "bin/claude-on must be executable")
+        shim = REPO / "bin" / "agent-on"
+        self.assertTrue(shim.exists() and shim.stat().st_mode & 0o111, "bin/agent-on must be executable")
         self.assertLessEqual(len(shim.read_text().splitlines()), 20, "the shim is ≤ 20 lines (D4)")
         proc = subprocess.run([str(shim), "--help"], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("status", proc.stdout)
-        bad = subprocess.run([str(shim), "--help"], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "CLAUDE_ON_PYTHON": "/bin/false"})
+        bad = subprocess.run([str(shim), "--help"], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "AGENT_ON_PYTHON": "/bin/false"})
         self.assertEqual(bad.returncode, 3)
         self.assertIn("3.11", bad.stderr)
 
@@ -310,20 +310,20 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on'`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
+Expected: `ModuleNotFoundError: No module named 'agent_on'`
 
 - [ ] **Step 3: Write the package**
 
-`claude_on/__init__.py`:
+`agent_on/__init__.py`:
 
 ```python
-"""claude-on — an agent-operated model-source layer for Claude Code (spec: docs/superpowers/specs/2026-09-07-claude-on-design.md)."""
+"""agent-on — an agent-operated model-source layer for Claude Code (spec: docs/superpowers/specs/2026-09-07-agent-on-design.md)."""
 
 __version__ = "0.1.0a"   # Plan A
 ```
 
-`claude_on/__main__.py`:
+`agent_on/__main__.py`:
 
 ```python
 import sys
@@ -333,7 +333,7 @@ from .cli import main
 sys.exit(main())
 ```
 
-`claude_on/util.py`:
+`agent_on/util.py`:
 
 ```python
 """Helpers shared by every layer: RFC 3339 time, canonical JSON, short hashes."""
@@ -361,10 +361,10 @@ def sha16(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 ```
 
-`claude_on/paths.py`:
+`agent_on/paths.py`:
 
 ```python
-"""Where everything lives (D9, D13). One checkout, one state root; `CLAUDE_ON_STATE` overrides the root."""
+"""Where everything lives (D9, D13). One checkout, one state root; `AGENT_ON_STATE` overrides the root."""
 from __future__ import annotations
 
 import os
@@ -394,7 +394,7 @@ class Paths:
 
     @property
     def routes_lock(self) -> Path:
-        # rev-6 P2: keyed by the resource it protects, never by the state root, so every CLAUDE_ON_STATE shares it
+        # rev-6 P2: keyed by the resource it protects, never by the state root, so every AGENT_ON_STATE shares it
         return self.checkout / ".routes.lock"
 
     @property
@@ -419,16 +419,16 @@ class Paths:
 
     @property
     def shim(self) -> Path:
-        return self.home / ".local" / "bin" / "claude-on"
+        return self.home / ".local" / "bin" / "agent-on"
 
 
 def default_paths(env: dict | None = None) -> Paths:
     env = os.environ if env is None else env
     home = Path(env.get("HOME") or Path.home())
-    if env.get("CLAUDE_ON_STATE"):
-        state = Path(env["CLAUDE_ON_STATE"])
+    if env.get("AGENT_ON_STATE"):
+        state = Path(env["AGENT_ON_STATE"])
     else:
-        state = Path(env.get("XDG_STATE_HOME") or (home / ".local" / "state")) / "claude-on"
+        state = Path(env.get("XDG_STATE_HOME") or (home / ".local" / "state")) / "agent-on"
     return Paths(checkout=CHECKOUT, state=state, home=home, tree=CHECKOUT)
 
 
@@ -460,7 +460,7 @@ def describe_copy(paths: Paths) -> dict:
             "shim": shim, "python": f"{sys.executable} {v.major}.{v.minor}.{v.micro}", "state": str(paths.state)}
 ```
 
-`claude_on/cli.py` (complete; later tasks add nothing here):
+`agent_on/cli.py` (complete; later tasks add nothing here):
 
 ```python
 """L4 — the commands. Plan A ships status, sync, add, gate. Every command accepts --json and prints copy.* (§9)."""
@@ -481,7 +481,7 @@ def build_parser() -> argparse.ArgumentParser:
     # it does not overwrite a `--json` given before the verb (argparse lets subparser defaults clobber parent values).
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="machine-readable output")
-    p = argparse.ArgumentParser(prog="claude-on", description="run the Claude Code harness on any model from any source")
+    p = argparse.ArgumentParser(prog="agent-on", description="run the Claude Code harness on any model from any source")
     p.add_argument("--json", action="store_true", help="machine-readable output (every command; before or after the verb)")
     sub = p.add_subparsers(dest="command", required=True)
     s = sub.add_parser("status", parents=[common], help="L1 beside L2; --check evaluates every invariant and writes last_check")
@@ -573,11 +573,11 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-`cli.py` imports `SchemaError` from `claude_on/schemas/errors.py`, which Task 2 writes. For this task to pass, create the minimal version now — Task 2 replaces it whole:
+`cli.py` imports `SchemaError` from `agent_on/schemas/errors.py`, which Task 2 writes. For this task to pass, create the minimal version now — Task 2 replaces it whole:
 
-`claude_on/schemas/__init__.py`: empty file.
+`agent_on/schemas/__init__.py`: empty file.
 
-`claude_on/schemas/errors.py` (Task 1 stub — Task 2 writes the real one):
+`agent_on/schemas/errors.py` (Task 1 stub — Task 2 writes the real one):
 
 ```python
 RULES: dict[str, str] = {}
@@ -589,42 +589,42 @@ class SchemaError(ValueError):
         self.rule, self.detail = rule, detail
 ```
 
-`bin/claude-on` (then `chmod +x bin/claude-on`):
+`bin/agent-on` (then `chmod +x bin/agent-on`):
 
 ```zsh
 #!/usr/bin/env zsh
-# claude-on shim. The checkout is the installation (D9): nothing here but "find python3 >= 3.11 and exec the package".
+# agent-on shim. The checkout is the installation (D9): nothing here but "find python3 >= 3.11 and exec the package".
 set -u
 checkout="${0:A:h:h}"
-py="${CLAUDE_ON_PYTHON:-$(command -v python3 2>/dev/null || true)}"
+py="${AGENT_ON_PYTHON:-$(command -v python3 2>/dev/null || true)}"
 if [[ -z "$py" ]] || ! "$py" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
-  print -u2 -- "claude-on: python3 >= 3.11 not found on PATH (or CLAUDE_ON_PYTHON is not one)"
+  print -u2 -- "agent-on: python3 >= 3.11 not found on PATH (or AGENT_ON_PYTHON is not one)"
   exit 3
 fi
 export PYTHONPATH="$checkout${PYTHONPATH:+:$PYTHONPATH}"
-exec "$py" -m claude_on "$@"
+exec "$py" -m agent_on "$@"
 ```
 
 Append to `.gitignore`:
 
 ```
-# claude-on: the routes.toml writer lock and its temp file live in the checkout (§7.1 rev 6)
+# agent-on: the routes.toml writer lock and its temp file live in the checkout (§7.1 rev 6)
 .routes.lock
 routes.toml.tmp.*
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
-Expected: `Ran 10 tests … OK`. Also run `./bin/claude-on --help` by hand and `./bin/claude-litellm --help` (or `claude-litellm status`) to confirm the old path is untouched.
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
+Expected: `Ran 10 tests … OK`. Also run `./bin/agent-on --help` by hand and `./bin/claude-litellm --help` (or `claude-litellm status`) to confirm the old path is untouched.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add bin/claude-on claude_on tests/claude_on .gitignore
-git commit -m "feat(claude-on): package skeleton, paths, copy.* and the zsh shim
+git add bin/agent-on agent_on tests/agent_on .gitignore
+git commit -m "feat(agent-on): package skeleton, paths, copy.* and the zsh shim
 
-Plan A task 1 of docs/superpowers/plans/2026-09-07-claude-on-plan-a.md.
+Plan A task 1 of docs/superpowers/plans/2026-09-07-agent-on-plan-a.md.
 Additive: nothing the old launcher reads is touched.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
@@ -636,9 +636,9 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ### Task 2: L1 — the route schema, TOML emit, and the seed `routes.toml`
 
 **Files:**
-- Create: `claude_on/schemas/routes.py`, `routes.toml`
-- Replace: `claude_on/schemas/errors.py` (the Task 1 stub)
-- Test: `tests/claude_on/test_schema_routes.py`
+- Create: `agent_on/schemas/routes.py`, `routes.toml`
+- Replace: `agent_on/schemas/errors.py` (the Task 1 stub)
+- Test: `tests/agent_on/test_schema_routes.py`
 
 **Interfaces:**
 - Consumes: `util.canonical_json`, `util.sha16`, `Paths.routes_toml`, `Paths.discovered_toml`
@@ -648,7 +648,7 @@ Why the seed's numbers differ from `config/litellm_config.yaml`: the live OpenRo
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/test_schema_routes.py`:
+`tests/agent_on/test_schema_routes.py`:
 
 ```python
 from __future__ import annotations
@@ -662,8 +662,8 @@ from helpers import MOCK_ROUTES, REPO, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
-from claude_on.schemas.errors import RULES, SchemaError  # noqa: E402
-from claude_on.schemas.routes import (  # noqa: E402
+from agent_on.schemas.errors import RULES, SchemaError  # noqa: E402
+from agent_on.schemas.routes import (  # noqa: E402
     Route, discovered_text, load_routes, merge_tables, parse_routes_text, route_block,
 )
 
@@ -828,12 +828,12 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest tests/claude_on/test_schema_routes.py -v` (from the checkout; or the discover form)
-Expected: `ImportError: cannot import name 'RULES'` / `No module named 'claude_on.schemas.routes'`
+Run: `python3 -m unittest tests/agent_on/test_schema_routes.py -v` (from the checkout; or the discover form)
+Expected: `ImportError: cannot import name 'RULES'` / `No module named 'agent_on.schemas.routes'`
 
 - [ ] **Step 3: Write the schema**
 
-`claude_on/schemas/errors.py` (replaces the Task 1 stub):
+`agent_on/schemas/errors.py` (replaces the Task 1 stub):
 
 ```python
 """Every field contract of the system, stated once (D5, F14). A validator may only raise a rule listed here;
@@ -874,7 +874,7 @@ class SchemaError(ValueError):
         self.detail = detail
 ```
 
-`claude_on/schemas/routes.py`:
+`agent_on/schemas/routes.py`:
 
 ```python
 """L1 — the route table (§6). The only place the routes.toml rules live (D5); the `RULES` ids name them."""
@@ -1236,7 +1236,7 @@ def route_block(route: Route) -> str:
 
 
 def discovered_text(routes: list[Route], written_at: str) -> str:
-    head = (f"# Written by `claude-on sync` at {written_at}. Machine state (D13): never edit, never commit.\n"
+    head = (f"# Written by `agent-on sync` at {written_at}. Machine state (D13): never edit, never commit.\n"
             "# A packaged route in routes.toml with the same (source, wire_model) shadows an entry here.\n"
             "version = 1\n")
     return head + "".join("\n" + route_block(r) for r in routes)
@@ -1245,7 +1245,7 @@ def discovered_text(routes: list[Route], written_at: str) -> str:
 `routes.toml` (checkout root):
 
 ```toml
-# claude-on route table — L1, the only declarations (spec §6). Git-tracked; edited by hand or by `claude-on add`.
+# agent-on route table — L1, the only declarations (spec §6). Git-tracked; edited by hand or by `agent-on add`.
 # Route names are <source>/<model> (D10). Every numeric limit carries a confidence and a source.
 # The GPT and xAI OAuth routes packaged in litellm_config.yaml are deliberately absent (D3).
 version = 1
@@ -1398,14 +1398,14 @@ aliases    = ["uncensored8"]
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
 Expected: all pass (Task 1's 10 + this file's 9). Also: `python3 -c "import tomllib; tomllib.load(open('routes.toml','rb'))"` prints nothing.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add claude_on/schemas routes.toml tests/claude_on/test_schema_routes.py
-git commit -m "feat(claude-on): L1 route schema, TOML emit, and the seed routes.toml
+git add agent_on/schemas routes.toml tests/agent_on/test_schema_routes.py
+git commit -m "feat(agent-on): L1 route schema, TOML emit, and the seed routes.toml
 
 Six packaged routes (four OpenRouter with live 2026-09-07 provider limits
 and prices, two oMLX inheriting the configured source limits); five sources.
@@ -1419,8 +1419,8 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ### Task 3: L2 — the observed schema, `compute_context`, and the F11 guard
 
 **Files:**
-- Create: `claude_on/schemas/observed.py`
-- Test: `tests/claude_on/test_schema_observed.py`
+- Create: `agent_on/schemas/observed.py`
+- Test: `tests/agent_on/test_schema_observed.py`
 
 **Interfaces:**
 - Consumes: `errors.SchemaError`
@@ -1428,7 +1428,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/test_schema_observed.py`:
+`tests/agent_on/test_schema_observed.py`:
 
 ```python
 from __future__ import annotations
@@ -1441,8 +1441,8 @@ import helpers  # noqa: E402,F401
 
 import unittest  # noqa: E402
 
-from claude_on.schemas.errors import SchemaError  # noqa: E402
-from claude_on.schemas.observed import (  # noqa: E402
+from agent_on.schemas.errors import SchemaError  # noqa: E402
+from agent_on.schemas.observed import (  # noqa: E402
     USAGE_FIELDS, compute_context, empty_observed, empty_route, empty_source, forbid_claude_cost, validate_observed,
 )
 
@@ -1553,12 +1553,12 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_schema_observed.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on.schemas.observed'`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_schema_observed.py' -v`
+Expected: `ModuleNotFoundError: No module named 'agent_on.schemas.observed'`
 
 - [ ] **Step 3: Write the module**
 
-`claude_on/schemas/observed.py`:
+`agent_on/schemas/observed.py`:
 
 ```python
 """L2 — the shape of $STATE/observed.json (§7). Unmeasured is null, never absent; caching is three-valued;
@@ -1689,14 +1689,14 @@ def compute_context(declared: int | None, tier: dict) -> tuple[int | None, str |
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add claude_on/schemas/observed.py tests/claude_on/test_schema_observed.py
-git commit -m "feat(claude-on): L2 observed schema, the context formula, and the F11 guard
+git add agent_on/schemas/observed.py tests/agent_on/test_schema_observed.py
+git commit -m "feat(agent-on): L2 observed schema, the context formula, and the F11 guard
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
@@ -1707,8 +1707,8 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ### Task 4: §11 cost attribution — pure functions and the per-session fold (rev-6 P2)
 
 **Files:**
-- Create: `claude_on/cost.py`
-- Test: `tests/claude_on/test_cost.py`
+- Create: `agent_on/cost.py`
+- Test: `tests/agent_on/test_cost.py`
 
 **Interfaces:**
 - Consumes: `observed.USAGE_FIELDS`, `util.parse_utc`
@@ -1716,7 +1716,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/test_cost.py`:
+`tests/agent_on/test_cost.py`:
 
 ```python
 from __future__ import annotations
@@ -1729,7 +1729,7 @@ import helpers  # noqa: E402,F401
 
 import unittest  # noqa: E402
 
-from claude_on.cost import attribute_run, fold_session, price_usage, sum_usage  # noqa: E402
+from agent_on.cost import attribute_run, fold_session, price_usage, sum_usage  # noqa: E402
 
 PAID = {"input": 1.0, "output": 2.0, "cache_read": 0.1, "cache_write": None}   # USD per Mtok; no cache-write price published
 FREE = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
@@ -1813,7 +1813,7 @@ class FoldTest(unittest.TestCase):
         self.assertEqual((total["covered_turns"], total["uncovered_turns"]), (4, 0))
 
     def test_turns_no_ledger_line_covers_make_the_total_unknown(self):
-        # e.g. a session begun under the old launcher, resumed under claude-on: the past price cannot be restored
+        # e.g. a session begun under the old launcher, resumed under agent-on: the past price cannot be restored
         turns = [turn(self.T[0], "m", u(i=100)), turn(self.T[2], "m", u(i=100))]
         r2 = attribute_run(turns, run("L2", "m", self.T[2], self.T[3], FREE))
         total = fold_session(turns, [r2])
@@ -1840,17 +1840,17 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_cost.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on.cost'`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_cost.py' -v`
+Expected: `ModuleNotFoundError: No module named 'agent_on.cost'`
 
 - [ ] **Step 3: Write the module**
 
-`claude_on/cost.py`:
+`agent_on/cost.py`:
 
 ```python
 """§11 cost attribution, as pure functions. Cost is attributed per run at the price of that run; a price that is
 absent is not 0; a turn no run covers cannot be priced. The launch (Plan B) feeds transcript turns and run
-records in; the tests in tests/claude_on/test_cost.py are the contract."""
+records in; the tests in tests/agent_on/test_cost.py are the contract."""
 from __future__ import annotations
 
 from .schemas.observed import USAGE_FIELDS
@@ -1953,14 +1953,14 @@ def fold_session(turns: list[dict], runs: list[dict]) -> dict:
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add claude_on/cost.py tests/claude_on/test_cost.py
-git commit -m "feat(claude-on): per-run cost attribution with the unknown rule (§11, rev 6)
+git add agent_on/cost.py tests/agent_on/test_cost.py
+git commit -m "feat(agent-on): per-run cost attribution with the unknown rule (§11, rev 6)
 
 A paid session resumed on a free route folds to paid + 0; turns no ledger
 line covers, and fields with no published price, fold to \"unknown\".
@@ -1974,8 +1974,8 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ### Task 5: Storage rules — locks, atomic writes, the env file, the session ledger
 
 **Files:**
-- Create: `claude_on/state.py`
-- Test: `tests/claude_on/test_state.py`
+- Create: `agent_on/state.py`
+- Test: `tests/agent_on/test_state.py`
 
 **Interfaces:**
 - Consumes: `Paths`, `ensure_state`, `observed.empty_observed/validate_observed`
@@ -1983,7 +1983,7 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/test_state.py`:
+`tests/agent_on/test_state.py`:
 
 ```python
 from __future__ import annotations
@@ -1999,9 +1999,9 @@ from helpers import REPO, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
-from claude_on.paths import Paths  # noqa: E402
-from claude_on.schemas.errors import SchemaError  # noqa: E402
-from claude_on.state import (  # noqa: E402
+from agent_on.paths import Paths  # noqa: E402
+from agent_on.schemas.errors import SchemaError  # noqa: E402
+from agent_on.state import (  # noqa: E402
     append_session_run, atomic_write, checkout_locked, read_env_file, read_observed, read_session_runs,
     resolve_secret, sweep_tmp, update_observed, write_discovered,
 )
@@ -2011,8 +2011,8 @@ ROUTES = 'version = 1\n[sources.mock]\nbase_url = "http://127.0.0.1:1"\n'
 INCREMENT = """
 import sys; sys.path.insert(0, {repo!r})
 from pathlib import Path
-from claude_on.paths import Paths
-from claude_on.state import update_observed
+from agent_on.paths import Paths
+from agent_on.state import update_observed
 p = Paths(checkout=Path({co!r}), state=Path({st!r}), home=Path({co!r}))
 def bump(doc):
     doc["spend"].setdefault("counter", {{"n": 0}})["n"] += 1
@@ -2074,7 +2074,7 @@ try:
 except BlockingIOError:
     print("blocked")
 """], capture_output=True, text=True)
-            self.assertEqual(probe.stdout.strip(), "blocked", "a run with another CLAUDE_ON_STATE must contend for the same lock")
+            self.assertEqual(probe.stdout.strip(), "blocked", "a run with another AGENT_ON_STATE must contend for the same lock")
 
     def test_atomic_write_replaces_in_place(self):
         with Sandbox(ROUTES) as sb:
@@ -2117,12 +2117,12 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_state.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on.state'`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_state.py' -v`
+Expected: `ModuleNotFoundError: No module named 'agent_on.state'`
 
 - [ ] **Step 3: Write the module**
 
-`claude_on/state.py`:
+`agent_on/state.py`:
 
 ```python
 """§7.1 storage rules. One advisory lock per state file; every writer re-reads under the lock; temp+fsync+rename;
@@ -2208,7 +2208,7 @@ def write_discovered(paths: Paths, text: str) -> None:
 @contextmanager
 def checkout_locked(paths: Paths):
     """The routes.toml writer lock, `<checkout>/.routes.lock` — keyed by the resource it protects, so a default run
-    and a CLAUDE_ON_STATE scratch run editing the same checkout contend for the same lock (§7.1, rev 6)."""
+    and a AGENT_ON_STATE scratch run editing the same checkout contend for the same lock (§7.1, rev 6)."""
     with locked(paths.routes_lock):
         yield
 
@@ -2261,14 +2261,14 @@ def read_session_runs(paths: Paths, session_id: str) -> list[dict]:
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
 Expected: all pass. The two-process counter test proves the observed lock; the `blocked` probe proves the checkout lock is shared across state roots.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add claude_on/state.py tests/claude_on/test_state.py
-git commit -m "feat(claude-on): storage rules — locks, atomic writes, env file, session ledger (§7.1)
+git add agent_on/state.py tests/agent_on/test_state.py
+git commit -m "feat(agent-on): storage rules — locks, atomic writes, env file, session ledger (§7.1)
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
@@ -2278,8 +2278,8 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ### Task 6: L0 reads — source probing, catalog normalisation, oMLX settings, OpenRouter spend, and the mock source
 
 **Files:**
-- Create: `claude_on/sources.py`, `claude_on/mock_source.py`
-- Test: `tests/claude_on/test_sources.py`
+- Create: `agent_on/sources.py`, `agent_on/mock_source.py`
+- Test: `tests/agent_on/test_sources.py`
 
 **Interfaces:**
 - Consumes: `routes.Source`, `util.utc_now`
@@ -2289,7 +2289,7 @@ Measured shapes these encode (2026-09-07): oMLX `GET /v1/models` → `{"object":
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/test_sources.py`:
+`tests/agent_on/test_sources.py`:
 
 ```python
 from __future__ import annotations
@@ -2304,9 +2304,9 @@ import helpers  # noqa: E402,F401
 
 import unittest  # noqa: E402
 
-from claude_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
-from claude_on.schemas.routes import Source  # noqa: E402
-from claude_on.sources import (  # noqa: E402
+from agent_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
+from agent_on.schemas.routes import Source  # noqa: E402
+from agent_on.sources import (  # noqa: E402
     fetch_openrouter_spend, is_loopback, normalize_catalog, omlx_settings_path, probe_all, probe_source, read_configured_limits,
 )
 
@@ -2413,12 +2413,12 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_sources.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on.mock_source'`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_sources.py' -v`
+Expected: `ModuleNotFoundError: No module named 'agent_on.mock_source'`
 
 - [ ] **Step 3: Write the modules**
 
-`claude_on/mock_source.py`:
+`agent_on/mock_source.py`:
 
 ```python
 """An in-process source for tests and the gate: `/v1/models` (or `/api/v1/models`) in either catalog shape,
@@ -2506,7 +2506,7 @@ class MockSource:
         self.stop()
 ```
 
-`claude_on/sources.py`:
+`agent_on/sources.py`:
 
 ```python
 """L0 reads (§5): catalog GETs, the local oMLX settings file, OpenRouter's key endpoint. Nothing here writes."""
@@ -2641,14 +2641,14 @@ def fetch_openrouter_spend(base_url: str, key: str, timeout: float = 5.0) -> dic
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
 Expected: all pass. The black-hole probe takes ~3 s (timeout 1 + 2); that is the designed bound.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add claude_on/sources.py claude_on/mock_source.py tests/claude_on/test_sources.py
-git commit -m "feat(claude-on): source probing, catalog normalisation, oMLX settings, OpenRouter spend, mock source
+git add agent_on/sources.py agent_on/mock_source.py tests/agent_on/test_sources.py
+git commit -m "feat(agent-on): source probing, catalog normalisation, oMLX settings, OpenRouter spend, mock source
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
@@ -2659,18 +2659,18 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ### Task 7: L3 — the knowledge record schema and the invariant registry (fourteen predicates)
 
 **Files:**
-- Create: `claude_on/schemas/knowledge.py`, `claude_on/invariants.py`
-- Test: `tests/claude_on/test_invariants.py`
+- Create: `agent_on/schemas/knowledge.py`, `agent_on/invariants.py`
+- Test: `tests/agent_on/test_invariants.py`
 
 **Interfaces:**
 - Consumes: `Paths`, `describe_copy`, `RULES`, `SchemaError`, `forbid_claude_cost`, `RouteTable`, `load_routes`, `read_observed`
 - Produces: `knowledge.KINDS`, `knowledge.validate_record(kind, rec)`, `knowledge.validate_file(path) -> list[str]`; `invariants.Result(id, result, reason, subject, fix)` with `.as_dict()`, `Context(paths, routes, routes_error, observed, tree, home, claude_code)`, `REGISTRY`, `invariant(id, *, statement, fix, per_route=False)`, `build_context(paths, *, with_claude_code=False)`, `evaluate(ctx, ids=None, route=None) -> list[Result]`, `skipped_ids(results) -> list[str]`, `claude_code_version() -> str|None`, `ENV_DENY`, `TIER_NAMES`.
 
-The fourteen ids and what each catches are §8's table. In Plan A `credential.not_in_child_env` is an honest `skip` (the launcher is Plan B). `test.names.derived` lints Python under `claude_on/` and `tests/claude_on/` here; docs join the lint in Plan D, when they are generated from `routes.toml` (§8 says "test or doc"). The reproduction for every other F is a test below.
+The fourteen ids and what each catches are §8's table. In Plan A `credential.not_in_child_env` is an honest `skip` (the launcher is Plan B). `test.names.derived` lints Python under `agent_on/` and `tests/agent_on/` here; docs join the lint in Plan D, when they are generated from `routes.toml` (§8 says "test or doc"). The reproduction for every other F is a test below.
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/test_invariants.py`:
+`tests/agent_on/test_invariants.py`:
 
 ```python
 from __future__ import annotations
@@ -2685,11 +2685,11 @@ from helpers import MOCK_ROUTES, REPO, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
-from claude_on.invariants import REGISTRY, build_context, evaluate, skipped_ids  # noqa: E402
-from claude_on.schemas.knowledge import validate_file, validate_record  # noqa: E402
-from claude_on.schemas.errors import SchemaError  # noqa: E402
-from claude_on.schemas.observed import empty_route, empty_source  # noqa: E402
-from claude_on.state import update_observed  # noqa: E402
+from agent_on.invariants import REGISTRY, build_context, evaluate, skipped_ids  # noqa: E402
+from agent_on.schemas.knowledge import validate_file, validate_record  # noqa: E402
+from agent_on.schemas.errors import SchemaError  # noqa: E402
+from agent_on.schemas.observed import empty_route, empty_source  # noqa: E402
+from agent_on.state import update_observed  # noqa: E402
 
 EXPECTED_IDS = {"route.served", "route.unique", "source.limits.propagated", "limits.declared_vs_observed", "copy.single",
                 "credential.not_in_child_env", "harness.env.clean", "gate.no_silent_skip", "gate.mock.ephemeral",
@@ -2783,14 +2783,14 @@ class F7F8CopyTest(unittest.TestCase):
             self.assertEqual(one(sb.paths, "copy.single").result, "skip")            # no shim yet
             shim = sb.paths.shim
             shim.parent.mkdir(parents=True)
-            shim.symlink_to(sb.root / "elsewhere" / "claude-on")
+            shim.symlink_to(sb.root / "elsewhere" / "agent-on")
             r = one(sb.paths, "copy.single")
             self.assertEqual(r.result, "fail")
             self.assertIn("elsewhere", r.reason)
             shim.unlink()
             (sb.paths.checkout / "bin").mkdir()
-            (sb.paths.checkout / "bin" / "claude-on").write_text("#!/bin/sh\n")
-            shim.symlink_to(sb.paths.checkout / "bin" / "claude-on")
+            (sb.paths.checkout / "bin" / "agent-on").write_text("#!/bin/sh\n")
+            shim.symlink_to(sb.paths.checkout / "bin" / "agent-on")
             self.assertEqual(one(sb.paths, "copy.single").result, "pass")
 
 
@@ -2846,25 +2846,25 @@ class GateRecordTest(unittest.TestCase):
 class TreeLintTest(unittest.TestCase):
     def test_undeclared_route_literal_in_the_tree_fails(self):  # F5
         with Sandbox(MOCK_ROUTES.format(base=BASE), tree=None) as sb:
-            (sb.paths.checkout / "claude_on").mkdir()
-            (sb.paths.checkout / "claude_on" / "x.py").write_text('NAME = "mock/alpha"\n', encoding="utf-8")
+            (sb.paths.checkout / "agent_on").mkdir()
+            (sb.paths.checkout / "agent_on" / "x.py").write_text('NAME = "mock/alpha"\n', encoding="utf-8")
             self.assertEqual(one(sb.paths, "test.names.derived").result, "pass")
-            (sb.paths.checkout / "claude_on" / "x.py").write_text('NAME = "mock/does-not-exist"\n', encoding="utf-8")
+            (sb.paths.checkout / "agent_on" / "x.py").write_text('NAME = "mock/does-not-exist"\n', encoding="utf-8")
             r = one(sb.paths, "test.names.derived")
             self.assertEqual(r.result, "fail")
             self.assertIn("does-not-exist", r.reason)
 
     def test_the_real_tree_has_no_undeclared_route_literals(self):
-        from claude_on.paths import default_paths
+        from agent_on.paths import default_paths
         self.assertEqual(one(default_paths(), "test.names.derived").result, "pass")
 
     def test_schema_rules_registry_is_complete_and_alive(self):  # F14
-        from claude_on.paths import default_paths
+        from agent_on.paths import default_paths
         r = one(default_paths(), "schema.complete")
         self.assertEqual(r.result, "pass", r.reason)
         with Sandbox(MOCK_ROUTES.format(base=BASE), tree=None) as sb:
-            (sb.paths.checkout / "claude_on").mkdir()
-            (sb.paths.checkout / "claude_on" / "y.py").write_text('raise SchemaError("not.a.rule", "x")\n', encoding="utf-8")
+            (sb.paths.checkout / "agent_on").mkdir()
+            (sb.paths.checkout / "agent_on" / "y.py").write_text('raise SchemaError("not.a.rule", "x")\n', encoding="utf-8")
             r = one(sb.paths, "schema.complete")
             self.assertEqual(r.result, "fail")
             self.assertIn("not.a.rule", r.reason)
@@ -2926,12 +2926,12 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_invariants.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on.invariants'`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_invariants.py' -v`
+Expected: `ModuleNotFoundError: No module named 'agent_on.invariants'`
 
 - [ ] **Step 3: Write the modules**
 
-`claude_on/schemas/knowledge.py`:
+`agent_on/schemas/knowledge.py`:
 
 ```python
 """L5 record kinds (§10) — enough for `knowledge.typed`; `learn` (Plan C) validates with the same function."""
@@ -2981,7 +2981,7 @@ def validate_file(path: Path) -> list[str]:
     return errors
 ```
 
-`claude_on/invariants.py`:
+`agent_on/invariants.py`:
 
 ```python
 """L3 — named predicates over (routes, observed, tree, home) (§8). Each has a stable id, a statement, a fix hint,
@@ -3110,16 +3110,16 @@ def skipped_ids(results: list[Result]) -> list[str]:
 
 @invariant("route.served", per_route=True,
            statement="every route's wire_model is in its source's live catalog",
-           fix="run `claude-on sync`; if still orphaned, the source renamed the model — update wire_model")
+           fix="run `agent-on sync`; if still orphaned, the source renamed the model — update wire_model")
 def route_served(ctx: Context, route):
     src = ctx.observed["sources"].get(route.source)
     if src is None or src.get("reachable") is None:
-        return skip(f"{route.source} not probed yet — run `claude-on sync`")
+        return skip(f"{route.source} not probed yet — run `agent-on sync`")
     if not src["reachable"]:
         return skip(f"{route.source} unreachable: {src.get('error')}")
     r = ctx.observed["routes"].get(route.name)
     if r is None or r.get("served") is None:
-        return skip("no observation for this route — run `claude-on sync`")
+        return skip("no observation for this route — run `agent-on sync`")
     if r["served"]:
         return ok(f"served (checked {r['checked']})")
     return fail(f"{route.wire_model!r} not in {route.source} catalog (checked {r['checked']})")
@@ -3149,7 +3149,7 @@ def source_limits_propagated(ctx: Context, route):
 
 @invariant("limits.declared_vs_observed", per_route=True,
            statement="declared input ≤ verified when present, else ≤ min(configured, advertised) and reported unverified",
-           fix="lower the declared limit in routes.toml, or re-run `claude-on sync` if the source changed")
+           fix="lower the declared limit in routes.toml, or re-run `agent-on sync` if the source changed")
 def limits_declared_vs_observed(ctx: Context, route):
     lim = ctx.routes.effective_limits(route)
     if lim is None or lim.input is None:
@@ -3157,7 +3157,7 @@ def limits_declared_vs_observed(ctx: Context, route):
     r = ctx.observed["routes"].get(route.name)
     tier = r["limits"]["input"] if r else None
     if not tier:
-        return skip("no observation — run `claude-on sync`")
+        return skip("no observation — run `agent-on sync`")
     if tier.get("verified") is not None:
         if lim.input <= tier["verified"]:
             return ok(f"declared {lim.input} ≤ verified {tier['verified']}")
@@ -3173,7 +3173,7 @@ def limits_declared_vs_observed(ctx: Context, route):
 
 @invariant("copy.single",
            statement="the shim resolves to this checkout and the tree is clean (dirty is reported, not failed)",
-           fix="re-link: ln -sfn <checkout>/bin/claude-on ~/.local/bin/claude-on")
+           fix="re-link: ln -sfn <checkout>/bin/agent-on ~/.local/bin/agent-on")
 def copy_single(ctx: Context):
     shim = ctx.paths.shim
     if not shim.is_symlink():
@@ -3182,7 +3182,7 @@ def copy_single(ctx: Context):
         return skip(f"no shim at {shim} (install lands in Plan D)")
     target = Path(os.readlink(shim))
     target = (target if target.is_absolute() else shim.parent / target).resolve()
-    expected = (ctx.tree / "bin" / "claude-on").resolve()
+    expected = (ctx.tree / "bin" / "agent-on").resolve()
     if target != expected:
         return fail(f"{shim} -> {target}, not {expected}")
     dirty = describe_copy(ctx.paths)["dirty"]
@@ -3228,7 +3228,7 @@ def harness_env_clean(ctx: Context):
 def gate_no_silent_skip(ctx: Context):
     g = ctx.observed.get("last_gate_run")
     if not g:
-        return skip("no gate run recorded yet — run `claude-on gate`")
+        return skip("no gate run recorded yet — run `agent-on gate`")
     listed = set(g.get("skipped") or [])
     silent = [k for k, v in (g.get("invariants") or {}).items() if v == "skip" and k not in listed]
     if silent:
@@ -3254,7 +3254,7 @@ def gate_mock_ephemeral(ctx: Context):
     return ok(f"mock port {port}")
 
 
-ROUTE_LITERAL_DIRS = ("claude_on", "tests/claude_on")
+ROUTE_LITERAL_DIRS = ("agent_on", "tests/agent_on")
 
 
 def route_literals(tree: Path, source_names) -> list[tuple[str, str]]:
@@ -3288,7 +3288,7 @@ def test_names_derived(ctx: Context):
 
 @invariant("knowledge.typed",
            statement="every knowledge record validates against its kind's schema",
-           fix="fix or remove the offending line; `claude-on learn` validates before appending (Plan C)")
+           fix="fix or remove the offending line; `agent-on learn` validates before appending (Plan C)")
 def knowledge_typed(ctx: Context):
     kdir = ctx.tree / "knowledge"
     if not kdir.exists():
@@ -3302,7 +3302,7 @@ SCHEMA_ERROR_USE = re.compile(r'SchemaError\(\s*"([^"]+)"')
 
 
 def schema_rules_used(tree: Path) -> set[str]:
-    base = tree / "claude_on"
+    base = tree / "agent_on"
     if not base.exists():
         return set()
     return {m.group(1) for f in base.rglob("*.py") for m in SCHEMA_ERROR_USE.finditer(f.read_text(encoding="utf-8"))}
@@ -3335,7 +3335,7 @@ def cost_not_copied(ctx: Context):
 
 @invariant("qualification.current", per_route=True,
            statement="the route's last qualification fingerprint still matches the effective configuration, the wire model, the source identity and the Claude Code version",
-           fix="re-run `claude-on qualify <route>`")
+           fix="re-run `agent-on qualify <route>`")
 def qualification_current(ctx: Context, route):
     r = ctx.observed["routes"].get(route.name)
     q = r.get("last_qualification") if r else None
@@ -3353,14 +3353,14 @@ def qualification_current(ctx: Context, route):
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
 Expected: all pass. `test_schema_rules_registry_is_complete_and_alive` runs against the real tree: if it fails with "registered but never raised", a rule in `RULES` has no raiser — every rule listed in Task 2 is raised by the code in Tasks 2, 3 and 7 (`knowledge.record` by `schemas/knowledge.py`); do not delete rules to make it pass, find the missing raise. The tests plant observations with `update_observed` — exactly the records `sync` (Task 8) writes — so this task has no dependency on `sync`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add claude_on/schemas/knowledge.py claude_on/invariants.py tests/claude_on/test_invariants.py
-git commit -m "feat(claude-on): the invariant registry — fourteen predicates with reproductions for F1–F14
+git add agent_on/schemas/knowledge.py agent_on/invariants.py tests/agent_on/test_invariants.py
+git commit -m "feat(agent-on): the invariant registry — fourteen predicates with reproductions for F1–F14
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
@@ -3370,8 +3370,8 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ### Task 8: `sync`
 
 **Files:**
-- Create: `claude_on/sync.py`
-- Test: `tests/claude_on/test_sync.py`
+- Create: `agent_on/sync.py`
+- Test: `tests/agent_on/test_sync.py`
 
 **Interfaces:**
 - Consumes: `parse_routes_text`, `load_routes`, `Route`, `discovered_text`, `probe_all`, `omlx_settings_path`, `read_configured_limits`, `fetch_openrouter_spend`, `resolve_secret`, `update_observed`, `write_discovered`, `empty_route`, `empty_source`, `compute_context`, `describe_copy`, `invariants.build_context/evaluate` (Task 7)
@@ -3381,7 +3381,7 @@ Rules encoded (§7 table, §9): `served = wire_model ∈ catalog`; `served` is `
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/test_sync.py`:
+`tests/agent_on/test_sync.py`:
 
 ```python
 from __future__ import annotations
@@ -3396,10 +3396,10 @@ from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
-from claude_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
-from claude_on.schemas.routes import load_routes  # noqa: E402
-from claude_on.state import read_observed  # noqa: E402
-from claude_on.sync import run_sync  # noqa: E402
+from agent_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
+from agent_on.schemas.routes import load_routes  # noqa: E402
+from agent_on.state import read_observed  # noqa: E402
+from agent_on.sync import run_sync  # noqa: E402
 
 CATALOG = [omlx_entry("alpha", 262144), omlx_entry("beta", 131072), openrouter_entry("vendor/model-x", 200000, 8000)]
 SPEND = {"usage": 1.5, "limit": 10, "limit_reset": "daily", "limit_remaining": 8.5, "usage_daily": 0.5}
@@ -3500,15 +3500,15 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_sync.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on.sync'`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_sync.py' -v`
+Expected: `ModuleNotFoundError: No module named 'agent_on.sync'`
 
 - [ ] **Step 3: Write the module**
 
-`claude_on/sync.py`:
+`agent_on/sync.py`:
 
 ```python
-"""`claude-on sync` (§9): probe every source; refresh catalogs, served flags, configured/advertised limits and spend;
+"""`agent-on sync` (§9): probe every source; refresh catalogs, served flags, configured/advertised limits and spend;
 rewrite routes.discovered.toml; report orphans. Never writes `verified` (that is `qualify --limits`), never touches
 routes.toml, never dirties a tracked file (D13)."""
 from __future__ import annotations
@@ -3620,14 +3620,14 @@ def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> 
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add claude_on/sync.py tests/claude_on/test_sync.py
-git commit -m "feat(claude-on): sync — served flags, limit tiers, discovery, orphans, spend
+git add agent_on/sync.py tests/agent_on/test_sync.py
+git commit -m "feat(agent-on): sync — served flags, limit tiers, discovery, orphans, spend
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
@@ -3638,8 +3638,8 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ### Task 9: `status [route] [--check]`
 
 **Files:**
-- Create: `claude_on/status.py`
-- Test: `tests/claude_on/test_status.py`
+- Create: `agent_on/status.py`
+- Test: `tests/agent_on/test_status.py`
 
 **Interfaces:**
 - Consumes: `build_context`, `evaluate`, `skipped_ids`, `describe_copy`, `update_observed`, `utc_now`, `cli.copy_line`, `cli.invariant_lines`
@@ -3649,7 +3649,7 @@ Rules: `status` reads and, only with an unscoped `--check`, writes `last_check` 
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/test_status.py`:
+`tests/agent_on/test_status.py`:
 
 ```python
 from __future__ import annotations
@@ -3663,10 +3663,10 @@ from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
-from claude_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
-from claude_on.state import read_observed  # noqa: E402
-from claude_on.status import build_status, render_text  # noqa: E402
-from claude_on.sync import run_sync  # noqa: E402
+from agent_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
+from agent_on.state import read_observed  # noqa: E402
+from agent_on.status import build_status, render_text  # noqa: E402
+from agent_on.sync import run_sync  # noqa: E402
 
 BASE = "http://127.0.0.1:1"
 
@@ -3739,15 +3739,15 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_status.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on.status'`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_status.py' -v`
+Expected: `ModuleNotFoundError: No module named 'agent_on.status'`
 
 - [ ] **Step 3: Write the module**
 
-`claude_on/status.py`:
+`agent_on/status.py`:
 
 ```python
-"""`claude-on status [route] [--check]` (§9): L1 beside L2 for every route or one; with --check every invariant is
+"""`agent-on status [route] [--check]` (§9): L1 beside L2 for every route or one; with --check every invariant is
 evaluated and `last_check` written — never `last_gate_run`, which only the gate runner writes (Q4)."""
 from __future__ import annotations
 
@@ -3834,14 +3834,14 @@ def render_text(doc: dict) -> str:
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
-Expected: all pass. Then, by hand on the real checkout: `./bin/claude-on status` prints the six routes with `served=?` (nothing measured yet) and `./bin/claude-on status --json | python3 -m json.tool >/dev/null`.
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
+Expected: all pass. Then, by hand on the real checkout: `./bin/agent-on status` prints the six routes with `served=?` (nothing measured yet) and `./bin/agent-on status --json | python3 -m json.tool >/dev/null`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add claude_on/status.py tests/claude_on/test_status.py
-git commit -m "feat(claude-on): status — declared beside observed, --check writes last_check only
+git add agent_on/status.py tests/agent_on/test_status.py
+git commit -m "feat(agent-on): status — declared beside observed, --check writes last_check only
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
@@ -3852,19 +3852,19 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ### Task 10: `gate` and the CI job
 
 **Files:**
-- Create: `claude_on/gate.py`
+- Create: `agent_on/gate.py`
 - Modify: `.github/workflows/ci.yml` (append one job)
-- Test: `tests/claude_on/test_gate.py`
+- Test: `tests/agent_on/test_gate.py`
 
 **Interfaces:**
 - Consumes: `MockSource`, `omlx_entry`, `run_sync`, `build_context`, `evaluate`, `skipped_ids`, `update_observed`, `describe_copy`, `utc_now`
-- Produces: `run_gate(paths) -> dict` with keys `command, copy, tests{ran, ok, tail, skipped}, smoke{ok, results, expected}, invariants[], last_gate_run{}, result`; `run_smoke(mock) -> {ok, results{"route.served:<route>": pass|fail}, expected}`; `VERIFIERS: list[str]` (empty in Plan A; Plan B appends the fidelity verifier); `INNER_ENV = "CLAUDE_ON_GATE_INNER"`. `last_gate_run.verifiers` is the object `{declared: [...], ran: [...]}` (spec §7/§10 rev 7) — a count could not let `gate.no_silent_skip` fail on a verifier declared but never run (F6).
+- Produces: `run_gate(paths) -> dict` with keys `command, copy, tests{ran, ok, tail, skipped}, smoke{ok, results, expected}, invariants[], last_gate_run{}, result`; `run_smoke(mock) -> {ok, results{"route.served:<route>": pass|fail}, expected}`; `VERIFIERS: list[str]` (empty in Plan A; Plan B appends the fidelity verifier); `INNER_ENV = "AGENT_ON_GATE_INNER"`. `last_gate_run.verifiers` is the object `{declared: [...], ran: [...]}` (spec §7/§10 rev 7) — a count could not let `gate.no_silent_skip` fail on a verifier declared but never run (F6).
 
-The gate is: (1) the unit tests as a subprocess (`unittest discover -s tests/claude_on`), skipped with a stated reason when `CLAUDE_ON_GATE_INNER` is set (a test running the gate must not recurse); (2) the **smoke**: a temp checkout whose `routes.toml` points at the mock source with one live and one planted-dead packaged route, `sync`, then `route.served` must be `pass` for the live one, `fail` for the dead one, `pass` for the discovered extra — F1 reproduced on every gate run; (3) every invariant over the real checkout and state; (4) `last_gate_run` written with the skips listed and the mock's port. Result is `fail` if any of (1)–(3) failed. Exit 1 on fail.
+The gate is: (1) the unit tests as a subprocess (`unittest discover -s tests/agent_on`), skipped with a stated reason when `AGENT_ON_GATE_INNER` is set (a test running the gate must not recurse); (2) the **smoke**: a temp checkout whose `routes.toml` points at the mock source with one live and one planted-dead packaged route, `sync`, then `route.served` must be `pass` for the live one, `fail` for the dead one, `pass` for the discovered extra — F1 reproduced on every gate run; (3) every invariant over the real checkout and state; (4) `last_gate_run` written with the skips listed and the mock's port. Result is `fail` if any of (1)–(3) failed. Exit 1 on fail.
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/test_gate.py`:
+`tests/agent_on/test_gate.py`:
 
 ```python
 from __future__ import annotations
@@ -3879,9 +3879,9 @@ from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
 import unittest  # noqa: E402
 from unittest import mock  # noqa: E402
 
-from claude_on.gate import INNER_ENV, run_gate, run_smoke  # noqa: E402
-from claude_on.mock_source import MockSource, omlx_entry  # noqa: E402
-from claude_on.state import read_observed, update_observed  # noqa: E402
+from agent_on.gate import INNER_ENV, run_gate, run_smoke  # noqa: E402
+from agent_on.mock_source import MockSource, omlx_entry  # noqa: E402
+from agent_on.state import read_observed, update_observed  # noqa: E402
 
 BASE = "http://127.0.0.1:1"
 
@@ -3935,15 +3935,15 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_gate.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on.gate'`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_gate.py' -v`
+Expected: `ModuleNotFoundError: No module named 'agent_on.gate'`
 
 - [ ] **Step 3: Write the module and the CI job**
 
-`claude_on/gate.py`:
+`agent_on/gate.py`:
 
 ```python
-"""`claude-on gate` (§8): unit tests, the mock-source smoke that reproduces F1, every invariant; then
+"""`agent-on gate` (§8): unit tests, the mock-source smoke that reproduces F1, every invariant; then
 `last_gate_run` to L2 with every skip listed and the mock's port. (The knowledge/gate-runs.jsonl twin lands in Plan C.)"""
 from __future__ import annotations
 
@@ -3962,7 +3962,7 @@ from .sync import run_sync
 from .util import utc_now
 
 VERIFIERS: list[str] = []          # verifier processes join in Plan B; declared here so gate.no_silent_skip holds them to account
-INNER_ENV = "CLAUDE_ON_GATE_INNER"
+INNER_ENV = "AGENT_ON_GATE_INNER"
 
 SMOKE_ROUTES = """version = 1
 [sources.mock]
@@ -3982,7 +3982,7 @@ source = "gate smoke"
 def run_unit_tests(checkout: Path) -> dict:
     if os.environ.get(INNER_ENV):
         return {"ran": None, "ok": None, "tail": [], "skipped": "inner gate (tests already running)"}
-    cmd = [sys.executable, "-m", "unittest", "discover", "-s", str(checkout / "tests" / "claude_on"), "-p", "test_*.py"]
+    cmd = [sys.executable, "-m", "unittest", "discover", "-s", str(checkout / "tests" / "agent_on"), "-p", "test_*.py"]
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(checkout), env={**os.environ, INNER_ENV: "1"}, timeout=900)
     m = re.search(r"Ran (\d+) tests?", proc.stderr)
     return {"ran": int(m.group(1)) if m else 0, "ok": proc.returncode == 0,
@@ -4026,8 +4026,8 @@ def run_gate(paths: Paths) -> dict:
 Append to `.github/workflows/ci.yml` (a new top-level job under `jobs:`; the existing jobs are untouched):
 
 ```yaml
-  claude-on:
-    # Plan A of docs/superpowers/specs/2026-09-07-claude-on-design.md: stdlib only, no LiteLLM, no Rust.
+  agent-on:
+    # Plan A of docs/superpowers/specs/2026-09-07-agent-on-design.md: stdlib only, no LiteLLM, no Rust.
     # Sources are unreachable on CI; the gate reports those as listed skips, never as passes.
     runs-on: macos-latest
     steps:
@@ -4039,8 +4039,8 @@ Append to `.github/workflows/ci.yml` (a new top-level job under `jobs:`; the exi
         with:
           python-version: "3.13"
 
-      - name: claude-on gate
-        run: CLAUDE_ON_STATE="$RUNNER_TEMP/claude-on-state" ./bin/claude-on gate --json | tee gate.json
+      - name: agent-on gate
+        run: AGENT_ON_STATE="$RUNNER_TEMP/agent-on-state" ./bin/agent-on gate --json | tee gate.json
 
       - name: Assert the gate passed with its skips listed
         run: |
@@ -4056,16 +4056,16 @@ Append to `.github/workflows/ci.yml` (a new top-level job under `jobs:`; the exi
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`, then the real thing: `./bin/claude-on gate` on the checkout.
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`, then the real thing: `./bin/agent-on gate` on the checkout.
 Expected: tests pass; the gate prints `tests: ran N — ok`, `smoke (F1 on the mock source): ok`, every invariant line with its result, and `result: pass` with the skips listed: `route.served:*` until `sync` has run, one `qualification.current:<route>` per route until Plan B's `qualify` runs, `credential.not_in_child_env`, `copy.single` because no shim exists yet, `knowledge.typed`, and on the very first run `gate.no_silent_skip` and `gate.mock.ephemeral` (no record yet). `harness.env.clean` must read `pass … model = 'fable' is a tier name` on this machine. If `test.names.derived` or `schema.complete` fail on the real tree, that is a defect in the tree: fix the literal or the rule, never the lint.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add claude_on/gate.py tests/claude_on/test_gate.py .github/workflows/ci.yml
-git commit -m "feat(claude-on): the gate — unit tests, F1 smoke on the mock source, every invariant, last_gate_run
+git add agent_on/gate.py tests/agent_on/test_gate.py .github/workflows/ci.yml
+git commit -m "feat(agent-on): the gate — unit tests, F1 smoke on the mock source, every invariant, last_gate_run
 
-ci: add the claude-on job (stdlib only; sources unreachable on CI are listed skips)
+ci: add the agent-on job (stdlib only; sources unreachable on CI are listed skips)
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
@@ -4076,18 +4076,18 @@ Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ### Task 11: `add <source>/<model> [--alias a]` — the only writer of `routes.toml` (rev-6 P2 lock)
 
 **Files:**
-- Create: `claude_on/add.py`
-- Test: `tests/claude_on/test_add.py`
+- Create: `agent_on/add.py`
+- Test: `tests/agent_on/test_add.py`
 
 **Interfaces:**
 - Consumes: `parse_routes_text`, `route_block`, `Limits`, `Price`, `Reasoning`, `Route`, `probe_source`, `checkout_locked`, `atomic_write`, `build_context`, `evaluate`, `Result`, `describe_copy`, `utc_now`
-- Produces: `run_add(paths, name, *, alias=None, timeout=5.0) -> dict` with keys `command, copy, route, written (bool), block (when written), invariants[]`; `route_from_catalog(name, source, entry, aliases, today) -> Route`; test hook `HOLD_ENV = "CLAUDE_ON_TEST_HOLD_MS"` (sleep inside the lock after the re-read; test-only, documented in the module).
+- Produces: `run_add(paths, name, *, alias=None, timeout=5.0) -> dict` with keys `command, copy, route, written (bool), block (when written), invariants[]`; `route_from_catalog(name, source, entry, aliases, today) -> Route`; test hook `HOLD_ENV = "AGENT_ON_TEST_HOLD_MS"` (sleep inside the lock after the re-read; test-only, documented in the module).
 
 Rules (§9, §7.1): probe the source first — reachable and the model absent from its catalog → `route.served` **fail**, nothing written, exit 1 (a packaged route that is orphaned from birth is the F1 shape); unreachable → `skip` with a warning and the add proceeds (D6). For a source with an `auth_env` and a catalog entry with limits/prices (OpenRouter), fill `limits` (`provider`), `reasoning.supported`, `price` from the entry with today's date in each `source`; a keyless source's route inherits its source limits and gets no price. Then: take `<checkout>/.routes.lock`, **re-read** `routes.toml`, append the block to that fresh text, validate the merged text (every rule including `routes.unique`), temp+fsync+rename. The existing text and its comments are preserved verbatim.
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/claude_on/test_add.py`:
+`tests/agent_on/test_add.py`:
 
 ```python
 from __future__ import annotations
@@ -4103,19 +4103,19 @@ from helpers import MOCK_ROUTES, REPO, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
-from claude_on.add import HOLD_ENV, run_add  # noqa: E402
-from claude_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
-from claude_on.paths import Paths  # noqa: E402
-from claude_on.schemas.errors import SchemaError  # noqa: E402
-from claude_on.schemas.routes import load_routes  # noqa: E402
+from agent_on.add import HOLD_ENV, run_add  # noqa: E402
+from agent_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
+from agent_on.paths import Paths  # noqa: E402
+from agent_on.schemas.errors import SchemaError  # noqa: E402
+from agent_on.schemas.routes import load_routes  # noqa: E402
 
 CATALOG = [omlx_entry("alpha"), omlx_entry("beta", 131072), openrouter_entry("vendor/model-y", 200000, 8000, "0.000001", "0.000002", None)]
 
 ADD_SCRIPT = """
 import sys; sys.path.insert(0, {repo!r})
 from pathlib import Path
-from claude_on.paths import Paths
-from claude_on.add import run_add
+from agent_on.paths import Paths
+from agent_on.add import run_add
 p = Paths(checkout=Path({co!r}), state=Path({st!r}), home=Path({home!r}))
 r = run_add(p, {name!r}, timeout=3)
 raise SystemExit(0 if r["written"] else 1)
@@ -4169,7 +4169,7 @@ class AddTest(unittest.TestCase):
             self.assertEqual(sb.paths.routes_toml.read_text(), before)
 
     def test_two_adds_under_different_state_roots_both_survive(self):
-        # rev-6 P2: the writer lock is keyed by the checkout, so a scratch CLAUDE_ON_STATE run serialises with the default one.
+        # rev-6 P2: the writer lock is keyed by the checkout, so a scratch AGENT_ON_STATE run serialises with the default one.
         # Process A holds the lock ~600 ms after its re-read; B starts 150 ms later and must wait, then re-read A's result.
         with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             other_state = sb.root / "scratch-state"
@@ -4189,15 +4189,15 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_add.py' -v`
-Expected: `ModuleNotFoundError: No module named 'claude_on.add'`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_add.py' -v`
+Expected: `ModuleNotFoundError: No module named 'agent_on.add'`
 
 - [ ] **Step 3: Write the module**
 
-`claude_on/add.py`:
+`agent_on/add.py`:
 
 ```python
-"""`claude-on add <source>/<model> [--alias a]` (§9): declare a packaged route by appending one block to routes.toml
+"""`agent-on add <source>/<model> [--alias a]` (§9): declare a packaged route by appending one block to routes.toml
 under the checkout lock (§7.1, rev 6): lock, re-read, validate the merged text, temp+fsync+rename."""
 from __future__ import annotations
 
@@ -4212,7 +4212,7 @@ from .sources import Probe, probe_source
 from .state import atomic_write, checkout_locked
 from .util import utc_now
 
-HOLD_ENV = "CLAUDE_ON_TEST_HOLD_MS"   # test hook: sleep this long inside the lock after the re-read, to make the lock observable
+HOLD_ENV = "AGENT_ON_TEST_HOLD_MS"   # test hook: sleep this long inside the lock after the re-read, to make the lock observable
 
 
 def route_from_catalog(name: str, source: Source, entry: dict | None, aliases: tuple[str, ...], today: str) -> Route:
@@ -4249,12 +4249,12 @@ def run_add(paths: Paths, name: str, *, alias: str | None = None, timeout: float
     source = srcs[src_name]
     probe: Probe = probe_source(source, timeout)
     if not probe.reachable:
-        served = Result("route.served", "skip", f"{src_name} unreachable ({probe.error}); adding unverified — run `claude-on sync` later", name)
+        served = Result("route.served", "skip", f"{src_name} unreachable ({probe.error}); adding unverified — run `agent-on sync` later", name)
     elif model in probe.catalog:
         served = Result("route.served", "pass", f"{model!r} is in the {src_name} catalog", name)
     else:
         served = Result("route.served", "fail", f"{model!r} not in the {src_name} catalog ({probe.catalog_count} ids)", name,
-                        "check the id against `claude-on sync` / the source's catalog; nothing was written")
+                        "check the id against `agent-on sync` / the source's catalog; nothing was written")
     if served.result == "fail":
         return {"command": "add", "copy": describe_copy(paths), "route": name, "written": False, "invariants": [served.as_dict()]}
     route = route_from_catalog(name, source, probe.catalog.get(model), (alias,) if alias else (), utc_now()[:10])
@@ -4274,14 +4274,14 @@ def run_add(paths: Paths, name: str, *, alias: str | None = None, timeout: float
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `python3 -m unittest discover -s tests/claude_on -p 'test_*.py' -v`
+Run: `python3 -m unittest discover -s tests/agent_on -p 'test_*.py' -v`
 Expected: all pass. The concurrent test proves the rev-6 lock: with the lock keyed under `$STATE` instead, process B would read the pre-A file during A's hold and its rename would discard A's block.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add claude_on/add.py tests/claude_on/test_add.py
-git commit -m "feat(claude-on): add — the only writer of routes.toml, under the checkout-keyed lock (§7.1 rev 6)
+git add agent_on/add.py tests/agent_on/test_add.py
+git commit -m "feat(agent-on): add — the only writer of routes.toml, under the checkout-keyed lock (§7.1 rev 6)
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
@@ -4299,28 +4299,28 @@ This task runs §14's Plan A verification column against the real sources and re
 
 - [ ] **Step 1: Put the OpenRouter key where `sync` looks**
 
-The key lives in Keychain today (`security find-generic-password -s openrouter-api-key -a "$USER" -w`); `claude-on` reads only the environment or `$STATE/env` (§9). Create the env file once, 0600, without echoing the key:
+The key lives in Keychain today (`security find-generic-password -s openrouter-api-key -a "$USER" -w`); `agent-on` reads only the environment or `$STATE/env` (§9). Create the env file once, 0600, without echoing the key:
 
 ```bash
-mkdir -p ~/.local/state/claude-on && chmod 700 ~/.local/state/claude-on
-umask 077 && printf 'OPENROUTER_API_KEY=%s\n' "$(security find-generic-password -s openrouter-api-key -a "$USER" -w)" > ~/.local/state/claude-on/env
-ls -l ~/.local/state/claude-on/env    # -rw-------
+mkdir -p ~/.local/state/agent-on && chmod 700 ~/.local/state/agent-on
+umask 077 && printf 'OPENROUTER_API_KEY=%s\n' "$(security find-generic-password -s openrouter-api-key -a "$USER" -w)" > ~/.local/state/agent-on/env
+ls -l ~/.local/state/agent-on/env    # -rw-------
 ```
 
 - [ ] **Step 2: `sync` against the real sources**
 
 ```bash
-./bin/claude-on sync
-./bin/claude-on sync --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print({k:(v["reachable"], v["error"]) for k,v in d["sources"].items()}); print("orphans", d["orphans"]); print("spend", d["spend"]["openrouter"])'
+./bin/agent-on sync
+./bin/agent-on sync --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print({k:(v["reachable"], v["error"]) for k,v in d["sources"].items()}); print("orphans", d["orphans"]); print("spend", d["spend"]["openrouter"])'
 ```
 
-Expected on 2026-09-07: `openrouter` reachable (catalog ~430), `omlx` reachable (12 ids), `omlx@morty` / `omlx-tp2` / `exo` unreachable with their errors; `orphans == []` (both oMLX wire models are served); `spend.openrouter.usd_used` a number and `error: None` — **this is Q6 answered for the first time**; ~10 discovered `omlx/*` routes in `~/.local/state/claude-on/routes.discovered.toml`; `git status --porcelain` shows no tracked file changed by `sync`.
+Expected on 2026-09-07: `openrouter` reachable (catalog ~430), `omlx` reachable (12 ids), `omlx@morty` / `omlx-tp2` / `exo` unreachable with their errors; `orphans == []` (both oMLX wire models are served); `spend.openrouter.usd_used` a number and `error: None` — **this is Q6 answered for the first time**; ~10 discovered `omlx/*` routes in `~/.local/state/agent-on/routes.discovered.toml`; `git status --porcelain` shows no tracked file changed by `sync`.
 
 - [ ] **Step 3: `status --check` and the declared-vs-observed reading**
 
 ```bash
-./bin/claude-on status --check
-./bin/claude-on status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(n, v["declared"]["limits"]["input"], v["observed"]["limits"]["input"], v["observed"]["cost_model"]["context"], v["observed"]["cost_model"]["context_basis"]) for n,v in d["routes"].items()]'
+./bin/agent-on status --check
+./bin/agent-on status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(n, v["declared"]["limits"]["input"], v["observed"]["limits"]["input"], v["observed"]["cost_model"]["context"], v["observed"]["cost_model"]["context_basis"]) for n,v in d["routes"].items()]'
 ```
 
 Expected: `limits.declared_vs_observed` **pass** for all four OpenRouter routes (the seed carries the live figures — if any fails, the catalog moved since 2026-09-07: re-derive the number, do not loosen the check); for the oMLX routes: declared 131072 (configured) vs advertised 262144 → context 131072, basis `declared`; `harness.env.clean` pass with the `model = 'fable'` tier-name note; `copy.single` skip (no shim until Plan D); `credential.not_in_child_env` skip; `route.served` pass for the six packaged routes and the discovered ones, skip for the three unreachable sources' routes (none exist yet); `last_check` written, `last_gate_run` untouched.
@@ -4330,9 +4330,9 @@ Expected: `limits.declared_vs_observed` **pass** for all four OpenRouter routes 
 ```bash
 cp routes.toml /tmp/routes.toml.bak
 sed -i '' 's/^wire_model = "Qwen3.8-27B-Uncensored-8bit"$/wire_model = "Qwen3.8-27B-Uncensored-8bit-RENAMED"/' routes.toml
-./bin/claude-on sync | grep -i orphan
-./bin/claude-on status --check | grep 'route.served'
-cp /tmp/routes.toml.bak routes.toml && ./bin/claude-on sync >/dev/null && git diff --stat routes.toml
+./bin/agent-on sync | grep -i orphan
+./bin/agent-on status --check | grep 'route.served'
+cp /tmp/routes.toml.bak routes.toml && ./bin/agent-on sync >/dev/null && git diff --stat routes.toml
 ```
 
 Expected: `orphaned packaged: ['omlx/Qwen3.8-27B-Uncensored-8bit']`, `fail route.served[omlx/Qwen3.8-27B-Uncensored-8bit]: 'Qwen3.8-27B-Uncensored-8bit-RENAMED' not in omlx catalog`, exit 1 from `status --check`; after restore, no diff. This is the check that would have caught F1 the day it happened.
@@ -4340,8 +4340,8 @@ Expected: `orphaned packaged: ['omlx/Qwen3.8-27B-Uncensored-8bit']`, `fail route
 - [ ] **Step 5: The gate, twice**
 
 ```bash
-./bin/claude-on gate; echo "exit $?"
-./bin/claude-on gate --json | python3 -c 'import json,sys; g=json.load(sys.stdin); print(g["result"], g["tests"], g["last_gate_run"]["skipped"], g["last_gate_run"]["mock_port"])'
+./bin/agent-on gate; echo "exit $?"
+./bin/agent-on gate --json | python3 -c 'import json,sys; g=json.load(sys.stdin); print(g["result"], g["tests"], g["last_gate_run"]["skipped"], g["last_gate_run"]["mock_port"])'
 ```
 
 Expected: `result: pass`, exit 0; tests ran ≥ 60 and ok; the second run's `gate.no_silent_skip` and `gate.mock.ephemeral` pass against the first run's record; skips listed are `credential.not_in_child_env`, `copy.single`, `knowledge.typed`, one `qualification.current:<route>` per route (sixteen on 2026-09-07: six packaged, ten discovered — until Plan B's `qualify` runs), `route.served:*` only for routes on unreachable sources (none yet), and never a `tests:` entry on an outer run.
@@ -4349,10 +4349,10 @@ Expected: `result: pass`, exit 0; tests ran ≥ 60 and ok; the second run's `gat
 - [ ] **Step 6: `add` a real OpenRouter route and revert it**
 
 ```bash
-./bin/claude-on add openrouter/anthropic/claude-haiku-4.5 --alias haiku45; echo "exit $?"
+./bin/agent-on add openrouter/anthropic/claude-haiku-4.5 --alias haiku45; echo "exit $?"
 git diff routes.toml | head -40
-./bin/claude-on add openrouter/anthropic/claude-haiku-4.5; echo "exit $?"    # duplicate → exit 3, schema routes.unique
-./bin/claude-on add openrouter/does/not-exist; echo "exit $?"                # exit 1, route.served fail, nothing written
+./bin/agent-on add openrouter/anthropic/claude-haiku-4.5; echo "exit $?"    # duplicate → exit 3, schema routes.unique
+./bin/agent-on add openrouter/does/not-exist; echo "exit $?"                # exit 1, route.served fail, nothing written
 git checkout routes.toml
 ```
 
@@ -4365,24 +4365,24 @@ claude-litellm status 2>&1 | head -5
 ./scripts/check.zsh 2>&1 | tail -3     # stop the :4000 proxy first if it is running (port 4000 is not isolated)
 ```
 
-Expected: the old CLI answers as before; the old gate exits 0 — it discovers only `tests/test_*.py` (no `__init__.py` under `tests/claude_on/`), so nothing new runs under it.
+Expected: the old CLI answers as before; the old gate exits 0 — it discovers only `tests/test_*.py` (no `__init__.py` under `tests/agent_on/`), so nothing new runs under it.
 
 - [ ] **Step 8: README section**
 
 Append to `README.md`:
 
 ```markdown
-## claude-on (Plan A — additive preview)
+## agent-on (Plan A — additive preview)
 
-`bin/claude-on` is the successor CLI designed in `docs/superpowers/specs/2026-09-07-claude-on-design.md`. Plan A lands
+`bin/agent-on` is the successor CLI designed in `docs/superpowers/specs/2026-09-07-agent-on-design.md`. Plan A lands
 `status`, `sync`, `add` and `gate` beside `claude-litellm`; it reads `routes.toml` (the only route declarations),
-writes only `${XDG_STATE_HOME:-~/.local/state}/claude-on/` (override with `CLAUDE_ON_STATE=<dir>` for a scratch run),
+writes only `${XDG_STATE_HOME:-~/.local/state}/agent-on/` (override with `AGENT_ON_STATE=<dir>` for a scratch run),
 and needs nothing but `python3 ≥ 3.11`. Secrets come from the environment or a 0600 `$STATE/env` file.
 
-    ./bin/claude-on sync            # probe every source; served flags, limit tiers, spend → observed.json
-    ./bin/claude-on status --check  # declared beside observed; every invariant, with skips shown as skips
-    ./bin/claude-on gate            # unit tests + F1 smoke on a mock source + every invariant
-    ./bin/claude-on add openrouter/<vendor>/<model> --alias <a>
+    ./bin/agent-on sync            # probe every source; served flags, limit tiers, spend → observed.json
+    ./bin/agent-on status --check  # declared beside observed; every invariant, with skips shown as skips
+    ./bin/agent-on gate            # unit tests + F1 smoke on a mock source + every invariant
+    ./bin/agent-on add openrouter/<vendor>/<model> --alias <a>
 
 Nothing is launched yet (Plan B); the old `claude-litellm` path is untouched until Plan D.
 ```
@@ -4391,7 +4391,7 @@ Nothing is launched yet (Plan B); the old `claude-litellm` path is untouched unt
 
 ```bash
 git add README.md
-git commit -m "docs: claude-on Plan A acceptance — measured on 2026-09-07
+git commit -m "docs: agent-on Plan A acceptance — measured on 2026-09-07
 
 sync: openrouter reachable (catalog <N>), omlx reachable (<N> ids), omlx@morty /
 omlx-tp2 / exo unreachable (<errors>); 0 orphans; <N> discovered omlx routes;
@@ -4416,7 +4416,7 @@ Replace every `<…>` with the observed value before committing. If any step's e
 
 | requirement | task |
 |---|---|
-| `claude_on/` package, stdlib only, `python3 ≥ 3.11` shim ≤ 20 lines (D4, D9) | 1 |
+| `agent_on/` package, stdlib only, `python3 ≥ 3.11` shim ≤ 20 lines (D4, D9) | 1 |
 | `routes.toml` + schema; rules stated once; TOML only (D4, D5, §6) | 2 |
 | read-time dedup, packaged wins by `(source, wire_model)`; orphaned reported never deleted (§6) | 2, 8 |
 | source limits inherited by any route declaring none (§6 rev 6) | 2, 7 |
