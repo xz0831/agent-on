@@ -870,11 +870,39 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Fv3KyERBe3WtKsNJmpu1YD"
 ```
 
-- [ ] **Step 7: Owner steps after merge (not automated)**
+- [ ] **Step 7: Owner steps after merge (not automated — checked with the mac-cluster orchestrator session on 2026-09-09)**
 
-1. `mv ~/Projects/claude-litellm ~/Projects/agent-on && cd ~/Projects/agent-on && ./bin/agent-on install` (re-links the shims to the new path; Claude Code's project memory key changes with the directory name).
-2. Rename the GitHub repository to `agent-on`; `git remote set-url origin git@github.com:xz0831/agent-on.git`.
-3. `rm ~/.local/bin/claude-litellm; rm -rf ~/.local/share/claude-litellm` when the old copy is no longer wanted.
+What is bound to the path, and what moves with it: Claude Code keys project memory and resumable transcripts by cwd
+under `~/.claude/projects/<cwd with / → ->` — four keys exist (the checkout and the three finished
+`.claude/worktrees/agent-on-plan-{a,b,c}` sessions); `~/.claude.json` holds a per-path entry (trust dialog,
+`allowedTools`, last session id); `.claude/skills` and any `.claude/settings.local.json` live inside the checkout and
+move with it; mac-cluster's `docs/session-registry.json` names this session's cwd (its orchestrator updates that
+entry and resumes the session from the new cwd). Nothing in launchd, shell rc files, Orca or worker contracts
+references the path or the `claude-litellm` command.
+
+Order matters: the session working in `~/Projects/claude-litellm` must exit first (the `mv` would pull the
+directory out from under it). Then, in a fresh shell:
+
+```bash
+set -e
+mv ~/Projects/claude-litellm ~/Projects/agent-on
+cd ~/Projects/agent-on && git worktree prune && git worktree repair            # registrations store absolute paths
+for k in "" --claude-worktrees-agent-on-plan-a --claude-worktrees-agent-on-plan-b --claude-worktrees-agent-on-plan-c; do
+  [ -d ~/.claude/projects/-Users-rick-Projects-claude-litellm$k ] && mv ~/.claude/projects/-Users-rick-Projects-claude-litellm$k ~/.claude/projects/-Users-rick-Projects-agent-on$k
+done
+python3 - <<'PY'                                                                 # trust + allowedTools follow the path
+import json; p = "/Users/rick/.claude.json"; d = json.load(open(p)); pr = d["projects"]
+old, new = "/Users/rick/Projects/claude-litellm", "/Users/rick/Projects/agent-on"
+if old in pr and new not in pr:
+    pr[new] = pr[old]; json.dump(d, open(p, "w"), indent=2)
+PY
+./bin/agent-on install                                                           # re-links ~/.local/bin/agent-on and claude-on
+```
+
+Then: rename the GitHub repository to `agent-on` and `git remote set-url origin git@github.com:xz0831/agent-on.git`;
+tell the orchestrator the `mv` is done (it renames the registry entry to `agent-on` and resumes the session with
+`bash bin/session-resume.sh agent-on` — `--remote-control` keeps the bridge session id); finally
+`rm ~/.local/bin/claude-litellm; rm -rf ~/.local/share/claude-litellm` when the old copy is no longer wanted.
 
 ---
 
