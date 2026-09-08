@@ -44,3 +44,5 @@ work that produced it.
     ./bin/agent-on learn task complete <id> --summary '…' [--commit <sha>] [--tests '…'] [--close]
 
 A dispatcher (Orca or another) reads `learn task prompt <id> --json` to pick a host and invokes the same launcher.
+`launched` is recorded before Claude Code starts; a launch that fails to spawn leaves the handoff `launched` — record
+the outcome with `learn task complete`.

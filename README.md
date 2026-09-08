@@ -521,4 +521,4 @@ shows each route's last qualification outcome; a failed gate is shown, never a r
 `applies_to`), observations, and the durable twins of qualifications and gate runs. `qualify`, the gate and the
 launch append to it; `learn` is the write verb for everything else; `.claude/skills/agent-on/SKILL.md` tells an
 agent inside Claude Code how to read and write it. The seeds carry the decisions D1–D13, the measured facts from
-2026-08-23 to 2026-09-08 and eleven traps. Commit `knowledge/` with the work that produced it.
+2026-08-23 to 2026-09-08 and the traps. Commit `knowledge/` with the work that produced it.
