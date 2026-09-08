@@ -67,6 +67,23 @@ class PathsTest(unittest.TestCase):
             self.assertIsNone(c["dirty"])
             self.assertIsNone(c["shim"])
 
+    def test_launch_paths_and_project_slug(self):
+        from agent_on.paths import project_slug
+        p = Paths(checkout=Path("/co"), state=Path("/s"), home=Path("/h"))
+        self.assertEqual(p.run_dir, Path("/s/run"))
+        self.assertEqual(p.claude_config_dir, Path("/s/claude-config"))
+        self.assertEqual(project_slug("/Users/rick/.openclaw"), "-Users-rick--openclaw")
+        self.assertEqual(project_slug("/Users/rick/Projects/claude-litellm"), "-Users-rick-Projects-claude-litellm")
+        self.assertEqual(p.transcript_path("abc-123", "/Users/rick/x y"), Path("/s/claude-config/projects/-Users-rick-x-y/abc-123.jsonl"))
+
+    def test_ensure_state_creates_the_run_dir(self):
+        import tempfile, stat
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Paths(checkout=Path(tmp), state=Path(tmp) / "st", home=Path(tmp))
+            ensure_state(p)
+            self.assertTrue(p.run_dir.is_dir())
+            self.assertEqual(stat.S_IMODE(p.run_dir.stat().st_mode), 0o700)
+
 
 if __name__ == "__main__":
     unittest.main()

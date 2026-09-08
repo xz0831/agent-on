@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -9,6 +10,12 @@ from pathlib import Path
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 CHECKOUT = PACKAGE_DIR.parent
+
+
+def project_slug(cwd: str) -> str:
+    """Claude Code names a project's transcript directory by its cwd with every non-alphanumeric character
+    replaced by '-' (observed on 2.1.263: /Users/rick/.openclaw → -Users-rick--openclaw)."""
+    return re.sub(r"[^A-Za-z0-9]", "-", cwd)
 
 
 @dataclass(frozen=True)
@@ -55,6 +62,17 @@ class Paths:
     def shim(self) -> Path:
         return self.home / ".local" / "bin" / "agent-on"
 
+    @property
+    def run_dir(self) -> Path:
+        return self.state / "run"                       # §7.1: run/<launch-id>/ — per-launch key, helper settings, launch record
+
+    @property
+    def claude_config_dir(self) -> Path:
+        return self.state / "claude-config"             # §11 item 1: the isolated CLAUDE_CONFIG_DIR
+
+    def transcript_path(self, session_id: str, cwd: str) -> Path:
+        return self.claude_config_dir / "projects" / project_slug(cwd) / f"{session_id}.jsonl"
+
 
 def default_paths(env: dict | None = None) -> Paths:
     env = os.environ if env is None else env
@@ -67,7 +85,7 @@ def default_paths(env: dict | None = None) -> Paths:
 
 
 def ensure_state(paths: Paths) -> None:
-    for d in (paths.state, paths.observed_lock.parent, paths.sessions_dir):
+    for d in (paths.state, paths.observed_lock.parent, paths.sessions_dir, paths.run_dir):
         existed = d.exists()
         d.mkdir(parents=True, exist_ok=True, mode=0o700)
         if not existed:
