@@ -160,9 +160,12 @@ def sweep_run_dirs(paths: Paths, min_age_s: float = 5.0) -> list[str]:
     return removed
 
 
-def write_run_dir(paths: Paths, launch_id: str, *, key: str | None, launch: dict) -> tuple[Path, Path | None]:
+def write_run_dir(paths: Paths, launch_id: str, *, key: str | None, launch: dict,
+                  user_settings: dict | None = None) -> tuple[Path, Path | None]:
     """Create run/<launch-id>/ with the launcher's pid, the launch record, and — for a keyed source — the key at
-    mode 0600 plus the settings file whose apiKeyHelper reads it. Returns (run_dir, helper settings path or None)."""
+    mode 0600 plus the settings file whose apiKeyHelper reads it. `user_settings` (F1) is folded shallowly under
+    that file so a user's --settings survives; any apiKeyHelper it carried is overwritten by ours last, on purpose —
+    the caller is responsible for warning about that. Returns (run_dir, helper settings path or None)."""
     ensure_state(paths)
     d = paths.run_dir / launch_id
     d.mkdir(mode=0o700)
@@ -177,8 +180,52 @@ def write_run_dir(paths: Paths, launch_id: str, *, key: str | None, launch: dict
         finally:
             os.close(fd)
         helper = d / "settings.json"
-        helper.write_text(json.dumps({"apiKeyHelper": f"cat {shlex.quote(str(key_path))}"}), encoding="utf-8")
+        merged = {**(user_settings or {}), "apiKeyHelper": f"cat {shlex.quote(str(key_path))}"}
+        helper.write_text(json.dumps(merged), encoding="utf-8")
     return d, helper
+
+
+# ---- the user's --settings, folded under the launcher's (F1) ----------------------------------------------------
+
+def extract_user_settings(claude_args: list[str]) -> tuple[list[str], dict | None]:
+    """Pull every --settings/--settings=X out of the user's argv. Claude Code 2.1.263 does not merge repeated
+    --settings — the last one wins — and that last-wins behaviour is exactly what let a user's --settings displace
+    the launcher's apiKeyHelper file (measured 2026-09-08). X starting with `{` is inline JSON; anything else is a
+    file path read as UTF-8 JSON. Several occurrences merge shallowly, later keys overriding earlier ones. Returns
+    (args with every --settings removed, the merged dict, or None when there was none)."""
+    remaining: list[str] = []
+    merged: dict | None = None
+    i = 0
+    while i < len(claude_args):
+        a = claude_args[i]
+        if a == "--settings" and i + 1 < len(claude_args):
+            value = claude_args[i + 1]
+            i += 2
+        elif a.startswith("--settings="):
+            value = a[len("--settings="):]
+            i += 1
+        else:
+            remaining.append(a)
+            i += 1
+            continue
+        if value.lstrip().startswith("{"):
+            try:
+                obj = json.loads(value)
+            except ValueError as e:
+                raise ValueError(f"--settings {value!r} is not valid JSON: {e}") from e
+        else:
+            try:
+                text = Path(value).read_text(encoding="utf-8")
+            except OSError as e:
+                raise ValueError(f"--settings {value!r}: {e}") from e
+            try:
+                obj = json.loads(text)
+            except ValueError as e:
+                raise ValueError(f"--settings {value!r} does not hold valid JSON: {e}") from e
+        if not isinstance(obj, dict):
+            raise ValueError(f"--settings {value!r} must be a JSON object")
+        merged = {**(merged or {}), **obj}
+    return remaining, merged
 
 
 # ---- session rules (§9) ----------------------------------------------------------------------------------------
@@ -407,6 +454,15 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     key = resolve_secret(paths, source.auth_env, parent) if source.auth_env else None
     if source.auth_env and key is None:
         warnings.append(f"no {source.auth_env} in the environment or {paths.env_file}; Claude Code will not be able to authenticate to {route.source}")
+    # F1: Claude Code does not merge repeated --settings — the last one wins — so a user's --settings would silently
+    # displace the launcher's apiKeyHelper file. A keyed source therefore extracts it and folds it under ours
+    # (write_run_dir); a keyless source has no helper file to displace, so the user's --settings is left untouched.
+    stripped_args, user_settings = extract_user_settings(claude_args)
+    settings_merged = key is not None and user_settings is not None
+    if key is not None:
+        claude_args = stripped_args
+    if settings_merged and "apiKeyHelper" in user_settings:
+        warnings.append("user --settings apiKeyHelper replaced by the launcher's credential helper")
     swept = sweep_run_dirs(paths)
     config_dir = prepare_config_dir(paths, cwd)
     launch_id = ulid()
@@ -421,12 +477,13 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     line = cost_line(route.name, obs_route)
     doc = {"command": "launch", "copy": describe_copy(paths), "route": route.name, "wire_model": route.wire_model, "base_url": source.base_url,
            "launch_id": launch_id, "session": {"id": session_id, "mode": mode}, "cost_line": line, "invariants": [served, *lint],
-           "env_keys": sorted(k for k in cenv if k.startswith(("ANTHROPIC_", "CLAUDE_"))), "swept": swept, "warnings": warnings}
+           "env_keys": sorted(k for k in cenv if k.startswith(("ANTHROPIC_", "CLAUDE_"))), "swept": swept, "warnings": warnings,
+           "settings_merged": settings_merged}
     binary = claude_bin or shutil.which("claude") or "claude"
     if dry_run:
         doc.update({"dry_run": True, "argv": [binary, *(["--settings", "<run-dir>/settings.json"] if key is not None else []), *args]})
         return doc
-    run_dir, helper = write_run_dir(paths, launch_id, key=key, launch=launch)
+    run_dir, helper = write_run_dir(paths, launch_id, key=key, launch=launch, user_settings=user_settings)
     argv = [binary, *(["--settings", str(helper)] if helper else []), *args]   # the helper file first: a user --settings merges after it
     if announce:
         print(line, file=sys.stderr)                                              # the §12 line, before spawning

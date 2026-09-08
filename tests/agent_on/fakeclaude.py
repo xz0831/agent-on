@@ -34,7 +34,10 @@ if out:
     settings = opt("--settings")
     if settings and os.path.exists(settings):
         with open(settings) as f:
-            helper = json.load(f).get("apiKeyHelper")
+            doc = json.load(f)
+        with open(os.path.join(out, "settings.json"), "w") as f:
+            json.dump(doc, f)
+        helper = doc.get("apiKeyHelper")
         if helper:
             key = subprocess.run(helper, shell=True, capture_output=True, text=True).stdout.strip()
             with open(os.path.join(out, "helper_key.txt"), "w") as f:

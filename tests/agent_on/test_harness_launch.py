@@ -118,6 +118,37 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual({i["id"]: i["result"] for i in doc["invariants"]}["harness.env.clean"], "fail")
             self.assertTrue(any("harness.env.clean" in w for w in doc["warnings"]))
 
+    def test_a_user_settings_apiKeyHelper_is_folded_under_the_launchers_and_warned_about(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            user_settings = json.dumps({"permissions": {"allow": ["Bash(printenv)"]}, "apiKeyHelper": "echo user"})
+            doc, out = self.launch(sb, "x", ["-p", "hi", "--settings", user_settings], env={"MOCK_PAID_KEY": "sk-from-env"})
+            self.assertEqual(doc["exit_code"], 0)
+            argv = json.loads((out / "argv.json").read_text())
+            self.assertEqual(argv.count("--settings"), 1)
+            settings = json.loads((out / "settings.json").read_text())
+            self.assertEqual(settings["permissions"]["allow"], ["Bash(printenv)"])
+            self.assertTrue(settings["apiKeyHelper"].startswith("cat "))            # ours, not "echo user"
+            self.assertEqual((out / "helper_key.txt").read_text(), "sk-from-env")   # the real key, not "user"
+            self.assertTrue(doc["settings_merged"])
+            self.assertTrue(any("apiKeyHelper" in w for w in doc["warnings"]))
+
+    def test_a_keyless_routes_user_settings_passes_through_untouched(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            doc, out = self.launch(sb, "a", ["-p", "hi", "--settings", '{"x": 1}'])
+            self.assertEqual(doc["exit_code"], 0)
+            argv = json.loads((out / "argv.json").read_text())
+            i = argv.index("--settings")
+            self.assertEqual(argv[i + 1], '{"x": 1}')
+            self.assertFalse(doc["settings_merged"])
+
+    def test_dry_run_on_a_keyed_route_with_user_settings_shows_one_launcher_settings_flag(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            doc, out = self.launch(sb, "x", ["-p", "hi", "--settings", '{"a": 1}'], env={"MOCK_PAID_KEY": "sk-from-env"}, dry_run=True)
+            self.assertTrue(doc["dry_run"])
+            self.assertEqual(doc["argv"].count("--settings"), 1)
+            self.assertTrue(doc["argv"][doc["argv"].index("--settings") + 1].endswith("/settings.json"))
+            self.assertNotIn('{"a": 1}', doc["argv"])
+
     def test_tier_override_and_a_missing_key_are_reported(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             doc, out = self.launch(sb, "a", ["-p", "x"], haiku="mock/gone")
