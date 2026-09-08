@@ -16,6 +16,13 @@ from datetime import datetime, timezone
 
 args = sys.argv[1:]
 
+if args == ["--version"]:
+    # claude_code_version() (final-fix item 5) runs `<binary> --version` and regex-matches a leading x.y.z; this
+    # must answer for the *binary the launch used*, not whatever real `claude` is on PATH, and must not touch the
+    # transcript/env-recording machinery below (no CLAUDE_CONFIG_DIR is set for a bare --version probe).
+    print(os.environ.get("FAKE_CLAUDE_VERSION_STRING", "0.0.0 (Claude Code, fake)"))
+    sys.exit(0)
+
 
 def opt(flag):
     for i, a in enumerate(args):

@@ -75,8 +75,10 @@ def skip(reason: str):
     return "skip", reason
 
 
-def claude_code_version() -> str | None:
-    exe = shutil.which("claude")
+def claude_code_version(binary: str | None = None) -> str | None:
+    """The `claude --version` a launch will actually run: `binary` when given (a launch's own claude_bin, e.g.
+    AGENT_ON_CLAUDE_BIN), else the same PATH lookup as before (final-fix item 5)."""
+    exe = binary or shutil.which("claude")
     if not exe:
         return None
     try:
@@ -87,7 +89,7 @@ def claude_code_version() -> str | None:
     return m.group(1) if m else None
 
 
-def build_context(paths: Paths, *, with_claude_code: bool = False) -> Context:
+def build_context(paths: Paths, *, with_claude_code: bool = False, claude_bin: str | None = None) -> Context:
     try:
         table, err = load_routes(paths), None
     except (SchemaError, OSError) as e:
@@ -96,7 +98,8 @@ def build_context(paths: Paths, *, with_claude_code: bool = False) -> Context:
         observed = read_observed(paths)
     except (SchemaError, ValueError, OSError) as e:
         observed = {"_error": str(e), "copy": None, "sources": {}, "routes": {}, "last_check": None, "last_gate_run": None, "spend": {}}
-    return Context(paths, table, err, observed, paths.code_tree, paths.home, claude_code_version() if with_claude_code else None)
+    return Context(paths, table, err, observed, paths.code_tree, paths.home,
+                   claude_code_version(claude_bin) if with_claude_code else None)
 
 
 def evaluate(ctx: Context, ids: list[str] | None = None, route: str | None = None) -> list[Result]:

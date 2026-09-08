@@ -268,5 +268,21 @@ class CredentialTest(unittest.TestCase):
             self.assertIn("MOCK_PAID_KEY", r.reason)
 
 
+class ClaudeCodeVersionTest(unittest.TestCase):
+    # F-fix 5: claude_code_version() used shutil.which("claude") unconditionally, so a baseline measured with
+    # AGENT_ON_CLAUDE_BIN was tagged with whatever real `claude` happened to be on PATH. It takes the binary the
+    # launch will use.
+    FAKE = str(Path(__file__).resolve().parent / "fakeclaude.py")
+
+    def test_an_explicit_binary_is_used_instead_of_path(self):
+        from agent_on.invariants import claude_code_version
+        self.assertEqual(claude_code_version(self.FAKE), "0.0.0")
+
+    def test_build_context_threads_the_binary_through(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            ctx = build_context(sb.paths, with_claude_code=True, claude_bin=self.FAKE)
+            self.assertEqual(ctx.claude_code, "0.0.0")
+
+
 if __name__ == "__main__":
     unittest.main()

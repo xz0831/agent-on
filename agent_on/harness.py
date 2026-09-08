@@ -454,7 +454,7 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
         served = {"id": "route.served", "result": "fail", "reason": f"{route.wire_model!r} not in {route.source} catalog", "subject": route.name, "fix": "run `agent-on sync`"}
         warnings.append(f"{route.wire_model!r} is not in the {route.source} catalog right now; launching anyway (D6)")
     from .invariants import build_context, evaluate                                # local: invariants imports this module
-    lint = [r.as_dict() for r in evaluate(build_context(paths), ids=["harness.env.clean", "credential.not_in_child_env"])]
+    lint = [r.as_dict() for r in evaluate(build_context(paths, claude_bin=claude_bin), ids=["harness.env.clean", "credential.not_in_child_env"])]
     for r in lint:
         if r["result"] == "fail":
             warnings.append(f"{r['id']}: {r['reason']} — launching anyway (D6)")

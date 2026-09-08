@@ -369,7 +369,7 @@ def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool
     cache = probe_caching(wire)
     now = utc_now()
     fp = {"effective_route_sha": table.effective_sha(route), "wire_model": route.wire_model,
-          "source_identity": probe.identity if probe.reachable else None, "claude_code": claude_code_version()}
+          "source_identity": probe.identity if probe.reachable else None, "claude_code": claude_code_version(claude_bin)}
     qual = {"pass": gates["all_pass"], "gates": gates["gates"], "thinking_block_seen": gates["thinking_block_seen"],
             "completed": gates["completed"], "at": now, "fingerprint": fp}
     base_tokens = None
@@ -417,5 +417,5 @@ def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool
         with open(kdir / "qualifications.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(record, sort_keys=True) + "\n")
         doc["knowledge"] = str(kdir / "qualifications.jsonl")
-    doc["invariants"] = [r.as_dict() for r in evaluate(build_context(paths, with_claude_code=True), ids=["route.served", "qualification.current"], route=route.name)]
+    doc["invariants"] = [r.as_dict() for r in evaluate(build_context(paths, with_claude_code=True, claude_bin=claude_bin), ids=["route.served", "qualification.current"], route=route.name)]
     return doc

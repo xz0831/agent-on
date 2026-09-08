@@ -58,6 +58,13 @@ class RunQualifyTest(unittest.TestCase):
             self.assertFalse(doc["gates"]["tool_result_continuation"])
             self.assertFalse(read_observed(sb.paths)["routes"]["mock/alpha"]["last_qualification"]["pass"])
 
+    def test_the_fingerprints_claude_code_version_is_the_launch_binarys_not_paths(self):
+        # F-fix 5: the fingerprint's claude_code must come from the binary the launch (and --baseline) actually
+        # used, not from whatever real `claude` happens to be on PATH.
+        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            doc = run_qualify(sb.paths, "a", env={}, timeout=10, claude_bin=FAKE)
+            self.assertEqual(doc["fingerprint"]["claude_code"], "0.0.0")
+
     def test_baseline_uses_the_launcher_and_records_the_first_request(self):
         with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             env = {"PATH": os.environ.get("PATH", ""), "HOME": str(sb.paths.home), "FAKE_CLAUDE_OUT": str(sb.root / "out")}
