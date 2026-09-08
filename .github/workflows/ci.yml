@@ -157,3 +157,30 @@ jobs:
 
       - name: Verify OAuth routes, storage, and output redaction without network
         run: ./scripts/verify_oauth_adapters.py
+
+  agent-on:
+    # Plan A of docs/superpowers/specs/2026-09-07-agent-on-design.md: stdlib only, no LiteLLM, no Rust.
+    # Sources are unreachable on CI; the gate reports those as listed skips, never as passes.
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: agent-on gate
+        run: AGENT_ON_STATE="$RUNNER_TEMP/agent-on-state" ./bin/agent-on gate --json | tee gate.json
+
+      - name: Assert the gate passed with its skips listed
+        run: |
+          python - <<'PY'
+          import json
+          g = json.load(open("gate.json"))
+          assert g["result"] == "pass", g["last_gate_run"]
+          assert g["tests"]["ok"] is True and g["tests"]["ran"] > 50, g["tests"]
+          assert g["smoke"]["ok"] is True, g["smoke"]
+          assert "credential.not_in_child_env" in g["last_gate_run"]["skipped"]
+          PY
