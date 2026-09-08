@@ -98,6 +98,7 @@ def render_gate(doc: dict) -> str:
 def render_launch(doc: dict) -> str:
     lines = [copy_line(doc["copy"]), doc["cost_line"]]
     lines += [f"warning: {w}" for w in doc["warnings"]]
+    lines += [f"trap: {t['trap']} — avoid: {t['avoid']}" for t in doc.get("traps", [])]
     if doc.get("dry_run"):
         lines.append("dry run — argv: " + " ".join(doc["argv"]))
         lines.append("env: " + ", ".join(doc["env_keys"]))

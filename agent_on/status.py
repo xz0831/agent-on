@@ -2,9 +2,12 @@
 evaluated and `last_check` written — never `last_gate_run`, which only the gate runner writes (Q4)."""
 from __future__ import annotations
 
+import json
+
 from .cli import copy_line, invariant_lines
 from .harness import cost_line
 from .invariants import build_context, evaluate, skipped_ids
+from .knowledge import knowledge_view
 from .paths import Paths, describe_copy
 from .state import update_observed
 from .util import utc_now
@@ -38,6 +41,8 @@ def build_status(paths: Paths, *, route: str | None = None, check: bool = False)
             selected = ctx.routes.resolve(route).name        # KeyError → exit 2 in cli
         names = [selected] if selected else list(ctx.routes.routes)
         doc["routes"] = {n: route_view(ctx.routes, ctx.observed, ctx.routes.routes[n]) for n in names}
+        for n, v in doc["routes"].items():
+            v["knowledge"] = knowledge_view(paths, route=n, source=ctx.routes.routes[n].source, action="status")
         doc["shadowed"] = list(ctx.routes.shadowed)
         doc["orphaned"] = [n for n in names if ctx.routes.routes[n].packaged
                            and (ctx.observed["routes"].get(n) or {}).get("served") is False]
@@ -83,6 +88,11 @@ def render_text(doc: dict) -> str:
             if ls:
                 lines.append("  last session: " + (f"skipped ({ls['skipped']})" if "skipped" in ls else
                              f"{ls['id'][:8]} · this run {ls['this_run']['turns']} turns ${ls['this_run']['cost_usd']} · session {ls['session_total']['turns']} turns ${ls['session_total']['cost_usd']}"))
+        k = v.get("knowledge") or {}
+        for o in k.get("observations", []):
+            lines.append(f"  observation {o['ts']} {o['kind']}: {json.dumps(o['values'], sort_keys=True, ensure_ascii=False)}")
+        for t in k.get("traps", []):
+            lines.append(f"  trap: {t['trap']} — avoid: {t['avoid']}")
     if doc.get("shadowed"):
         lines.append(f"shadowed discovered: {', '.join(doc['shadowed'])}")
     if doc.get("orphaned"):

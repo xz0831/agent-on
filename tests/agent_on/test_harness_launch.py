@@ -160,6 +160,23 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual(doc["exit_code"], 0)                                          # D6: informed, not gated
             self.assertFalse((out / "helper_key.txt").exists())
 
+    def test_launch_shows_launch_traps_and_records_a_cost_observation_after_read_back(self):
+        from agent_on import knowledge
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            knowledge.append(sb.paths, "traps", {"trap": "launch trap", "mechanism": "m", "avoid": "a", "evidence": "e", "found_by": "f", "applies_to": ["launch"]})
+            knowledge.append(sb.paths, "traps", {"trap": "status trap", "mechanism": "m", "avoid": "a", "evidence": "e", "found_by": "f", "applies_to": ["status"]})
+            dry, _ = self.launch(sb, "a", ["-p", "hi"], dry_run=True)
+            self.assertEqual([t["trap"] for t in dry["traps"]], ["launch trap"])
+            self.assertIsNone(dry.get("knowledge"))
+            doc, _ = self.launch(sb, "a", ["-p", "hi"])
+            self.assertEqual([t["trap"] for t in doc["traps"]], ["launch trap"])
+            obs = knowledge.read(sb.paths, "observations")
+            self.assertEqual(doc["knowledge"], {"observation": obs[-1]["id"]})
+            self.assertEqual(obs[-1]["kind"], "cost")
+            self.assertEqual(obs[-1]["session"], doc["session"]["id"])
+            self.assertEqual(obs[-1]["values"]["turns"], doc["last_session"]["this_run"]["turns"])
+            self.assertEqual(obs[-1]["values"]["cost_usd"], doc["last_session"]["this_run"]["cost_usd"])
+
 
 if __name__ == "__main__":
     unittest.main()

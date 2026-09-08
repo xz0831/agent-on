@@ -108,6 +108,22 @@ class StatusTest(unittest.TestCase):
             self.assertEqual(doc["routes"], {})
             self.assertIn("ERROR", render_text(doc))
 
+    def test_status_shows_the_last_observations_and_the_traps_for_the_route(self):
+        from agent_on import knowledge
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            for i in range(4):
+                knowledge.append(sb.paths, "observations", {"route": "mock/alpha", "kind": "cost", "values": {"i": i}, "evidence": "e"})
+            knowledge.append(sb.paths, "traps", {"trap": "mind the gap", "mechanism": "m", "avoid": "step over", "evidence": "e", "found_by": "f", "applies_to": ["mock"]})
+            knowledge.append(sb.paths, "traps", {"trap": "launch only", "mechanism": "m", "avoid": "a", "evidence": "e", "found_by": "f", "applies_to": ["launch"]})
+            doc = build_status(sb.paths, route="a")
+            k = doc["routes"]["mock/alpha"]["knowledge"]
+            self.assertEqual([o["values"]["i"] for o in k["observations"]], [1, 2, 3])
+            self.assertEqual([t["trap"] for t in k["traps"]], ["mind the gap"])
+            text = render_text(doc)
+            self.assertIn("trap: mind the gap — avoid: step over", text)
+            self.assertIn('observation', text)
+            self.assertNotIn("launch only", text)
+
 
 if __name__ == "__main__":
     unittest.main()

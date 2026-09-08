@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .cost import attribute_run, fold_session
 from .ids import ulid
+from .knowledge import append as knowledge_append, knowledge_view
 from .paths import Paths, describe_copy, ensure_state, project_slug
 from .schemas.observed import USAGE_FIELDS, empty_route
 from .schemas.routes import Route, RouteTable, load_routes
@@ -443,6 +444,7 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     observed = read_observed(paths)
     obs_route = observed["routes"].get(route.name)
     warnings: list[str] = []
+    traps = knowledge_view(paths, route=route.name, source=route.source, action="launch")["traps"]   # D6: shown, never gating
     # D6: one ≤2 s probe; unreachable → skip + warning, the launch proceeds
     probe = probe_source(source, timeout=probe_timeout)
     if not probe.reachable:
@@ -489,7 +491,7 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     doc = {"command": "launch", "copy": describe_copy(paths), "route": route.name, "wire_model": route.wire_model, "base_url": source.base_url,
            "launch_id": launch_id, "session": {"id": session_id, "mode": mode}, "cost_line": line, "invariants": [served, *lint],
            "env_keys": sorted(k for k in cenv if k.startswith(("ANTHROPIC_", "CLAUDE_"))), "swept": swept, "warnings": warnings,
-           "settings_merged": settings_merged}
+           "settings_merged": settings_merged, "traps": traps}
     binary = claude_bin or shutil.which("claude") or "claude"
     if dry_run:
         doc.update({"dry_run": True, "argv": [binary, *(["--settings", "<run-dir>/settings.json"] if key is not None else []), *args]})
@@ -506,4 +508,14 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     transcript = find_transcript(paths, session_id, cwd, mode, started)
     rec = record_session(paths, launch, ended=ended, transcript=transcript, mode=mode)
     doc.update({"exit_code": code, "last_session": rec, "transcript": str(transcript) if transcript else None})
+    doc["knowledge"] = None
+    if paths.knowledge_dir.is_dir() and "this_run" in rec:
+        tr = rec["this_run"]
+        u = tr["usage"]
+        o = knowledge_append(paths, "observations", {"route": route.name, "kind": "cost",
+                                                     "values": {"turns": tr["turns"], "input_tokens": u["input_tokens"], "output_tokens": u["output_tokens"],
+                                                                "cache_read_input_tokens": u["cache_read_input_tokens"], "cache_creation_input_tokens": u["cache_creation_input_tokens"],
+                                                                "cost_usd": tr["cost_usd"]},
+                                                     "evidence": f"session {session_id} run {launch_id}", "session": session_id}, now=ended)
+        doc["knowledge"] = {"observation": o["id"]}
     return doc
