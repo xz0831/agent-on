@@ -12,8 +12,10 @@ MARKERS = ("SYSTEM_BLOCK_ALPHA", "SYSTEM_BLOCK_BETA")
 GATE_NAMES = ("text_sse", "claude_system_block_instructions", "forced_structured_tool", "streaming_input_json_delta",
               "tool_result_continuation", "claude_adaptive_effort_policy", "thinking")
 # a provider quirk, not a failure: F2 measured GLM-5.2 through OpenRouter returning a correct tool_use block with
-# stop_reason: "end_turn" — Claude Code completed the tool-call loop on that route regardless.
-QUIRKS = ("end_turn_on_tool",)
+# stop_reason: "end_turn" — Claude Code completed the tool-call loop on that route regardless. "thinking_no_usage_detail"
+# exercises F-fix 2's fallback: a source that emits a thinking block but no usage.output_tokens_details.
+QUIRKS = ("end_turn_on_tool", "thinking_no_usage_detail")
+THINKING_TOKENS_DETAIL = 9   # the mock's fixed, measured value — distinct from output_tokens (12) — for the preferred path
 
 
 def omlx_entry(model_id: str, max_model_len: int = 262144) -> dict:
@@ -118,6 +120,8 @@ class MockSource:
         elif "text_sse" not in self.fail_gates or body.get("thinking"):
             content.append({"type": "text", "text": "OK — the mock route is ready."})
         usage = {"input_tokens": prompt - cache_read, "output_tokens": 12, "cache_read_input_tokens": cache_read, "cache_creation_input_tokens": 0}
+        if any(b["type"] == "thinking" for b in content) and "thinking_no_usage_detail" not in self.quirks:
+            usage["output_tokens_details"] = {"thinking_tokens": THINKING_TOKENS_DETAIL}
         return 200, {"id": "msg_mock", "type": "message", "role": "assistant", "model": body.get("model"), "content": content,
                      "stop_reason": stop, "stop_sequence": None, "usage": usage}
 

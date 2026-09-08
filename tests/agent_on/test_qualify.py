@@ -8,6 +8,7 @@ import helpers  # noqa: E402,F401
 
 import unittest  # noqa: E402
 
+from agent_on import mock_source  # noqa: E402
 from agent_on.mock_source import GATE_NAMES, MockSource  # noqa: E402
 from agent_on.qualify import GATES, Wire, probe_caching, probe_concurrency, probe_limits, probe_throughput, run_gates  # noqa: E402
 from agent_on.schemas.errors import SchemaError  # noqa: E402
@@ -22,11 +23,26 @@ class GatesTest(unittest.TestCase):
             self.assertTrue(r["all_pass"], r)
             self.assertTrue(r["thinking_block_seen"])
             self.assertTrue(r["completed"])
-            self.assertIsInstance(r["thinking_tokens"], int)
+            # F-fix 2: the preferred path — usage.output_tokens_details.thinking_tokens, a real measurement,
+            # never a chars // 4 estimate. THINKING_TOKENS_DETAIL is the mock's fixed measured value.
+            self.assertEqual(r["thinking_tokens"], mock_source.THINKING_TOKENS_DETAIL)
             self.assertEqual(r["details"]["forced_structured_tool_status"], 200)
             # the tool_result continuation replayed the model's own tool_use id
             replay = [b for b in m.messages if any(isinstance(x, dict) and x.get("type") == "tool_result" for x in (b["messages"][-1].get("content") or []) if isinstance(b["messages"][-1].get("content"), list))]
             self.assertEqual(replay[0]["messages"][-1]["content"][0]["tool_use_id"], "toolu_mock_1")
+
+    def test_thinking_tokens_falls_back_to_output_tokens_when_the_source_reports_no_detail(self):
+        # F-fix 2: a source that doesn't report output_tokens_details.thinking_tokens (not every Anthropic-wire
+        # source does; OpenRouter does) falls back to the whole reply's output_tokens — which also counts the
+        # probe's short "OK" answer, never a character estimate.
+        with MockSource(quirks=("thinking_no_usage_detail",)) as m:
+            r = run_gates(Wire(m.base_url, "x", timeout=10))
+            self.assertTrue(r["thinking_block_seen"])
+            self.assertEqual(r["thinking_tokens"], 12)                                    # the mock's fixed output_tokens
+
+    def test_thinking_tokens_is_none_when_the_probe_did_not_return_200(self):
+        r = run_gates(Wire("http://127.0.0.1:9", "x", timeout=2))
+        self.assertIsNone(r["thinking_tokens"])
 
     def test_each_broken_gate_is_the_one_reported(self):
         for name in GATES:
@@ -41,6 +57,7 @@ class GatesTest(unittest.TestCase):
             r = run_gates(Wire(m.base_url, "x", timeout=10))
             self.assertTrue(r["all_pass"])
             self.assertFalse(r["thinking_block_seen"])
+            self.assertIsNone(r["thinking_tokens"])                                       # no thinking block: nothing to measure
         self.assertEqual(set(GATE_NAMES) - {"thinking"}, set(GATES))
 
     def test_forced_structured_tool_ignores_stop_reason_but_records_it(self):  # F2

@@ -197,12 +197,22 @@ def run_gates(wire: Wire) -> dict:
     gates["claude_adaptive_effort_policy"] = status == 200 and bool(text.strip())
     details["claude_adaptive_effort_policy_status"] = status
     thinking = _blocks(resp.get("content"), "thinking")
-    thinking_chars = sum(len(b.get("thinking", "")) for b in thinking)
     completed = status == 200 and resp.get("stop_reason") == "end_turn" and bool(text.strip())
 
     seen = bool(thinking) if status == 200 else None                              # the request never ran: unmeasured, not "off"
+    # F-fix 2: tokens_on_probe is a measurement, never a chars // 4 estimate. Preferred: OpenRouter (and some other
+    # sources) report usage.output_tokens_details.thinking_tokens. Fallback: the whole reply's output_tokens, which
+    # then also counts the probe's short "OK" answer — still a real number, never an estimate. None when the probe
+    # never returned 200, or returned no thinking block to measure.
+    thinking_detail = ((resp.get("usage") or {}).get("output_tokens_details") or {}).get("thinking_tokens")
+    if status != 200 or not thinking:
+        tokens_on_probe = None
+    elif isinstance(thinking_detail, int):
+        tokens_on_probe = thinking_detail
+    else:
+        tokens_on_probe = (resp.get("usage") or {}).get("output_tokens")
     return {"gates": gates, "details": details, "thinking_block_seen": seen, "completed": completed,
-            "thinking_tokens": (thinking_chars // 4) if thinking else None, "all_pass": all(gates.values())}
+            "thinking_tokens": tokens_on_probe, "all_pass": all(gates.values())}
 
 
 # ---- probes ---------------------------------------------------------------------------------------------------------

@@ -275,6 +275,9 @@ def cost_line(route_name: str, observed_route: dict | None) -> str:
     conc = cm.get("concurrency")
     conc_s = "serial" if conc == 1 else (f"{conc}× concurrent" if conc else "concurrency ?")
     th = cm.get("thinking") or {}
+    # tokens_on_probe (§ qualify.run_gates, F-fix 2) is usage.output_tokens_details.thinking_tokens when the source
+    # reports it, else the probe reply's whole output_tokens as a fallback — which then also counts the probe's
+    # short "OK" answer, so the figure here can run a little high on a source without the detailed breakdown.
     if th.get("observed") is True:
         th_s = "thinking on" + (f" (~{th['tokens_on_probe'] / 1000:.1f}K tok/probe)" if th.get("tokens_on_probe") else "")
     elif th.get("observed") is False:
