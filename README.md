@@ -490,4 +490,21 @@ appends to `routes.toml` (and takes `.routes.lock` beside it). Secrets come from
     ./bin/agent-on gate            # unit tests + F1 smoke on a mock source + every invariant
     ./bin/agent-on add openrouter/<vendor>/<model> --alias <a>
 
-Nothing is launched yet (Plan B); the old `claude-litellm` path is untouched until Plan D.
+The old `claude-litellm` path is untouched until Plan D.
+
+### Launching (Plan B)
+
+    ./bin/claude-on huihui                       # Claude Code on the local oMLX route; the cost line prints first
+    ./bin/claude-on glm -p 'Reply with exactly: OK'
+    ./bin/claude-on --dry-run glm                # show the environment keys and argv, spawn nothing
+    ./bin/agent-on qualify huihui --baseline --limits
+    ./bin/agent-on qualify glm                   # six gates + probes on a paid route: about a cent; --baseline/--limits need --allow-paid
+
+The source key never enters Claude Code's environment: the launcher writes it to a per-launch 0600 file and hands
+Claude Code an `apiKeyHelper` that reads it; every source's key variable and the routing denylist are removed
+from the child. A user `--settings` is folded into that per-launch file (Claude Code 2.1.263 keeps only the last
+`--settings`, so passing both would have displaced the credential). After exit the session transcript is read
+back into `status` (`last_session`) and the per-session ledger under `$STATE/sessions/` — costs are attributed
+per run at the price snapshotted at launch, and `"unknown"` where a turn's price cannot be restored. `status`
+shows each route's last qualification outcome; a failed gate is shown, never a reason to refuse a launch.
+`claude-litellm` is untouched until Plan D.
