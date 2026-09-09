@@ -726,7 +726,7 @@ shared-settings lint; the config-dir symlink farm.
 
 **Target, in the §1 measure:** Python ~3,500 (package + kept verifier +
 ledger), tests ~1,000, `routes.toml` + knowledge seeds + docs ~800 —
-**~5,300 lines; hard gate ≤ 6,000**, from 25,294. Rev 2's "~3,000" counted
+**~5,300 lines; hard gate: non-test lines ≤ 6,000** — tests are measured and reported, not capped (rev 8 errata, owner ruling 2026-09-09: Plan D measured 8,048 without design docs, of which tests 3,664 and non-test 4,383), from 25,294. Rev 2's "~3,000" counted
 only new code against a baseline that counted everything.
 
 ## 14. Migration — five plans, five spikes
