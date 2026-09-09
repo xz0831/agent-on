@@ -762,7 +762,7 @@ observation); only the middle differs:
    plugins and skills are); `sessions/`, `history.jsonl`, `log/`, the sqlite
    state are per-launch. `CODEX_HOME` points there.
 2. **The profile file** `agent-on.config.toml` (0600) — `model = <wire_model>`,
-   `model_provider = "agent-on"`, `model_context_window = <cost_model.context>`
+   `model_provider = "agent-on"`, `model_context_window = <cost_model.context>` (Codex 0.153.4 applies min(declared, 272000) × 0.95 and keeps that window across an in-session model switch — S10, 2026-09-10; a 1M route therefore runs at 258400)
    when known, and `[model_providers.agent-on]` with `name`, `base_url =
    <source base_url>/v1` (a source whose `base_url` already ends in `/v1` is
    used as is), `wire_api = "responses"`, and — keyed source only —
