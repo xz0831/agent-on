@@ -43,6 +43,7 @@ class InstallTest(unittest.TestCase):
             doc = run_install(sb.paths)
             self.assertFalse(doc["written"])
             self.assertEqual(doc["links"]["agent-on"]["state"], "replaced")
+            self.assertIn("was ->", doc["links"]["agent-on"]["reason"])
             self.assertEqual(os.readlink(bd / "agent-on"), str((REPO / "bin" / "agent-on").resolve()))
             self.assertEqual(doc["links"]["claude-on"]["state"], "refused")
             self.assertIn("not a symlink", doc["links"]["claude-on"]["reason"])
@@ -59,6 +60,20 @@ class InstallTest(unittest.TestCase):
             self.assertTrue((bd / "claude-on").is_symlink())
             self.assertFalse(doc["on_path"])
             self.assertTrue(any("PATH" in w for w in doc["warnings"]))
+            self.assertEqual(doc["invariants"], [])
+            self.assertTrue(any("copy.single checks ~/.local/bin only" in w for w in doc["warnings"]))
+
+    def test_relative_bin_dir_is_resolved_to_an_absolute_path(self):
+        # dry_run=True: nothing is written to disk, so a relative bin_dir can be resolved against the real
+        # process cwd (left unchanged) without leaving a "rel/bin" directory behind in the checkout.
+        with Sandbox(MOCK_ROUTES.format(base=BASE), tree=REPO) as sb:
+            expected_bd = (Path.cwd() / "rel" / "bin").resolve()
+            doc = run_install(sb.paths, bin_dir=Path("rel/bin"), dry_run=True)
+            self.assertTrue(Path(doc["links"]["agent-on"]["path"]).is_absolute())
+            self.assertEqual(doc["links"]["agent-on"]["path"], str(expected_bd / "agent-on"))
+            self.assertFalse(expected_bd.exists())
+            path_warning = next(w for w in doc["warnings"] if "is not on PATH" in w)
+            self.assertIn(f'export PATH="{expected_bd}:$PATH"', path_warning)
 
     def test_old_python_links_nothing(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE), tree=REPO) as sb:

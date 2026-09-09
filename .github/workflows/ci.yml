@@ -50,5 +50,5 @@ jobs:
           assert {l["state"] for l in d["links"].values()} == {"linked"}, d["links"]
           PY
           for r in $(./bin/agent-on status --json | python -c 'import json,sys; print(" ".join(json.load(sys.stdin)["routes"]))'); do
-            "$RUNNER_TEMP/bin/claude-on" --dry-run "$r" -p hi --json > /dev/null
+            "$RUNNER_TEMP/bin/claude-on" --json --dry-run "$r" -p hi > /dev/null
           done

@@ -13,9 +13,10 @@ The design is `docs/superpowers/specs/2026-09-07-agent-on-design.md`. This READM
 ## Install
 
 Requirements: macOS or Linux, `python3` ≥ 3.11 on `PATH` (standard library only — nothing is pip-installed), `git`,
-Claude Code (`claude` on `PATH`).
+`zsh` (the two shims are zsh), Claude Code (`claude` on `PATH`).
 
     git clone https://github.com/xz0831/agent-on.git
+    # until the GitHub rename lands, use the repository's previous name (GitHub redirects it afterwards)
     cd agent-on
     ./bin/agent-on install                       # links ~/.local/bin/agent-on and claude-on here; creates ~/.local/state/agent-on
 
@@ -74,6 +75,7 @@ deletion commit restores it. One-time cleanup of an installed copy:
 
     rm ~/.local/bin/claude-litellm
     rm -rf ~/.local/share/claude-litellm          # the hash-locked venv and its state, about 830 MB
+    rm -rf ~/.config/claude-litellm               # the overlay settings and lock, no secret
 
 Keys move to `~/.local/state/agent-on/env`; proxy-era sessions are not migrated. The ChatGPT/xAI OAuth routes are
 not coming back (D3); GPT is used through Codex.

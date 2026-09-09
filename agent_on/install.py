@@ -16,14 +16,15 @@ MIN_PYTHON = (3, 11)
 
 def _link(path: Path, target: Path, *, dry_run: bool) -> tuple[str, str | None]:
     if path.is_symlink():
-        if os.readlink(path) == str(target):
+        old_target = os.readlink(path)
+        if old_target == str(target):
             return "unchanged", None
         if dry_run:
-            return "dry-run", f"would replace symlink -> {os.readlink(path)}"
+            return "dry-run", f"would replace symlink -> {old_target}"
         tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
         os.symlink(target, tmp)
         os.replace(tmp, path)                                   # atomic: a shell mid-exec sees the old or the new link
-        return "replaced", None
+        return "replaced", f"was -> {old_target}"
     if path.exists():
         return "refused", f"{path} exists and is not a symlink — remove it yourself, then re-run install"
     if dry_run:
@@ -34,7 +35,7 @@ def _link(path: Path, target: Path, *, dry_run: bool) -> tuple[str, str | None]:
 
 
 def run_install(paths: Paths, *, bin_dir: Path | None = None, dry_run: bool = False) -> dict:
-    bd = Path(bin_dir) if bin_dir else paths.bin_dir
+    bd = (Path(bin_dir) if bin_dir else paths.bin_dir).resolve()
     v = sys.version_info
     py_ok = tuple(v[:2]) >= MIN_PYTHON
     doc: dict = {"command": "install", "copy": describe_copy(paths),
@@ -54,11 +55,16 @@ def run_install(paths: Paths, *, bin_dir: Path | None = None, dry_run: bool = Fa
         target = (paths.code_tree / "bin" / name).resolve()
         state, reason = _link(bd / name, target, dry_run=dry_run)
         doc["links"][name] = {"path": str(bd / name), "target": str(target), "state": state, "reason": reason}
-    on_path = str(bd.resolve()) in [str(Path(p).resolve()) for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    on_path = str(bd) in [str(Path(p).resolve()) for p in os.environ.get("PATH", "").split(os.pathsep) if p]
     doc["on_path"] = on_path
     if not on_path:
         doc["warnings"].append(f'{bd} is not on PATH — add: export PATH="{bd}:$PATH"')
     doc["written"] = all(l["state"] in ("linked", "replaced", "unchanged") for l in doc["links"].values())
     doc["copy"] = describe_copy(paths)                          # after linking: copy.shim shows the link
-    doc["invariants"] = [] if dry_run else [r.as_dict() for r in evaluate(build_context(paths), ids=["copy.single"])]
+    # copy.single (invariants.py) only ever checks paths.bin_dir (~/.local/bin) via paths.shim — a custom
+    # --bin-dir install would otherwise print a misleading "skip … no shim" line for a link that isn't even there.
+    custom_bin_dir = bd != paths.bin_dir.resolve()
+    if custom_bin_dir:
+        doc["warnings"].append(f"copy.single checks ~/.local/bin only; installed to {bd} instead")
+    doc["invariants"] = [] if dry_run or custom_bin_dir else [r.as_dict() for r in evaluate(build_context(paths), ids=["copy.single"])]
     return doc
