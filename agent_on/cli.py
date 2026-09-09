@@ -35,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--bin-dir", metavar="DIR", help="where to put the shims (default ~/.local/bin)")
     i.add_argument("--dry-run", action="store_true")
     l = sub.add_parser("launch", parents=[common], help="bind Claude Code to a route and run it; `claude-on <route>` is this verb (everything after the route goes to Claude Code)")
-    l.add_argument("--harness", default="claude", choices=["claude"])
+    l.add_argument("--harness", default="claude", choices=["claude", "codex"])
     l.add_argument("--discover", action="store_true", help="set CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 (D8: off by default)")
     l.add_argument("--sonnet", metavar="ROUTE", help="bind the SONNET slot to another route on the same source")
     l.add_argument("--haiku", metavar="ROUTE", help="bind the HAIKU slot to another route on the same source")
@@ -190,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             from .harness import run_launch
             doc = run_launch(paths, args.route, args.claude_args, harness=args.harness, discover=args.discover, sonnet=args.sonnet,
                              haiku=args.haiku, dry_run=args.dry_run, claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"),
-                             task=args.task, handoff=args.handoff)
+                             codex_bin=os.environ.get("AGENT_ON_CODEX_BIN"), task=args.task, handoff=args.handoff)
             if args.dry_run:
                 code = 0
             else:

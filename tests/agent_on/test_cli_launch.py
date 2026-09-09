@@ -19,6 +19,7 @@ from agent_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noq
 from agent_on.schemas.routes import load_routes  # noqa: E402
 
 FAKE = str(REPO / "tests" / "agent_on" / "fakeclaude.py")
+FAKE_CODEX = str(REPO / "tests" / "agent_on" / "fakecodex.py")
 CATALOG = [omlx_entry("alpha"), openrouter_entry("vendor/model-x")]
 
 
@@ -64,6 +65,17 @@ class LaunchCliTest(unittest.TestCase):
             self.assertEqual(clean, {"id": "harness.env.clean", "result": "skip",
                                      "reason": f"no shared settings at {sb.paths.home / '.claude' / 'settings.json'}",
                                      "subject": None, "fix": None})
+
+    def test_codex_harness_dry_run_through_the_cli(self):
+        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            env = sandboxed_env(sb, AGENT_ON_CODEX_BIN=FAKE_CODEX)
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=True), redirect_stdout(out):
+                code = cli.main(["--json", "launch", "--harness", "codex", "--dry-run", "a", "exec", "hi"])
+            self.assertEqual(code, 0)
+            doc = json.loads(out.getvalue())
+            self.assertTrue(doc["dry_run"])
+            self.assertEqual(doc["argv"][1:3], ["--profile", "agent-on"])
 
     def test_shim_delegates_to_launch(self):
         shim = REPO / "bin" / "claude-on"

@@ -10,7 +10,7 @@ from pathlib import Path
 from .invariants import build_context, evaluate
 from .paths import Paths, describe_copy, ensure_state
 
-SHIMS = ("agent-on", "claude-on")
+SHIMS = ("agent-on", "claude-on", "codex-on")
 MIN_PYTHON = (3, 11)
 
 

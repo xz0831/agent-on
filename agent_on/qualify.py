@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 
 from .harness import run_launch
+from .harness_codex import run_launch_codex
 from .invariants import build_context, claude_code_version, codex_version, evaluate
 from .paths import Paths, describe_copy
 from .schemas.observed import compute_context, empty_route
@@ -472,9 +473,6 @@ def run_qualify(paths: Paths, name: str, *, wire: str = "messages", baseline: bo
     price = route.price.per_mtok() if route.price else None
     doc: dict = {"command": "qualify", "copy": describe_copy(paths), "route": route.name, "wire": wire, "refused": None, "gates": {}, "details": {},
                  "probes": {}, "baseline": None, "fingerprint": None, "written": False, "invariants": []}
-    if baseline and wire == "responses":
-        # Task 5 wires up the codex harness for --baseline on the Responses wire; until then this is a hard stop.
-        raise ValueError("--baseline on the responses wire lands with the codex harness")
     if paid and (baseline or limits) and not allow_paid:
         lim = table.effective_limits(route)
         est = _estimate_paid_usd(price, (BASELINE_TOKENS_ESTIMATE if baseline else 0) + (2 * (lim.input or 0) if limits and lim else 0))
@@ -496,7 +494,11 @@ def run_qualify(paths: Paths, name: str, *, wire: str = "messages", baseline: bo
             "completed": gates["completed"], "at": now, "fingerprint": fp, "wire": wire}
     base_tokens = None
     if baseline:
-        launch = run_launch(paths, route.name, ["-p", BASELINE_PROMPT], env=parent, claude_bin=claude_bin, announce=False)
+        if wire == "messages":
+            launch = run_launch(paths, route.name, ["-p", BASELINE_PROMPT], env=parent, claude_bin=claude_bin, announce=False)
+        else:
+            launch = run_launch_codex(paths, route.name, ["exec", "--skip-git-repo-check", "-s", "read-only", BASELINE_PROMPT],
+                                      env=parent, codex_bin=codex_bin, announce=False)
         first = (launch.get("last_session") or {}).get("first_request")
         # a transcript whose only turn was a synthetic API-error line has no first_request (or one with 0 total):
         # never record that as a measured baseline of 0 (final-fix item 1).
@@ -520,8 +522,10 @@ def run_qualify(paths: Paths, name: str, *, wire: str = "messages", baseline: bo
         cm.update({"tok_s": thr["tok_s"], "concurrency": conc["concurrency"], "caching": cache["caching"],
                    "thinking": {"observed": gates["thinking_block_seen"], "tokens_on_probe": gates["thinking_tokens"]}, "checked": now})
         if baseline:
-            cm.setdefault("harness_baseline_tokens", {})["claude"] = {"value": base_tokens, "measured_by": "qualify --baseline",
-                                                                       "harness_version": fp["harness_version"], "at": now}
+            harness_key = "claude" if wire == "messages" else "codex"
+            measured_by = "qualify --baseline" if wire == "messages" else f"qualify --wire {wire} --baseline"
+            cm.setdefault("harness_baseline_tokens", {})[harness_key] = {"value": base_tokens, "measured_by": measured_by,
+                                                                          "harness_version": fp["harness_version"], "at": now}
         if lim_result and lim_result["verified"] is not None:
             r["limits"]["input"]["verified"] = lim_result["verified"]
             r["limits"]["input"]["checked"] = now

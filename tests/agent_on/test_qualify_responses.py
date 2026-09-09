@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
+from helpers import MOCK_ROUTES, REPO, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
 from agent_on.mock_source import MockSource, omlx_entry  # noqa: E402
 from agent_on.qualify import GATES_RESPONSES, Wire, probe_caching, probe_throughput, run_gates_responses, run_qualify  # noqa: E402
 from agent_on.state import read_observed  # noqa: E402
+
+FAKE = str(REPO / "tests" / "agent_on" / "fakecodex.py")
 
 
 class ResponsesGatesTest(unittest.TestCase):
@@ -61,8 +64,12 @@ class ResponsesGatesTest(unittest.TestCase):
             self.assertEqual(qs["responses"]["wire"], "responses")
             self.assertIsNone(qs["responses"]["fingerprint"]["harness_version"])                       # no codex binary: unmeasured, not invented
             self.assertEqual(qs["messages"]["gates"].keys() ^ qs["responses"]["gates"].keys(), set(qs["messages"]["gates"]) ^ set(GATES_RESPONSES))
-            with self.assertRaises(ValueError):
-                run_qualify(sb.paths, "a", env={}, timeout=10, wire="responses", baseline=True)
+            fake_out = sb.root / "codex-fake-out"
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(sb.paths.home), "FAKE_CODEX_OUT": str(fake_out)}
+            doc = run_qualify(sb.paths, "a", env=env, timeout=10, wire="responses", baseline=True, codex_bin=FAKE)
+            self.assertEqual(doc["baseline"], 7000)
+            hb = read_observed(sb.paths)["routes"]["mock/alpha"]["cost_model"]["harness_baseline_tokens"]["codex"]
+            self.assertEqual((hb["value"], hb["harness_version"]), (7000, "0.0.0"))
 
 
 if __name__ == "__main__":

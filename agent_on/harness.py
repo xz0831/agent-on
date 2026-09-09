@@ -570,7 +570,9 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
                claude_bin: str | None = None, codex_bin: str | None = None, cwd: str | None = None, probe_timeout: float = 2.0,
                announce: bool = True, task: str | None = None, handoff: str = "latest") -> dict:
     if harness == "codex":
-        raise ValueError("harness 'codex' is not bound yet (Plan F Task 5)")          # Task 5 replaces this with the dispatch to harness_codex.run_launch_codex
+        from .harness_codex import run_launch_codex
+        return run_launch_codex(paths, name, claude_args, dry_run=dry_run, env=env, codex_bin=codex_bin, cwd=cwd,
+                                probe_timeout=probe_timeout, announce=announce, task=task, handoff=handoff)
     if harness != "claude":
         raise ValueError(f"harness {harness!r} is not bound yet (Plan F adds codex)")
     plan = prologue(paths, name, claude_args, env=env, cwd=cwd, task=task, handoff=handoff, probe_timeout=probe_timeout,

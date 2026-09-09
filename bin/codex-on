@@ -1,0 +1,5 @@
+#!/usr/bin/env zsh
+# codex-on <route> [codex args…] — the Codex launcher shim (spec rev 9): agent-on launch --harness codex.
+# Launch options (--dry-run, --task, --handoff, --json) go before the route; everything after it is Codex's.
+set -u
+exec "${0:A:h}/agent-on" launch --harness codex "$@"
