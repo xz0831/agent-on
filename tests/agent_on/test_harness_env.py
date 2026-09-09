@@ -71,13 +71,22 @@ class ChildEnvTest(unittest.TestCase):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             table = load_routes(sb.paths)
             parent = {"PATH": "/usr/bin", "HOME": "/h", "OPENROUTER_API_KEY": "sk-x", "OPENAI_API_KEY": "sk-o", "ANTHROPIC_API_KEY": "sk-a",
-                      "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "1", "CODEX_HOME": "/elsewhere", "MOCK_PAID_KEY": "sk-p", "TERM": "xterm"}
+                      "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "1", "CODEX_HOME": "/elsewhere", "CODEX_API_KEY": "sk-c", "MOCK_PAID_KEY": "sk-p", "TERM": "xterm"}
             env = harness.child_env(parent, table, table.resolve("x"), context=100000, config_dir=Path("/run/codex-home"), harness="codex")
             self.assertEqual(env["CODEX_HOME"], "/run/codex-home")
-            for k in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MOCK_PAID_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"):
+            for k in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CODEX_API_KEY", "MOCK_PAID_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"):
                 self.assertNotIn(k, env)
             self.assertFalse(any(k.startswith(("ANTHROPIC_", "CLAUDE_", "OPENAI_")) for k in env))
             self.assertEqual(env["TERM"], "xterm")
+
+    def test_child_env_for_claude_also_drops_a_parent_codex_home(self):
+        # final-fix item 3: credential.not_in_child_env now checks both harness branches with the same marker
+        # parent, including CODEX_HOME — the claude branch must not leak it either.
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            t = table(sb)
+            env = harness.child_env({"CODEX_HOME": "/elsewhere", "PATH": "/usr/bin"}, t, t.routes["mock/alpha"],
+                                    context=None, config_dir=Path("/c"))
+            self.assertNotIn("CODEX_HOME", env)
 
 
 class ConfigDirTest(unittest.TestCase):

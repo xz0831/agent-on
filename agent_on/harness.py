@@ -61,21 +61,25 @@ def child_env(parent: dict, table: RouteTable, route: Route, *, context: int | N
               discover: bool = False, sonnet: Route | None = None, haiku: Route | None = None, harness: str = "claude") -> dict:
     """The environment the harness is spawned with. Every source's auth_env and the routing denylist are removed;
     a keyed source gets NO key variable (the apiKeyHelper supplies it); a keyless one gets the placeholder token.
-    `harness="codex"` scrubs the same way, plus every OPENAI_*/CODEX_HOME variable, and sets only CODEX_HOME —
-    no Anthropic variable, no PASS_THROUGH (that's Claude Code's own output-cap control, D12)."""
+    Every CODEX_* variable (the operator's own, not just CODEX_HOME) is dropped from BOTH branches — the launcher
+    always sets its own CODEX_HOME last. `harness="codex"` scrubs the same way, plus every OPENAI_* variable, and
+    sets only CODEX_HOME — no Anthropic variable, no PASS_THROUGH (that's Claude Code's own output-cap control, D12)."""
     for r in (sonnet, haiku):
         if r is not None and r.source != route.source:
             raise ValueError(f"--sonnet/--haiku must name a route on source {route.source!r}; {r.name!r} is on {r.source!r}")
     if harness == "codex":
+        # final-fix minor: drop every CODEX_* variable (not just CODEX_HOME) — the operator's own CODEX_API_KEY,
+        # honoured by `codex exec`, would otherwise reach every shell-tool child (§1.1c mechanism) — then set
+        # CODEX_HOME last so the launcher's own value always wins.
         env = {k: v for k, v in parent.items()
-               if k not in SCRUB_ENV and k != "CODEX_HOME" and not k.startswith(("ANTHROPIC_", "CLAUDE_", "OPENAI_"))}
+               if k not in SCRUB_ENV and not k.startswith(("ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_"))}
         for src in table.sources.values():
             if src.auth_env:
                 env.pop(src.auth_env, None)
         env["CODEX_HOME"] = str(config_dir)
         return env
     env = {k: v for k, v in parent.items()
-           if k in PASS_THROUGH or (k not in SCRUB_ENV and not k.startswith(("ANTHROPIC_", "CLAUDE_")))}
+           if k in PASS_THROUGH or (k not in SCRUB_ENV and k != "CODEX_HOME" and not k.startswith(("ANTHROPIC_", "CLAUDE_")))}
     for src in table.sources.values():
         if src.auth_env:
             env.pop(src.auth_env, None)
