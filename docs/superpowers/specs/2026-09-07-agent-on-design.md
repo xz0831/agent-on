@@ -639,7 +639,7 @@ the only value Codex 0.153.4 supports):
 | `forced_structured_tool` | `forced_function_call` | `tools: [{type: function, …}]` + `tool_choice: {type: function, name}` → an output item `function_call` with a non-empty `call_id` and JSON `arguments` naming the city (the `status` may be `completed` or `incomplete`; the item decides) |
 | `streaming_input_json_delta` | `function_call_arguments_stream` | the streamed form yields `response.function_call_arguments.delta` and a `response.output_item.done` whose item is the same call |
 | `tool_result_continuation` | `function_call_output_continuation` | replaying the model's `function_call` item plus a `function_call_output` with the same `call_id` produces a message that names the returned weather |
-| `claude_adaptive_effort_policy` | `reasoning_effort` | `reasoning: {effort: "low"}` is accepted (200) and a `reasoning` output item or `usage.output_tokens_details.reasoning_tokens > 0` is seen; a 400 naming `reasoning` is a fail, any other 400 a fail |
+| `claude_adaptive_effort_policy` | `reasoning_effort` | `reasoning: {effort: "low"}` is accepted: 200 with a non-empty message reply; a `reasoning` item / `reasoning_tokens > 0` is recorded as `thinking_block_seen`, not required to pass (D5); a 400 naming `reasoning` is a fail, any other 400 a fail |
 
 Every probe uses `max_output_tokens` 512 (a reasoning model spends the budget
 before the message otherwise — measured on glm-5.2 at 64). Throughput,

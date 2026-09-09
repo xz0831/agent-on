@@ -13,7 +13,7 @@ The design is `docs/superpowers/specs/2026-09-07-agent-on-design.md`. This READM
 ## Install
 
 Requirements: macOS or Linux, `python3` ≥ 3.11 on `PATH` (standard library only — nothing is pip-installed), `git`,
-`zsh` (the two shims are zsh), Claude Code (`claude` on `PATH`).
+`zsh` (the three shims are zsh), Claude Code (`claude` on `PATH`).
 
     git clone https://github.com/xz0831/agent-on.git
     # until the GitHub rename lands, use the repository's previous name (GitHub redirects it afterwards)
