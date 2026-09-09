@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from .errors import SchemaError
+from .observed import WIRES
 
 KINDS: dict[str, tuple[str, ...]] = {
     "observations": ("route", "kind", "values", "evidence"),
@@ -41,6 +42,8 @@ def validate_record(kind: str, rec) -> None:
         raise SchemaError("knowledge.record", f"{kind}: id must start with '{kind}-', got {rec['id']!r}")
     if kind == "observations" and rec["kind"] not in OBSERVATION_KINDS:
         raise SchemaError("knowledge.record", f"observation kind must be one of {OBSERVATION_KINDS}, got {rec['kind']!r}")
+    if kind == "qualifications" and "wire" in rec and rec["wire"] not in WIRES:
+        raise SchemaError("knowledge.record", f"qualifications: wire must be one of {WIRES}, got {rec['wire']!r}")
     if kind == "traps":
         at = rec["applies_to"]
         if not isinstance(at, list) or not at or not all(isinstance(a, str) and a for a in at):

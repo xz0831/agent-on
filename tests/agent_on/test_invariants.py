@@ -251,13 +251,14 @@ class CostAndQualificationTest(unittest.TestCase):
             sha = ctx.routes.effective_sha(ctx.routes.routes["mock/alpha"])
             def plant(doc):
                 doc["routes"]["mock/alpha"] = empty_route()
-                doc["routes"]["mock/alpha"]["last_qualification"] = {"pass": True, "at": "2026-09-07T00:00:00Z", "gates": {}, "thinking_block_seen": False, "completed": True,
-                    "fingerprint": {"effective_route_sha": sha, "wire_model": "alpha", "source_identity": None, "claude_code": None}}
+                doc["routes"]["mock/alpha"]["qualifications"]["messages"] = {"pass": True, "at": "2026-09-07T00:00:00Z", "gates": {}, "thinking_block_seen": False, "completed": True, "wire": "messages",
+                    "fingerprint": {"effective_route_sha": sha, "wire_model": "alpha", "source_identity": None, "harness_version": None}}
             update_observed(sb.paths, plant)
             self.assertEqual({x.subject: x.result for x in one(sb.paths, "qualification.current")}["mock/alpha"], "pass")
             sb.paths.routes_toml.write_text(text.replace("input = 8192", "input = 4096"), encoding="utf-8")   # inherited limit changed
             r = {x.subject: x for x in one(sb.paths, "qualification.current")}
             self.assertEqual(r["mock/alpha"].result, "fail")
+            self.assertIn("messages: stale", r["mock/alpha"].reason)
             self.assertIn("effective_route_sha", r["mock/alpha"].reason)
 
     def test_corrupt_observed_json_reaches_the_error_branch_instead_of_crashing(self):

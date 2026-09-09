@@ -28,7 +28,7 @@ class RunQualifyTest(unittest.TestCase):
             self.assertTrue(doc["written"])
             self.assertTrue(all(doc["gates"].values()))
             obs = read_observed(sb.paths)["routes"]["mock/alpha"]
-            q = obs["last_qualification"]
+            q = obs["qualifications"]["messages"]
             self.assertTrue(q["pass"])
             self.assertEqual(set(q["gates"]), set(GATES))
             self.assertTrue(q["thinking_block_seen"])
@@ -42,7 +42,7 @@ class RunQualifyTest(unittest.TestCase):
             self.assertTrue(cm["caching"])
             self.assertEqual(cm["thinking"]["observed"], True)
             self.assertIsNotNone(cm["checked"])
-            self.assertIsNone(cm["harness_baseline_tokens"])                             # not asked for → not invented
+            self.assertIsNone(cm["harness_baseline_tokens"].get("claude"))               # not asked for → not invented
             self.assertEqual([i["result"] for i in doc["invariants"] if i["id"] == "qualification.current"], ["pass"])
             text = MOCK_ROUTES.format(base=m.base_url).replace("input = 8192", "input = 4096")
             sb.paths.routes_toml.write_text(text, encoding="utf-8")
@@ -56,21 +56,21 @@ class RunQualifyTest(unittest.TestCase):
         with MockSource(catalog=CATALOG, fail_gates=("tool_result_continuation",)) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             doc = run_qualify(sb.paths, "a", env={}, timeout=10)
             self.assertFalse(doc["gates"]["tool_result_continuation"])
-            self.assertFalse(read_observed(sb.paths)["routes"]["mock/alpha"]["last_qualification"]["pass"])
+            self.assertFalse(read_observed(sb.paths)["routes"]["mock/alpha"]["qualifications"]["messages"]["pass"])
 
     def test_the_fingerprints_claude_code_version_is_the_launch_binarys_not_paths(self):
-        # F-fix 5: the fingerprint's claude_code must come from the binary the launch (and --baseline) actually
+        # F-fix 5: the fingerprint's harness_version must come from the binary the launch (and --baseline) actually
         # used, not from whatever real `claude` happens to be on PATH.
         with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             doc = run_qualify(sb.paths, "a", env={}, timeout=10, claude_bin=FAKE)
-            self.assertEqual(doc["fingerprint"]["claude_code"], "0.0.0")
+            self.assertEqual(doc["fingerprint"]["harness_version"], "0.0.0")
 
     def test_baseline_uses_the_launcher_and_records_the_first_request(self):
         with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             env = {"PATH": os.environ.get("PATH", ""), "HOME": str(sb.paths.home), "FAKE_CLAUDE_OUT": str(sb.root / "out")}
             doc = run_qualify(sb.paths, "a", baseline=True, env=env, timeout=10, claude_bin=FAKE)
             self.assertEqual(doc["baseline"], 21000)
-            hb = read_observed(sb.paths)["routes"]["mock/alpha"]["cost_model"]["harness_baseline_tokens"]
+            hb = read_observed(sb.paths)["routes"]["mock/alpha"]["cost_model"]["harness_baseline_tokens"]["claude"]
             self.assertEqual((hb["value"], hb["measured_by"]), (21000, "qualify --baseline"))
             argv = json.loads((sb.root / "out" / "argv.json").read_text())
             self.assertEqual(argv[-2:], ["-p", "Reply with exactly: OK"])
@@ -83,7 +83,7 @@ class RunQualifyTest(unittest.TestCase):
                    "FAKE_CLAUDE_SYNTHETIC_FIRST": "1"}
             doc = run_qualify(sb.paths, "a", baseline=True, env=env, timeout=10, claude_bin=FAKE)
             self.assertIsNone(doc["baseline"])
-            hb = read_observed(sb.paths)["routes"]["mock/alpha"]["cost_model"]["harness_baseline_tokens"]
+            hb = read_observed(sb.paths)["routes"]["mock/alpha"]["cost_model"]["harness_baseline_tokens"]["claude"]
             self.assertIsNone(hb["value"])
 
     def test_limits_bisects_and_lowers_the_context_never_lifting_the_declared_cap(self):

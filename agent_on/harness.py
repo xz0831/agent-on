@@ -255,16 +255,23 @@ def session_args(claude_args: list[str]) -> tuple[list[str], str | None, str]:
 
 # ---- the §12 line ----------------------------------------------------------------------------------------------
 
-def cost_line(route_name: str, observed_route: dict | None) -> str:
-    """One line before spawning. Every field comes from the cost model; a value the probes did not produce is `?`."""
+def cost_line(route_name: str, observed_route: dict | None, harness: str = "claude") -> str:
+    """One line before spawning. Every field comes from the cost model; a value the probes did not produce is `?`.
+    `harness`'s own baseline is shown first; any other harness with a measured baseline is appended (Plan F)."""
     cm = (observed_route or {}).get("cost_model") or {}
     ctx = cm.get("context")
-    base = (cm.get("harness_baseline_tokens") or {}).get("value")
+    hb = cm.get("harness_baseline_tokens") or {}
+    base = (hb.get(harness) or {}).get("value")
+    others = [(h, b) for h, b in hb.items() if h != harness and b.get("value")]
     ctx_s = f"ctx {ctx}" if ctx else "ctx ?"
-    if ctx and base:
-        ctx_s += f" ({base} baseline = {round(100 * base / ctx)}%)"
+    if others:                                                                    # more than one harness measured: name each, no "baseline" word
+        parts = ([f"{harness} {base} = {round(100 * base / ctx)}%"] if ctx and base else ([f"{harness} {base}"] if base else []))
+        parts += [f"{h} {b['value']} = {round(100 * b['value'] / ctx)}%" if ctx else f"{h} {b['value']}" for h, b in others]
+        ctx_s += f" ({' · '.join(parts)})"
+    elif ctx and base:
+        ctx_s += f" ({harness} {base} baseline = {round(100 * base / ctx)}%)"
     elif base:
-        ctx_s += f" ({base} baseline)"
+        ctx_s += f" ({harness} {base} baseline)"
     tok = cm.get("tok_s")
     tok_s = f"{tok:.0f} tok/s" if isinstance(tok, (int, float)) and not isinstance(tok, bool) else "? tok/s"
     usd = cm.get("usd_per_mtok")
@@ -354,19 +361,22 @@ def find_transcript(paths: Paths, session_id: str | None, cwd: str, mode: str, s
     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
-def record_session(paths: Paths, launch: dict, *, ended: str, transcript: Path | None, mode: str) -> dict:
+def record_session(paths: Paths, launch: dict, *, ended: str, transcript: dict | None, mode: str,
+                   harness: str = "claude", harness_version: str | None = None) -> dict:
     """Write last_session for the route and one ledger line for the session (§11 item 4). Best-effort: a missing
-    transcript is recorded as {skipped}, never raised."""
+    transcript is recorded as {skipped}, never raised. `transcript` is the already-parsed dict (`read_transcript`'s
+    result) — the caller resolves the path and reads it first, because a non-Claude harness parses its own
+    transcript format. `harness_version` defaults to the transcript's own `version` field when not given."""
     route = launch["route"]
     session_id = None
     this_line = None
     if mode == "no-persistence":
         rec: dict = {"skipped": "no-session-persistence"}
-    elif transcript is None or not transcript.exists():
-        rec = {"skipped": f"no transcript at {transcript}"}
+    elif transcript is None:
+        rec = {"skipped": "no transcript"}
     else:
-        t = read_transcript(transcript)
-        session_id = t["session_id"] or launch.get("session_id") or transcript.stem
+        t = transcript
+        session_id = t["session_id"] or launch.get("session_id") or launch["launch_id"]
         run = {"launch_id": launch["launch_id"], "route": route, "source": launch["source"], "wire_model": launch["wire_model"],
                "started": launch["started"], "ended": ended, "price": launch["price"], "priced_models": launch.get("priced_models") or {}}
         this_run = attribute_run(t["turns"], run)
@@ -379,7 +389,8 @@ def record_session(paths: Paths, launch: dict, *, ended: str, transcript: Path |
                "this_run": this_run, "session_total": total,
                "scope_note": "fresh session; this_run == session_total" if fresh else f"{mode}: this_run is this launch's turns; session_total folds {len(runs)} run(s)",
                "duration_ms": int((parse_utc(ended) - parse_utc(launch["started"])).total_seconds() * 1000),
-               "effort": t["effort"], "permission_mode": t["permission_mode"], "claude_code": t["version"]}
+               "effort": t["effort"], "permission_mode": t["permission_mode"], "harness": harness,
+               "harness_version": harness_version if harness_version is not None else t.get("version")}
 
     def mutate(doc: dict) -> None:
         doc["routes"].setdefault(route, empty_route())["last_session"] = rec
@@ -524,9 +535,10 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     finally:
         shutil.rmtree(run_dir, ignore_errors=True)                                 # the key never outlives the child
     ended = utc_ceil()                                                            # inclusive of the last turn's milliseconds
-    transcript = find_transcript(paths, session_id, cwd, mode, started)
-    rec = record_session(paths, launch, ended=ended, transcript=transcript, mode=mode)
-    doc.update({"exit_code": code, "last_session": rec, "transcript": str(transcript) if transcript else None})
+    transcript_path = find_transcript(paths, session_id, cwd, mode, started)
+    parsed = read_transcript(transcript_path) if transcript_path and transcript_path.exists() else None
+    rec = record_session(paths, launch, ended=ended, transcript=parsed, mode=mode, harness="claude", harness_version=None)
+    doc.update({"exit_code": code, "last_session": rec, "transcript": str(transcript_path) if transcript_path else None})
     doc["knowledge"] = None
     if paths.knowledge_dir.is_dir() and "this_run" in rec:
         tr = rec["this_run"]

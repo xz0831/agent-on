@@ -135,10 +135,10 @@ class QualificationShapeTest(unittest.TestCase):
     def test_last_qualification_must_carry_gates_and_a_fingerprint(self):
         doc = empty_observed()
         doc["routes"]["r"] = empty_route()
-        doc["routes"]["r"]["last_qualification"] = {"pass": True, "gates": {g: True for g in GATES}, "thinking_block_seen": False, "completed": True,
-                                                   "at": "2026-09-08T00:00:00Z", "fingerprint": {"effective_route_sha": "a", "wire_model": "m", "source_identity": None, "claude_code": None}}
+        doc["routes"]["r"]["qualifications"]["messages"] = {"pass": True, "gates": {g: True for g in GATES}, "thinking_block_seen": False, "completed": True, "wire": "messages",
+                                                   "at": "2026-09-08T00:00:00Z", "fingerprint": {"effective_route_sha": "a", "wire_model": "m", "source_identity": None, "harness_version": None}}
         validate_observed(doc)
-        doc["routes"]["r"]["last_qualification"]["fingerprint"] = {"wire_model": "m"}
+        doc["routes"]["r"]["qualifications"]["messages"]["fingerprint"] = {"wire_model": "m"}
         with self.assertRaises(SchemaError) as cm:
             validate_observed(doc)
         self.assertEqual(cm.exception.rule, "observed.qualification.shape")

@@ -370,9 +370,9 @@ def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool
     cache = probe_caching(wire)
     now = utc_now()
     fp = {"effective_route_sha": table.effective_sha(route), "wire_model": route.wire_model,
-          "source_identity": probe.identity if probe.reachable else None, "claude_code": claude_code_version(claude_bin)}
+          "source_identity": probe.identity if probe.reachable else None, "harness_version": claude_code_version(claude_bin)}
     qual = {"pass": gates["all_pass"], "gates": gates["gates"], "thinking_block_seen": gates["thinking_block_seen"],
-            "completed": gates["completed"], "at": now, "fingerprint": fp}
+            "completed": gates["completed"], "at": now, "fingerprint": fp, "wire": "messages"}
     base_tokens = None
     if baseline:
         launch = run_launch(paths, route.name, ["-p", BASELINE_PROMPT], env=parent, claude_bin=claude_bin, announce=False)
@@ -394,12 +394,13 @@ def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool
 
     def mutate(d: dict) -> None:
         r = d["routes"].setdefault(route.name, empty_route())
-        r["last_qualification"] = qual
+        r["qualifications"]["messages"] = {**qual, "wire": "messages"}
         cm = r["cost_model"]
         cm.update({"tok_s": thr["tok_s"], "concurrency": conc["concurrency"], "caching": cache["caching"],
                    "thinking": {"observed": gates["thinking_block_seen"], "tokens_on_probe": gates["thinking_tokens"]}, "checked": now})
         if baseline:
-            cm["harness_baseline_tokens"] = {"value": base_tokens, "measured_by": "qualify --baseline", "claude_code": fp["claude_code"], "at": now}
+            cm.setdefault("harness_baseline_tokens", {})["claude"] = {"value": base_tokens, "measured_by": "qualify --baseline",
+                                                                       "harness_version": fp["harness_version"], "at": now}
         if lim_result and lim_result["verified"] is not None:
             r["limits"]["input"]["verified"] = lim_result["verified"]
             r["limits"]["input"]["checked"] = now
@@ -415,7 +416,7 @@ def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool
         q = append(paths, "qualifications", {"route": route.name, "fingerprint": fp, "gates": gates["gates"],
                                              "thinking_block_seen": gates["thinking_block_seen"], "completed": gates["completed"],
                                              "tok_s": thr["tok_s"], "concurrency": conc["concurrency"], "caching": cache["caching"],
-                                             "commit": doc["copy"]["commit"]}, now=now)
+                                             "commit": doc["copy"]["commit"], "wire": "messages"}, now=now)
         o = append(paths, "observations", {"route": route.name, "kind": "throughput",
                                            "values": {"tok_s": thr["tok_s"], "concurrency": conc["concurrency"], "caching": cache["caching"],
                                                       "thinking_observed": gates["thinking_block_seen"]},

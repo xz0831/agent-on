@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from .paths import Paths, ensure_state
-from .schemas.observed import empty_observed, validate_observed
+from .schemas.observed import empty_observed, migrate_observed, validate_observed
 
 
 @contextmanager
@@ -56,6 +56,7 @@ def read_observed(paths: Paths) -> dict:
         doc = json.loads(paths.observed_json.read_text(encoding="utf-8"))
     except ValueError as e:   # a corrupt observed.json must name itself: the CLI turns this into an operator hint
         raise ValueError(f"{paths.observed_json}: {e}") from e
+    doc = migrate_observed(doc)
     validate_observed(doc)
     return doc
 
