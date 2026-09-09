@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
+from agent_on import cli  # noqa: E402
 from agent_on.invariants import build_context, evaluate  # noqa: E402
 from agent_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
 from agent_on.qualify import GATES, run_qualify  # noqa: E402
@@ -28,7 +32,7 @@ class RunQualifyTest(unittest.TestCase):
             self.assertTrue(doc["written"])
             self.assertTrue(all(doc["gates"].values()))
             obs = read_observed(sb.paths)["routes"]["mock/alpha"]
-            q = obs["last_qualification"]
+            q = obs["qualifications"]["messages"]
             self.assertTrue(q["pass"])
             self.assertEqual(set(q["gates"]), set(GATES))
             self.assertTrue(q["thinking_block_seen"])
@@ -42,7 +46,7 @@ class RunQualifyTest(unittest.TestCase):
             self.assertTrue(cm["caching"])
             self.assertEqual(cm["thinking"]["observed"], True)
             self.assertIsNotNone(cm["checked"])
-            self.assertIsNone(cm["harness_baseline_tokens"])                             # not asked for → not invented
+            self.assertIsNone(cm["harness_baseline_tokens"].get("claude"))               # not asked for → not invented
             self.assertEqual([i["result"] for i in doc["invariants"] if i["id"] == "qualification.current"], ["pass"])
             text = MOCK_ROUTES.format(base=m.base_url).replace("input = 8192", "input = 4096")
             sb.paths.routes_toml.write_text(text, encoding="utf-8")
@@ -56,21 +60,21 @@ class RunQualifyTest(unittest.TestCase):
         with MockSource(catalog=CATALOG, fail_gates=("tool_result_continuation",)) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             doc = run_qualify(sb.paths, "a", env={}, timeout=10)
             self.assertFalse(doc["gates"]["tool_result_continuation"])
-            self.assertFalse(read_observed(sb.paths)["routes"]["mock/alpha"]["last_qualification"]["pass"])
+            self.assertFalse(read_observed(sb.paths)["routes"]["mock/alpha"]["qualifications"]["messages"]["pass"])
 
     def test_the_fingerprints_claude_code_version_is_the_launch_binarys_not_paths(self):
-        # F-fix 5: the fingerprint's claude_code must come from the binary the launch (and --baseline) actually
+        # F-fix 5: the fingerprint's harness_version must come from the binary the launch (and --baseline) actually
         # used, not from whatever real `claude` happens to be on PATH.
         with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             doc = run_qualify(sb.paths, "a", env={}, timeout=10, claude_bin=FAKE)
-            self.assertEqual(doc["fingerprint"]["claude_code"], "0.0.0")
+            self.assertEqual(doc["fingerprint"]["harness_version"], "0.0.0")
 
     def test_baseline_uses_the_launcher_and_records_the_first_request(self):
         with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             env = {"PATH": os.environ.get("PATH", ""), "HOME": str(sb.paths.home), "FAKE_CLAUDE_OUT": str(sb.root / "out")}
             doc = run_qualify(sb.paths, "a", baseline=True, env=env, timeout=10, claude_bin=FAKE)
             self.assertEqual(doc["baseline"], 21000)
-            hb = read_observed(sb.paths)["routes"]["mock/alpha"]["cost_model"]["harness_baseline_tokens"]
+            hb = read_observed(sb.paths)["routes"]["mock/alpha"]["cost_model"]["harness_baseline_tokens"]["claude"]
             self.assertEqual((hb["value"], hb["measured_by"]), (21000, "qualify --baseline"))
             argv = json.loads((sb.root / "out" / "argv.json").read_text())
             self.assertEqual(argv[-2:], ["-p", "Reply with exactly: OK"])
@@ -83,7 +87,7 @@ class RunQualifyTest(unittest.TestCase):
                    "FAKE_CLAUDE_SYNTHETIC_FIRST": "1"}
             doc = run_qualify(sb.paths, "a", baseline=True, env=env, timeout=10, claude_bin=FAKE)
             self.assertIsNone(doc["baseline"])
-            hb = read_observed(sb.paths)["routes"]["mock/alpha"]["cost_model"]["harness_baseline_tokens"]
+            hb = read_observed(sb.paths)["routes"]["mock/alpha"]["cost_model"]["harness_baseline_tokens"]["claude"]
             self.assertIsNone(hb["value"])
 
     def test_limits_bisects_and_lowers_the_context_never_lifting_the_declared_cap(self):
@@ -117,6 +121,17 @@ class RunQualifyTest(unittest.TestCase):
             self.assertEqual(cm["caching"], "unknown")                                     # a probe that got 401 measured nothing
             self.assertIsNone(cm["thinking"]["observed"])
             self.assertIsNone(cm["tok_s"])
+
+    def test_cli_wire_responses_exits_ok_and_the_envelope_carries_the_wire(self):
+        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(sb.paths.home), "AGENT_ON_STATE": str(sb.paths.state),
+                   "AGENT_ON_CHECKOUT": str(sb.paths.checkout)}
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=True), redirect_stdout(out):
+                code = cli.main(["--json", "qualify", "a", "--wire", "responses"])
+            doc = json.loads(out.getvalue())
+            self.assertEqual(code, 0, doc)
+            self.assertEqual(doc["wire"], "responses")
 
     def test_qualify_appends_its_qualification_and_a_throughput_observation_when_knowledge_exists(self):
         from agent_on import knowledge

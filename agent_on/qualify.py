@@ -13,7 +13,8 @@ import urllib.error
 import urllib.request
 
 from .harness import run_launch
-from .invariants import build_context, claude_code_version, evaluate
+from .harness_codex import run_launch_codex
+from .invariants import build_context, claude_code_version, codex_version, evaluate
 from .paths import Paths, describe_copy
 from .schemas.observed import compute_context, empty_route
 from .schemas.routes import load_routes
@@ -33,13 +34,16 @@ OVER_LIMIT_WORDS = ("long", "context", "maximum", "exceed", "too many", "limit")
 
 
 class Wire:
-    """One route's Anthropic endpoint. Both auth headers are sent when there is a key: OpenRouter honours either."""
+    """One route's endpoint, speaking either the Anthropic Messages wire or the Responses wire. Both auth headers
+    are sent when there is a key: OpenRouter honours either."""
 
-    def __init__(self, base_url: str, model: str, key: str | None = None, timeout: float = 90.0):
+    def __init__(self, base_url: str, model: str, key: str | None = None, timeout: float = 90.0, wire: str = "messages"):
         self.base = base_url.rstrip("/")
         self.model = model
         self.key = key
         self.timeout = timeout
+        self.wire = wire
+        self.path = "/v1/messages" if wire == "messages" else "/v1/responses"
 
     def _request(self, path: str, payload: dict) -> urllib.request.Request:
         headers = {"Content-Type": "application/json", "Accept": "application/json", "anthropic-version": "2023-06-01"}
@@ -50,7 +54,7 @@ class Wire:
 
     def post(self, payload: dict) -> tuple[int, dict]:
         try:
-            with urllib.request.urlopen(self._request("/v1/messages", {"model": self.model, **payload}), timeout=self.timeout) as resp:
+            with urllib.request.urlopen(self._request(self.path, {"model": self.model, **payload}), timeout=self.timeout) as resp:
                 body = json.loads(resp.read() or b"{}")
                 return resp.status, body if isinstance(body, dict) else {}
         except urllib.error.HTTPError as e:
@@ -65,7 +69,7 @@ class Wire:
 
     def stream(self, payload: dict) -> tuple[int, list[dict]]:
         try:
-            with urllib.request.urlopen(self._request("/v1/messages", {"model": self.model, **payload, "stream": True}), timeout=self.timeout) as resp:
+            with urllib.request.urlopen(self._request(self.path, {"model": self.model, **payload, "stream": True}), timeout=self.timeout) as resp:
                 events: list[dict] = []
                 for raw in resp:
                     line = raw.decode("utf-8", "replace").strip()
@@ -99,6 +103,28 @@ class Wire:
             return None
         except (urllib.error.URLError, socket.timeout, TimeoutError, OSError, ValueError):
             return None
+
+    # ---- request builders: same call, either wire's shape ------------------------------------------------------
+
+    def simple(self, prompt: str, max_out: int) -> dict:
+        if self.wire == "messages":
+            return {"max_tokens": max_out, "messages": [{"role": "user", "content": prompt}]}
+        return {"max_output_tokens": max_out, "input": prompt}
+
+    def with_prefix(self, prefix: str, prompt: str, max_out: int) -> dict:
+        if self.wire == "messages":
+            return {"max_tokens": max_out, "system": [{"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}}],
+                    "messages": [{"role": "user", "content": prompt}]}
+        return {"max_output_tokens": max_out, "instructions": prefix, "input": prompt}
+
+    def cache_read(self, resp: dict) -> int:
+        u = resp.get("usage") or {}
+        if self.wire == "messages":
+            return int(u.get("cache_read_input_tokens") or 0)
+        return int((u.get("input_tokens_details") or {}).get("cached_tokens") or 0)
+
+    def output_tokens(self, resp: dict) -> int:
+        return int((resp.get("usage") or {}).get("output_tokens") or 0)
 
 
 # ---- response readers (ported from the verifier) --------------------------------------------------------------
@@ -216,18 +242,110 @@ def run_gates(wire: Wire) -> dict:
             "thinking_tokens": tokens_on_probe, "all_pass": all(gates.values())}
 
 
+# ---- the six gate analogues on the Responses wire (§8.1) -----------------------------------------------------------
+
+GATES_RESPONSES = ("text_stream", "instructions", "forced_function_call", "function_call_arguments_stream",
+                   "function_call_output_continuation", "reasoning_effort")
+FUNCTION_TOOL = {"type": "function", "name": "get_weather", "description": "Get current weather for a city",
+                 "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}
+
+
+def _items(resp, kind: str) -> list[dict]:
+    return [o for o in (resp.get("output") or []) if isinstance(o, dict) and o.get("type") == kind]
+
+
+def _message_text(resp) -> str:
+    return "".join(c.get("text", "") for o in _items(resp, "message") for c in (o.get("content") or []) if isinstance(c, dict) and c.get("type") == "output_text")
+
+
+def _stream_completed(events: list[dict]) -> dict | None:
+    done = [e for e in events if e.get("type") == "response.completed"]
+    return done[-1].get("response") if done else None
+
+
+def run_gates_responses(wire: Wire) -> dict:
+    """§8.1: the six analogues on the Responses wire. Every probe budgets 512 output tokens — a reasoning model spends
+    a small budget before the message (measured on glm-5.2 at 64)."""
+    gates: dict[str, bool] = {}
+    details: dict = {}
+    status, events = wire.stream(wire.simple("Reply with one short sentence confirming this route is ready.", RESPONSE_MAX_TOKENS))
+    text = "".join(e.get("delta", "") for e in events if e.get("type") == "response.output_text.delta")
+    gates["text_stream"] = status == 200 and _stream_completed(events) is not None and bool(text.strip())
+    details.update({"text_stream_status": status, "text_stream_chars": len(text)})
+
+    status, resp = wire.post({"max_output_tokens": RESPONSE_MAX_TOKENS,
+                              "instructions": f"Include the marker {MARKERS[0]} and the marker {MARKERS[1]} in the final reply.",
+                              "input": "Apply the instructions and reply with only their markers."})
+    text = _message_text(resp)
+    gates["instructions"] = status == 200 and all(m in text for m in MARKERS)
+    details["instructions_status"] = status
+
+    tool_prompt = "Call get_weather exactly once for Seoul. Put the city in the structured city argument."
+    forced = {"max_output_tokens": RESPONSE_MAX_TOKENS, "tools": [FUNCTION_TOOL], "tool_choice": {"type": "function", "name": "get_weather"}, "input": tool_prompt}
+    status, resp = wire.post(forced)
+    call = _items(resp, "function_call")[0] if status == 200 and _items(resp, "function_call") else None
+    call_id = call.get("call_id") if call else None
+    args = None
+    if call:
+        try:
+            args = json.loads(call.get("arguments") or "")
+        except ValueError:
+            args = None
+    gates["forced_function_call"] = bool(status == 200 and call and isinstance(call_id, str) and call_id.strip()
+                                         and call.get("name") == "get_weather" and _valid_city(args))
+    details["forced_function_call_status"] = status
+    details["forced_function_call_status_field"] = resp.get("status")
+
+    status, events = wire.stream(forced)
+    deltas = [e for e in events if e.get("type") == "response.function_call_arguments.delta"]
+    done_items = [e.get("item") or {} for e in events if e.get("type") == "response.output_item.done" and (e.get("item") or {}).get("type") == "function_call"]
+    streamed_args = None
+    if done_items:
+        try:
+            streamed_args = json.loads(done_items[0].get("arguments") or "")
+        except ValueError:
+            streamed_args = None
+    gates["function_call_arguments_stream"] = bool(status == 200 and _stream_completed(events) is not None and deltas and done_items
+                                                   and done_items[0].get("name") == "get_weather" and str(done_items[0].get("call_id") or "").strip()
+                                                   and _valid_city(streamed_args))
+    details["function_call_arguments_stream_status"] = status
+
+    cont_status, cont_text = 0, ""
+    if call and isinstance(call_id, str) and call_id.strip():
+        cont_status, cont = wire.post({"max_output_tokens": RESPONSE_MAX_TOKENS, "tools": [FUNCTION_TOOL], "input": [
+            {"role": "user", "content": tool_prompt},
+            {k: v for k, v in call.items() if k in ("type", "id", "call_id", "name", "arguments")},   # replay the model's own item
+            {"type": "function_call_output", "call_id": call_id, "output": "18C and sunny"}]})
+        cont_text = _message_text(cont)
+    gates["function_call_output_continuation"] = cont_status == 200 and bool(cont_text.strip())
+    details["function_call_output_continuation_status"] = cont_status
+
+    status, resp = wire.post({"max_output_tokens": RESPONSE_MAX_TOKENS, "reasoning": {"effort": "low"},
+                              "input": "Think briefly as the selected provider normally would, then reply exactly OK."})
+    text = _message_text(resp)
+    reasoning_items = _items(resp, "reasoning")
+    rt = ((resp.get("usage") or {}).get("output_tokens_details") or {}).get("reasoning_tokens")
+    seen = (bool(reasoning_items) or (isinstance(rt, int) and rt > 0)) if status == 200 else None
+    gates["reasoning_effort"] = status == 200 and bool(text.strip())
+    details["reasoning_effort_status"] = status
+    completed = status == 200 and bool(text.strip())
+    tokens_on_probe = rt if (status == 200 and seen and isinstance(rt, int)) else None
+    return {"gates": gates, "details": details, "thinking_block_seen": seen, "completed": completed,
+            "thinking_tokens": tokens_on_probe, "all_pass": all(gates.values())}
+
+
 # ---- probes ---------------------------------------------------------------------------------------------------------
 
 def _timed(wire: Wire) -> tuple[float, dict]:
     t = time.monotonic()
-    status, resp = wire.post({"max_tokens": 120, "messages": [{"role": "user", "content": THROUGHPUT_PROMPT}]})
+    status, resp = wire.post(wire.simple(THROUGHPUT_PROMPT, 120))
     return time.monotonic() - t, (resp if status == 200 else {})
 
 
 def probe_throughput(wire: Wire) -> dict:
     """Output tokens per second at short context, one request."""
     seconds, resp = _timed(wire)
-    out = int((resp.get("usage") or {}).get("output_tokens") or 0)
+    out = wire.output_tokens(resp)
     return {"tok_s": (out / seconds) if out and seconds > 0 else None, "output_tokens": out or None, "seconds": round(seconds, 3)}
 
 
@@ -260,13 +378,12 @@ def probe_caching(wire: Wire) -> dict:
     The prefix is large on purpose: oMLX caches in 4,096-token blocks (measured 2026-09-08 — a 1,770-token prefix is
     never reported cached, a 4,618-token one reads back 4,096), and Anthropic-style providers need ≥ 1,024."""
     prefix = ("This system prompt exists only to be long enough to be cached by the provider. " * 400).strip()
-    payload = {"max_tokens": 8, "system": [{"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}}],
-               "messages": [{"role": "user", "content": "Reply with exactly: OK"}]}
+    payload = wire.with_prefix(prefix, "Reply with exactly: OK", 8)
     first_status, _ = wire.post(payload)
     status, resp = wire.post(payload)
     if first_status != 200:
         status = first_status
-    read = int((resp.get("usage") or {}).get("cache_read_input_tokens") or 0)
+    read = wire.cache_read(resp)
     if status != 200:
         return {"caching": "unknown", "cache_read_second": None, "status": status}   # the probe did not run: not a measurement
     return {"caching": read > 0, "cache_read_second": read, "status": status}
@@ -285,15 +402,16 @@ def probe_limits(wire: Wire, lo: int, hi: int, *, count_tokens: bool = True, max
     1% or max_probes. Returns the largest accepted size as `verified`, or None when a refusal is not a limit error."""
     word = "lorem "
     calib = 1.0
+    count_tokens = count_tokens and wire.wire == "messages"                      # no count endpoint on the Responses wire
     if count_tokens:
-        n = wire.count_tokens({"messages": [{"role": "user", "content": word * 1000}]})
+        n = wire.count_tokens(wire.simple(word * 1000, 1))
         if n:
             calib = 1000 / n                                                        # words per token
 
     counted: dict[int, int] = {}                                                 # requested size → counted size
 
     def attempt(tokens: int) -> tuple[int, dict]:
-        payload = {"max_tokens": 1, "messages": [{"role": "user", "content": (word * int(tokens * calib)).strip()}]}
+        payload = wire.simple((word * int(tokens * calib)).strip(), 1)
         if count_tokens:
             n = wire.count_tokens(payload)
             if n:
@@ -336,7 +454,8 @@ def probe_limits(wire: Wire, lo: int, hi: int, *, count_tokens: bool = True, max
 # ---- the command (§9 qualify row) ----------------------------------------------------------------------------
 
 BASELINE_PROMPT = "Reply with exactly: OK"
-BASELINE_TOKENS_ESTIMATE = 50_000
+BASELINE_TOKENS_ESTIMATE = 50_000          # measured: Claude Code baseline prompt, ~54,380 input tokens
+CODEX_BASELINE_TOKENS_ESTIMATE = 7_000     # measured: Codex baseline prompt, ~6,859 input tokens
 
 
 def _estimate_paid_usd(price: dict | None, tokens: int) -> float | None:
@@ -345,37 +464,46 @@ def _estimate_paid_usd(price: dict | None, tokens: int) -> float | None:
     return round(tokens * float(price["input"]) / 1_000_000, 4)
 
 
-def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool = False, allow_paid: bool = False,
-                env: dict | None = None, timeout: float = 90.0, claude_bin: str | None = None) -> dict:
+def run_qualify(paths: Paths, name: str, *, wire: str = "messages", baseline: bool = False, limits: bool = False, allow_paid: bool = False,
+                env: dict | None = None, timeout: float = 90.0, claude_bin: str | None = None, codex_bin: str | None = None) -> dict:
     parent = dict(os.environ if env is None else env)
     table = load_routes(paths)
     route = table.resolve(name)
     source = table.sources[route.source]
     paid = source.auth_env is not None
     price = route.price.per_mtok() if route.price else None
-    doc: dict = {"command": "qualify", "copy": describe_copy(paths), "route": route.name, "refused": None, "gates": {}, "details": {},
+    doc: dict = {"command": "qualify", "copy": describe_copy(paths), "route": route.name, "wire": wire, "refused": None, "gates": {}, "details": {},
                  "probes": {}, "baseline": None, "fingerprint": None, "written": False, "invariants": []}
     if paid and (baseline or limits) and not allow_paid:
+        # minor fix-before-merge: this refusal ran Codex under --wire responses but always named Claude Code and
+        # its (much larger) baseline token estimate — wire-aware now.
+        baseline_tokens = BASELINE_TOKENS_ESTIMATE if wire == "messages" else CODEX_BASELINE_TOKENS_ESTIMATE
+        baseline_harness = "Claude Code" if wire == "messages" else "Codex"
         lim = table.effective_limits(route)
-        est = _estimate_paid_usd(price, (BASELINE_TOKENS_ESTIMATE if baseline else 0) + (2 * (lim.input or 0) if limits and lim else 0))
-        doc["refused"] = (f"{route.source} bills per token: --baseline runs Claude Code (~{BASELINE_TOKENS_ESTIMATE} input tokens) and --limits "
+        est = _estimate_paid_usd(price, (baseline_tokens if baseline else 0) + (2 * (lim.input or 0) if limits and lim else 0))
+        doc["refused"] = (f"{route.source} bills per token: --baseline runs {baseline_harness} (~{baseline_tokens} input tokens) and --limits "
                           f"sends up to ~2× the input limit; estimated ${est if est is not None else '?'} — re-run with --allow-paid")
         return doc
     key = resolve_secret(paths, source.auth_env, parent) if source.auth_env else None
-    wire = Wire(source.base_url, route.wire_model, key, timeout)
+    wire_obj = Wire(source.base_url, route.wire_model, key, timeout, wire=wire)
     probe = probe_source(source, timeout=5)
-    gates = run_gates(wire)
-    thr = probe_throughput(wire)
-    conc = probe_concurrency(wire)
-    cache = probe_caching(wire)
+    gates = run_gates(wire_obj) if wire == "messages" else run_gates_responses(wire_obj)
+    thr = probe_throughput(wire_obj)
+    conc = probe_concurrency(wire_obj)
+    cache = probe_caching(wire_obj)
     now = utc_now()
+    harness_version = claude_code_version(claude_bin) if wire == "messages" else codex_version(codex_bin)
     fp = {"effective_route_sha": table.effective_sha(route), "wire_model": route.wire_model,
-          "source_identity": probe.identity if probe.reachable else None, "claude_code": claude_code_version(claude_bin)}
+          "source_identity": probe.identity if probe.reachable else None, "harness_version": harness_version}
     qual = {"pass": gates["all_pass"], "gates": gates["gates"], "thinking_block_seen": gates["thinking_block_seen"],
-            "completed": gates["completed"], "at": now, "fingerprint": fp}
+            "completed": gates["completed"], "at": now, "fingerprint": fp, "wire": wire}
     base_tokens = None
     if baseline:
-        launch = run_launch(paths, route.name, ["-p", BASELINE_PROMPT], env=parent, claude_bin=claude_bin, announce=False)
+        if wire == "messages":
+            launch = run_launch(paths, route.name, ["-p", BASELINE_PROMPT], env=parent, claude_bin=claude_bin, announce=False)
+        else:
+            launch = run_launch_codex(paths, route.name, ["exec", "--skip-git-repo-check", "-s", "read-only", BASELINE_PROMPT],
+                                      env=parent, codex_bin=codex_bin, announce=False)
         first = (launch.get("last_session") or {}).get("first_request")
         # a transcript whose only turn was a synthetic API-error line has no first_request (or one with 0 total):
         # never record that as a measured baseline of 0 (final-fix item 1).
@@ -388,18 +516,21 @@ def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool
         cands = [v for v in (declared, tier.get("configured"), tier.get("advertised")) if v]
         lo = max(1024, min(cands) // 2) if cands else 1024
         hi = int(max(cands) * 1.1) if cands else 262144
-        lim_result = probe_limits(wire, lo, hi, count_tokens=True)
+        lim_result = probe_limits(wire_obj, lo, hi, count_tokens=True)
     doc.update({"gates": gates["gates"], "details": gates["details"], "fingerprint": fp, "baseline": base_tokens,
                 "probes": {"throughput": thr, "concurrency": conc, "caching": cache, "limits": lim_result}})
 
     def mutate(d: dict) -> None:
         r = d["routes"].setdefault(route.name, empty_route())
-        r["last_qualification"] = qual
+        r["qualifications"][wire] = {**qual, "wire": wire}
         cm = r["cost_model"]
         cm.update({"tok_s": thr["tok_s"], "concurrency": conc["concurrency"], "caching": cache["caching"],
                    "thinking": {"observed": gates["thinking_block_seen"], "tokens_on_probe": gates["thinking_tokens"]}, "checked": now})
         if baseline:
-            cm["harness_baseline_tokens"] = {"value": base_tokens, "measured_by": "qualify --baseline", "claude_code": fp["claude_code"], "at": now}
+            harness_key = "claude" if wire == "messages" else "codex"
+            measured_by = "qualify --baseline" if wire == "messages" else f"qualify --wire {wire} --baseline"
+            cm.setdefault("harness_baseline_tokens", {})[harness_key] = {"value": base_tokens, "measured_by": measured_by,
+                                                                          "harness_version": fp["harness_version"], "at": now}
         if lim_result and lim_result["verified"] is not None:
             r["limits"]["input"]["verified"] = lim_result["verified"]
             r["limits"]["input"]["checked"] = now
@@ -415,11 +546,12 @@ def run_qualify(paths: Paths, name: str, *, baseline: bool = False, limits: bool
         q = append(paths, "qualifications", {"route": route.name, "fingerprint": fp, "gates": gates["gates"],
                                              "thinking_block_seen": gates["thinking_block_seen"], "completed": gates["completed"],
                                              "tok_s": thr["tok_s"], "concurrency": conc["concurrency"], "caching": cache["caching"],
-                                             "commit": doc["copy"]["commit"]}, now=now)
+                                             "commit": doc["copy"]["commit"], "wire": wire}, now=now)
         o = append(paths, "observations", {"route": route.name, "kind": "throughput",
                                            "values": {"tok_s": thr["tok_s"], "concurrency": conc["concurrency"], "caching": cache["caching"],
                                                       "thinking_observed": gates["thinking_block_seen"]},
                                            "evidence": f"qualify {q['id']}", "session": None}, now=now)
         doc["knowledge"] = {"qualification": q["id"], "observation": o["id"]}
-    doc["invariants"] = [r.as_dict() for r in evaluate(build_context(paths, with_claude_code=True, claude_bin=claude_bin), ids=["route.served", "qualification.current"], route=route.name)]
+    doc["invariants"] = [r.as_dict() for r in evaluate(build_context(paths, with_claude_code=True, claude_bin=claude_bin, codex_bin=codex_bin),
+                                                        ids=["route.served", "qualification.current"], route=route.name)]
     return doc

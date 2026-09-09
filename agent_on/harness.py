@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from .ids import ulid
 from .knowledge import append as knowledge_append, knowledge_view
 from .paths import Paths, describe_copy, ensure_state, project_slug
 from .schemas.observed import USAGE_FIELDS, empty_route
-from .schemas.routes import Route, RouteTable, load_routes
+from .schemas.routes import Route, RouteTable, Source, load_routes
 from .sources import probe_source
 from .state import append_session_run, locked, read_observed, read_session_runs, resolve_secret, update_observed
 from .util import parse_utc, utc_now
@@ -57,14 +58,28 @@ PASS_THROUGH = ("CLAUDE_CODE_MAX_OUTPUT_TOKENS",)
 # ---- child environment (§11 item 2) --------------------------------------------------------------------------
 
 def child_env(parent: dict, table: RouteTable, route: Route, *, context: int | None, config_dir: Path,
-              discover: bool = False, sonnet: Route | None = None, haiku: Route | None = None) -> dict:
-    """The environment Claude Code is spawned with. Every source's auth_env and the routing denylist are removed;
-    a keyed source gets NO key variable (the apiKeyHelper supplies it); a keyless one gets the placeholder token."""
+              discover: bool = False, sonnet: Route | None = None, haiku: Route | None = None, harness: str = "claude") -> dict:
+    """The environment the harness is spawned with. Every source's auth_env and the routing denylist are removed;
+    a keyed source gets NO key variable (the apiKeyHelper supplies it); a keyless one gets the placeholder token.
+    Every CODEX_* variable (the operator's own, not just CODEX_HOME) is dropped from BOTH branches — the launcher
+    always sets its own CODEX_HOME last. `harness="codex"` scrubs the same way, plus every OPENAI_* variable, and
+    sets only CODEX_HOME — no Anthropic variable, no PASS_THROUGH (that's Claude Code's own output-cap control, D12)."""
     for r in (sonnet, haiku):
         if r is not None and r.source != route.source:
             raise ValueError(f"--sonnet/--haiku must name a route on source {route.source!r}; {r.name!r} is on {r.source!r}")
+    if harness == "codex":
+        # final-fix minor: drop every CODEX_* variable (not just CODEX_HOME) — the operator's own CODEX_API_KEY,
+        # honoured by `codex exec`, would otherwise reach every shell-tool child (§1.1c mechanism) — then set
+        # CODEX_HOME last so the launcher's own value always wins.
+        env = {k: v for k, v in parent.items()
+               if k not in SCRUB_ENV and not k.startswith(("ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_"))}
+        for src in table.sources.values():
+            if src.auth_env:
+                env.pop(src.auth_env, None)
+        env["CODEX_HOME"] = str(config_dir)
+        return env
     env = {k: v for k, v in parent.items()
-           if k in PASS_THROUGH or (k not in SCRUB_ENV and not k.startswith(("ANTHROPIC_", "CLAUDE_")))}
+           if k in PASS_THROUGH or (k not in SCRUB_ENV and k != "CODEX_HOME" and not k.startswith(("ANTHROPIC_", "CLAUDE_")))}
     for src in table.sources.values():
         if src.auth_env:
             env.pop(src.auth_env, None)
@@ -255,16 +270,23 @@ def session_args(claude_args: list[str]) -> tuple[list[str], str | None, str]:
 
 # ---- the §12 line ----------------------------------------------------------------------------------------------
 
-def cost_line(route_name: str, observed_route: dict | None) -> str:
-    """One line before spawning. Every field comes from the cost model; a value the probes did not produce is `?`."""
+def cost_line(route_name: str, observed_route: dict | None, harness: str = "claude") -> str:
+    """One line before spawning. Every field comes from the cost model; a value the probes did not produce is `?`.
+    `harness`'s own baseline is shown first; any other harness with a measured baseline is appended (Plan F)."""
     cm = (observed_route or {}).get("cost_model") or {}
     ctx = cm.get("context")
-    base = (cm.get("harness_baseline_tokens") or {}).get("value")
+    hb = cm.get("harness_baseline_tokens") or {}
+    base = (hb.get(harness) or {}).get("value")
+    others = [(h, b) for h, b in hb.items() if h != harness and b.get("value")]
     ctx_s = f"ctx {ctx}" if ctx else "ctx ?"
-    if ctx and base:
-        ctx_s += f" ({base} baseline = {round(100 * base / ctx)}%)"
+    if others:                                                                    # more than one harness measured: name each, no "baseline" word
+        parts = ([f"{harness} {base} = {round(100 * base / ctx)}%"] if ctx and base else ([f"{harness} {base}"] if base else []))
+        parts += [f"{h} {b['value']} = {round(100 * b['value'] / ctx)}%" if ctx else f"{h} {b['value']}" for h, b in others]
+        ctx_s += f" ({' · '.join(parts)})"
+    elif ctx and base:
+        ctx_s += f" ({harness} {base} baseline = {round(100 * base / ctx)}%)"
     elif base:
-        ctx_s += f" ({base} baseline)"
+        ctx_s += f" ({harness} {base} baseline)"
     tok = cm.get("tok_s")
     tok_s = f"{tok:.0f} tok/s" if isinstance(tok, (int, float)) and not isinstance(tok, bool) else "? tok/s"
     usd = cm.get("usd_per_mtok")
@@ -354,19 +376,22 @@ def find_transcript(paths: Paths, session_id: str | None, cwd: str, mode: str, s
     return max(files, key=lambda p: p.stat().st_mtime) if files else None
 
 
-def record_session(paths: Paths, launch: dict, *, ended: str, transcript: Path | None, mode: str) -> dict:
+def record_session(paths: Paths, launch: dict, *, ended: str, transcript: dict | None, mode: str,
+                   harness: str = "claude", harness_version: str | None = None) -> dict:
     """Write last_session for the route and one ledger line for the session (§11 item 4). Best-effort: a missing
-    transcript is recorded as {skipped}, never raised."""
+    transcript is recorded as {skipped}, never raised. `transcript` is the already-parsed dict (`read_transcript`'s
+    result) — the caller resolves the path and reads it first, because a non-Claude harness parses its own
+    transcript format. `harness_version` defaults to the transcript's own `version` field when not given."""
     route = launch["route"]
     session_id = None
     this_line = None
     if mode == "no-persistence":
         rec: dict = {"skipped": "no-session-persistence"}
-    elif transcript is None or not transcript.exists():
-        rec = {"skipped": f"no transcript at {transcript}"}
+    elif transcript is None:
+        rec = {"skipped": "no transcript"}
     else:
-        t = read_transcript(transcript)
-        session_id = t["session_id"] or launch.get("session_id") or transcript.stem
+        t = transcript
+        session_id = t["session_id"] or launch.get("session_id") or launch["launch_id"]
         run = {"launch_id": launch["launch_id"], "route": route, "source": launch["source"], "wire_model": launch["wire_model"],
                "started": launch["started"], "ended": ended, "price": launch["price"], "priced_models": launch.get("priced_models") or {}}
         this_run = attribute_run(t["turns"], run)
@@ -379,7 +404,8 @@ def record_session(paths: Paths, launch: dict, *, ended: str, transcript: Path |
                "this_run": this_run, "session_total": total,
                "scope_note": "fresh session; this_run == session_total" if fresh else f"{mode}: this_run is this launch's turns; session_total folds {len(runs)} run(s)",
                "duration_ms": int((parse_utc(ended) - parse_utc(launch["started"])).total_seconds() * 1000),
-               "effort": t["effort"], "permission_mode": t["permission_mode"], "claude_code": t["version"]}
+               "effort": t["effort"], "permission_mode": t["permission_mode"], "harness": harness,
+               "harness_version": harness_version if harness_version is not None else t.get("version")}
 
     def mutate(doc: dict) -> None:
         doc["routes"].setdefault(route, empty_route())["last_session"] = rec
@@ -427,12 +453,39 @@ def _price_of(route: Route, keyless: bool) -> dict | None:
     return dict(FREE) if keyless else None
 
 
-def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str = "claude", discover: bool = False,
-               sonnet: str | None = None, haiku: str | None = None, dry_run: bool = False, env: dict | None = None,
-               claude_bin: str | None = None, cwd: str | None = None, probe_timeout: float = 2.0, announce: bool = True,
-               task: str | None = None, handoff: str = "latest") -> dict:
-    if harness != "claude":
-        raise ValueError(f"harness {harness!r} is not bound yet (Plan F adds codex)")
+@dataclass
+class LaunchPlan:
+    """Everything a launch works out before it's known which harness-specific middle will use it — same
+    computation for Claude and Codex (Task 5). Built by `prologue`; `run_launch` (or its Codex counterpart) reads
+    it to build the harness-specific launch record, and passes it straight through to `epilogue`."""
+    parent: dict
+    table: RouteTable
+    route: Route
+    source: Source
+    cwd: str
+    args: list[str]
+    task_doc: dict | None
+    obs_route: dict | None
+    warnings: list[str]
+    traps: list
+    served: dict
+    lint: list[dict]
+    context: int | None
+    key: str | None
+    keyless: bool
+    price: dict | None
+    priced_models: dict
+    launch_id: str
+    started: str
+    swept: list[str]
+
+
+def prologue(paths: Paths, name: str, args: list[str], *, env: dict | None, cwd: str | None, task: str | None,
+            handoff: str, probe_timeout: float, harness_bin: str | None, harness: str) -> LaunchPlan:
+    """The harness-agnostic half of a launch: resolve the task handoff (if any) and the route, read the D6
+    traps/probe/lint story, resolve the auth key, price the source's models, and sweep dead run directories.
+    `harness_bin` feeds `build_context` as `claude_bin` for the `claude` harness or `codex_bin` for `codex` —
+    that's the only place `harness` changes this function's behaviour."""
     parent = dict(os.environ if env is None else env)
     task_doc = None
     if task:
@@ -442,7 +495,7 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
         if not os.path.isdir(t["worktree"]):
             raise ValueError(f"launch: task worktree is no longer a directory: {t['worktree']}")
         cwd = t["worktree"]                                                        # the handoff's worktree, as the old task launch did
-        claude_args = [*claude_args, render_prompt(t, h)]                          # the initial prompt is Claude Code's last positional
+        args = [*args, render_prompt(t, h)]                                        # the initial prompt is the harness's last positional
         task_doc = {"id": t["id"], "handoff": h["index"], "worktree": os.path.realpath(t["worktree"]), "to_route": h["to_route"]}
     # the physical path: Claude Code derives the transcript slug from process.cwd(), which resolves symlinks
     # (macOS: /var/… is /private/var/…); the trust entry and the transcript lookup must use the same string
@@ -452,8 +505,6 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     if task_doc and task_doc.pop("to_route") != route.name:
         raise ValueError(f"launch: route {route.name} is not the handoff's route")
     source = table.sources[route.source]
-    sonnet_r = table.resolve(sonnet) if sonnet else None
-    haiku_r = table.resolve(haiku) if haiku else None
     observed = read_observed(paths)
     obs_route = observed["routes"].get(route.name)
     warnings: list[str] = []
@@ -472,7 +523,8 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
         served = {"id": "route.served", "result": "fail", "reason": f"{route.wire_model!r} not in {route.source} catalog", "subject": route.name, "fix": "run `agent-on sync`"}
         warnings.append(f"{route.wire_model!r} is not in the {route.source} catalog right now; launching anyway (D6)")
     from .invariants import build_context, evaluate                                # local: invariants imports this module
-    lint = [r.as_dict() for r in evaluate(build_context(paths, claude_bin=claude_bin), ids=["harness.env.clean", "credential.not_in_child_env"])]
+    bin_kwargs = {"claude_bin": harness_bin} if harness == "claude" else {"codex_bin": harness_bin}
+    lint = [r.as_dict() for r in evaluate(build_context(paths, **bin_kwargs), ids=["harness.env.clean", "credential.not_in_child_env"])]
     for r in lint:
         if r["result"] == "fail":
             warnings.append(f"{r['id']}: {r['reason']} — launching anyway (D6)")
@@ -483,58 +535,92 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     key = resolve_secret(paths, source.auth_env, parent) if source.auth_env else None
     if source.auth_env and key is None:
         warnings.append(f"no {source.auth_env} in the environment or {paths.env_file}; Claude Code will not be able to authenticate to {route.source}")
-    # F1: Claude Code does not merge repeated --settings — the last one wins — so a user's --settings would silently
-    # displace the launcher's apiKeyHelper file. A keyed source therefore extracts it and folds it under ours
-    # (write_run_dir); a keyless source has no helper file to displace, so the user's --settings is left untouched.
-    stripped_args, user_settings = extract_user_settings(claude_args)
-    settings_merged = key is not None and user_settings is not None
-    if key is not None:
-        claude_args = stripped_args
-    if settings_merged and "apiKeyHelper" in user_settings:
-        warnings.append("user --settings apiKeyHelper replaced by the launcher's credential helper")
-    swept = sweep_run_dirs(paths)
-    config_dir = prepare_config_dir(paths, cwd)
-    launch_id = ulid()
-    started = utc_now()
-    args, session_id, mode = session_args(claude_args)
     keyless = source.auth_env is None
     priced = {r.wire_model: _price_of(r, keyless) for r in table.by_source(route.source)}
-    launch = {"launch_id": launch_id, "route": route.name, "source": route.source, "wire_model": route.wire_model, "started": started,
-              "session_id": session_id, "mode": mode, "cwd": cwd, "price": _price_of(route, keyless),
-              "priced_models": {m: p for m, p in priced.items() if p is not None}, "context": context, "claude_args": args}
-    cenv = child_env(parent, table, route, context=context, config_dir=config_dir, discover=discover, sonnet=sonnet_r, haiku=haiku_r)
-    line = cost_line(route.name, obs_route)
-    doc = {"command": "launch", "copy": describe_copy(paths), "route": route.name, "wire_model": route.wire_model, "base_url": source.base_url,
-           "launch_id": launch_id, "session": {"id": session_id, "mode": mode}, "cost_line": line, "invariants": [served, *lint],
-           "env_keys": sorted(k for k in cenv if k.startswith(("ANTHROPIC_", "CLAUDE_"))), "swept": swept, "warnings": warnings,
-           "settings_merged": settings_merged, "traps": traps, "task": task_doc}
-    binary = claude_bin or shutil.which("claude") or "claude"
-    if dry_run:
-        doc.update({"dry_run": True, "argv": [binary, *(["--settings", "<run-dir>/settings.json"] if key is not None else []), *args]})
-        return doc
-    run_dir, helper = write_run_dir(paths, launch_id, key=key, launch=launch, user_settings=user_settings)
-    if task_doc:
-        from .tasks import launched
-        launched(paths, task_doc["id"], handoff=str(task_doc["handoff"]), launch_id=launch_id, route=route.name)
-    argv = [binary, *(["--settings", str(helper)] if helper else []), *args]   # a keyed source's --settings is always ours (F1): the user's was folded into it, or there is none
-    if announce:
-        print(line, file=sys.stderr)                                              # the §12 line, before spawning
-    try:
-        code = spawn(argv, cenv, cwd)
-    finally:
-        shutil.rmtree(run_dir, ignore_errors=True)                                 # the key never outlives the child
-    ended = utc_ceil()                                                            # inclusive of the last turn's milliseconds
-    transcript = find_transcript(paths, session_id, cwd, mode, started)
-    rec = record_session(paths, launch, ended=ended, transcript=transcript, mode=mode)
-    doc.update({"exit_code": code, "last_session": rec, "transcript": str(transcript) if transcript else None})
+    price = _price_of(route, keyless)
+    priced_models = {m: p for m, p in priced.items() if p is not None}
+    swept = sweep_run_dirs(paths)
+    launch_id = ulid()
+    started = utc_now()
+    return LaunchPlan(parent=parent, table=table, route=route, source=source, cwd=cwd, args=args, task_doc=task_doc,
+                      obs_route=obs_route, warnings=warnings, traps=traps, served=served, lint=lint, context=context,
+                      key=key, keyless=keyless, price=price, priced_models=priced_models, launch_id=launch_id,
+                      started=started, swept=swept)
+
+
+def epilogue(paths: Paths, plan: LaunchPlan, launch: dict, *, code: int, ended: str, transcript: dict | None,
+            mode: str, harness: str, harness_version: str | None, doc: dict) -> dict:
+    """Read the session back into the cost ledger (`record_session`), fold `exit_code`/`last_session` into `doc`,
+    and append a knowledge cost observation when there's a completed run to observe. `transcript` is the
+    already-parsed transcript (`record_session`'s own contract) — the caller finds and parses it, and sets
+    `doc["transcript"]` (the path), before calling this: finding that path is harness-specific."""
+    rec = record_session(paths, launch, ended=ended, transcript=transcript, mode=mode, harness=harness, harness_version=harness_version)
+    doc.update({"exit_code": code, "last_session": rec})
     doc["knowledge"] = None
     if paths.knowledge_dir.is_dir() and "this_run" in rec:
         tr = rec["this_run"]
         u = tr["usage"]
-        o = knowledge_append(paths, "observations", {"route": route.name, "kind": "cost",
+        o = knowledge_append(paths, "observations", {"route": plan.route.name, "kind": "cost",
                                                      "values": {"turns": tr["turns"], "input_tokens": u["input_tokens"], "output_tokens": u["output_tokens"],
                                                                 "cache_read_input_tokens": u["cache_read_input_tokens"], "cache_creation_input_tokens": u["cache_creation_input_tokens"],
                                                                 "cost_usd": tr["cost_usd"]},
-                                                     "evidence": f"session {session_id} run {launch_id}", "session": session_id}, now=ended)
+                                                     "evidence": f"session {launch['session_id']} run {launch['launch_id']}", "session": launch["session_id"]}, now=ended)
         doc["knowledge"] = {"observation": o["id"]}
     return doc
+
+
+def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str = "claude", discover: bool = False,
+               sonnet: str | None = None, haiku: str | None = None, dry_run: bool = False, env: dict | None = None,
+               claude_bin: str | None = None, codex_bin: str | None = None, cwd: str | None = None, probe_timeout: float = 2.0,
+               announce: bool = True, task: str | None = None, handoff: str = "latest") -> dict:
+    if harness == "codex":
+        from .harness_codex import run_launch_codex
+        return run_launch_codex(paths, name, claude_args, dry_run=dry_run, env=env, codex_bin=codex_bin, cwd=cwd,
+                                probe_timeout=probe_timeout, announce=announce, task=task, handoff=handoff)
+    if harness != "claude":
+        raise ValueError(f"harness {harness!r} is not bound yet (Plan F adds codex)")
+    plan = prologue(paths, name, claude_args, env=env, cwd=cwd, task=task, handoff=handoff, probe_timeout=probe_timeout,
+                    harness_bin=claude_bin, harness=harness)
+    table, route, source = plan.table, plan.route, plan.source
+    sonnet_r = table.resolve(sonnet) if sonnet else None
+    haiku_r = table.resolve(haiku) if haiku else None
+    # F1: Claude Code does not merge repeated --settings — the last one wins — so a user's --settings would silently
+    # displace the launcher's apiKeyHelper file. A keyed source therefore extracts it and folds it under ours
+    # (write_run_dir); a keyless source has no helper file to displace, so the user's --settings is left untouched.
+    stripped_args, user_settings = extract_user_settings(plan.args)
+    settings_merged = plan.key is not None and user_settings is not None
+    claude_args = stripped_args if plan.key is not None else plan.args
+    if settings_merged and "apiKeyHelper" in user_settings:
+        plan.warnings.append("user --settings apiKeyHelper replaced by the launcher's credential helper")
+    config_dir = prepare_config_dir(paths, plan.cwd)
+    args, session_id, mode = session_args(claude_args)
+    launch = {"launch_id": plan.launch_id, "route": route.name, "source": route.source, "wire_model": route.wire_model, "started": plan.started,
+              "session_id": session_id, "mode": mode, "cwd": plan.cwd, "price": plan.price,
+              "priced_models": plan.priced_models, "context": plan.context, "claude_args": args}
+    cenv = child_env(plan.parent, table, route, context=plan.context, config_dir=config_dir, discover=discover, sonnet=sonnet_r, haiku=haiku_r)
+    line = cost_line(route.name, plan.obs_route)
+    doc = {"command": "launch", "copy": describe_copy(paths), "route": route.name, "wire_model": route.wire_model, "base_url": source.base_url,
+           "launch_id": plan.launch_id, "session": {"id": session_id, "mode": mode}, "cost_line": line, "invariants": [plan.served, *plan.lint],
+           "env_keys": sorted(k for k in cenv if k.startswith(("ANTHROPIC_", "CLAUDE_"))), "swept": plan.swept, "warnings": plan.warnings,
+           "settings_merged": settings_merged, "traps": plan.traps, "task": plan.task_doc}
+    binary = claude_bin or shutil.which("claude") or "claude"
+    if dry_run:
+        doc.update({"dry_run": True, "argv": [binary, *(["--settings", "<run-dir>/settings.json"] if plan.key is not None else []), *args]})
+        return doc
+    run_dir, helper = write_run_dir(paths, plan.launch_id, key=plan.key, launch=launch, user_settings=user_settings)
+    if plan.task_doc:
+        from .tasks import launched
+        launched(paths, plan.task_doc["id"], handoff=str(plan.task_doc["handoff"]), launch_id=plan.launch_id, route=route.name)
+    argv = [binary, *(["--settings", str(helper)] if helper else []), *args]   # a keyed source's --settings is always ours (F1): the user's was folded into it, or there is none
+    if announce:
+        print(line, file=sys.stderr)                                              # the §12 line, before spawning
+    try:
+        code = spawn(argv, cenv, plan.cwd)
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)                                 # the key never outlives the child
+    ended = utc_ceil()                                                            # inclusive of the last turn's milliseconds
+    transcript_path = find_transcript(paths, session_id, plan.cwd, mode, plan.started)
+    parsed = read_transcript(transcript_path) if transcript_path and transcript_path.exists() else None
+    doc["transcript"] = str(transcript_path) if transcript_path else None
+    return epilogue(paths, plan, launch, code=code, ended=ended, transcript=parsed, mode=mode, harness="claude",
+                    harness_version=None, doc=doc)

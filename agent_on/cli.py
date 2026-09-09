@@ -31,11 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--alias")
     a.add_argument("--timeout", type=float, default=5.0)
     sub.add_parser("gate", parents=[common], help="unit tests + mock-source smoke + every invariant; writes last_gate_run")
-    i = sub.add_parser("install", parents=[common], help="link ~/.local/bin/agent-on and claude-on to this checkout, create the state root, check python3 (D9)")
+    i = sub.add_parser("install", parents=[common], help="link ~/.local/bin/agent-on, claude-on and codex-on to this checkout, create the state root, check python3 (D9)")
     i.add_argument("--bin-dir", metavar="DIR", help="where to put the shims (default ~/.local/bin)")
     i.add_argument("--dry-run", action="store_true")
-    l = sub.add_parser("launch", parents=[common], help="bind Claude Code to a route and run it; `claude-on <route>` is this verb (everything after the route goes to Claude Code)")
-    l.add_argument("--harness", default="claude", choices=["claude"])
+    l = sub.add_parser("launch", parents=[common], help="bind a harness (Claude Code or Codex) to a route and run it; `claude-on <route>` / `codex-on <route>` is this verb (everything after the route goes to the harness)")
+    l.add_argument("--harness", default="claude", choices=["claude", "codex"])
     l.add_argument("--discover", action="store_true", help="set CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 (D8: off by default)")
     l.add_argument("--sonnet", metavar="ROUTE", help="bind the SONNET slot to another route on the same source")
     l.add_argument("--haiku", metavar="ROUTE", help="bind the HAIKU slot to another route on the same source")
@@ -46,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     l.add_argument("claude_args", nargs=argparse.REMAINDER, help="passed to Claude Code unchanged")
     q = sub.add_parser("qualify", parents=[common], help="six fidelity gates + throughput/concurrency/caching/thinking probes; --baseline and --limits (paid sources need --allow-paid)")
     q.add_argument("route")
+    q.add_argument("--wire", choices=["messages", "responses"], default="messages", help="the wire to qualify (default messages)")
     q.add_argument("--baseline", action="store_true")
     q.add_argument("--limits", action="store_true")
     q.add_argument("--allow-paid", action="store_true")
@@ -122,6 +123,8 @@ def render_launch(doc: dict) -> str:
 
 def render_qualify(doc: dict) -> str:
     lines = [copy_line(doc["copy"])]
+    if doc.get("wire", "messages") != "messages":
+        lines.append(f"wire: {doc['wire']}")
     if doc["refused"]:
         return "\n".join(lines + [f"refused: {doc['refused']}"])
     lines += [f"  {'pass' if ok else 'FAIL'} {g}" for g, ok in doc["gates"].items()]
@@ -187,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             from .harness import run_launch
             doc = run_launch(paths, args.route, args.claude_args, harness=args.harness, discover=args.discover, sonnet=args.sonnet,
                              haiku=args.haiku, dry_run=args.dry_run, claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"),
-                             task=args.task, handoff=args.handoff)
+                             codex_bin=os.environ.get("AGENT_ON_CODEX_BIN"), task=args.task, handoff=args.handoff)
             if args.dry_run:
                 code = 0
             else:
@@ -199,8 +202,8 @@ def main(argv: list[str] | None = None) -> int:
             text = render_launch(doc)
         elif args.command == "qualify":
             from .qualify import run_qualify
-            doc = run_qualify(paths, args.route, baseline=args.baseline, limits=args.limits, allow_paid=args.allow_paid, timeout=args.timeout,
-                              claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"))
+            doc = run_qualify(paths, args.route, wire=args.wire, baseline=args.baseline, limits=args.limits, allow_paid=args.allow_paid, timeout=args.timeout,
+                              claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"), codex_bin=os.environ.get("AGENT_ON_CODEX_BIN"))
             code = EXIT_OK if doc["written"] and all(doc["gates"].values()) else EXIT_FAIL
             text = render_qualify(doc)
         elif args.command == "learn":

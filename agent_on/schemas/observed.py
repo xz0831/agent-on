@@ -4,15 +4,20 @@ from __future__ import annotations
 
 from .errors import SchemaError
 
-OBSERVED_VERSION = 1
+OBSERVED_VERSION = 2
 USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 FORBIDDEN_KEYS = ("total_cost_usd", "costUSD")
 CACHING_VALUES = (True, False, "unknown")
-SESSION_KEYS = ("id", "at", "first_request", "this_run", "session_total", "scope_note", "duration_ms", "effort", "permission_mode", "claude_code")
+WIRES = ("messages", "responses")
+HARNESSES = ("claude", "codex")
+WIRE_OF = {"claude": "messages", "codex": "responses"}
+HARNESS_OF = {"messages": "claude", "responses": "codex"}
+SESSION_KEYS = ("id", "at", "first_request", "this_run", "session_total", "scope_note", "duration_ms", "effort", "permission_mode", "harness", "harness_version")
 CHECK_KEYS = ("at", "commit", "result", "skipped")
 GATE_RUN_KEYS = ("at", "commit", "result", "tests", "verifiers", "invariants", "skipped", "skipped_reasons", "mock_port")
-QUALIFICATION_KEYS = ("pass", "gates", "thinking_block_seen", "completed", "at", "fingerprint")
-FINGERPRINT_KEYS = ("effective_route_sha", "wire_model", "source_identity", "claude_code")
+QUALIFICATION_KEYS = ("pass", "gates", "thinking_block_seen", "completed", "at", "fingerprint", "wire")
+FINGERPRINT_KEYS = ("effective_route_sha", "wire_model", "source_identity", "harness_version")
+BASELINE_KEYS = ("value", "measured_by", "harness_version", "at")
 
 
 def empty_tier() -> dict:
@@ -20,13 +25,13 @@ def empty_tier() -> dict:
 
 
 def empty_cost_model() -> dict:
-    return {"context": None, "context_basis": None, "harness_baseline_tokens": None, "tok_s": None,
+    return {"context": None, "context_basis": None, "harness_baseline_tokens": {}, "tok_s": None,
             "usd_per_mtok": None, "caching": "unknown", "concurrency": None, "thinking": None, "checked": None}
 
 
 def empty_route() -> dict:
     return {"served": None, "checked": None, "limits": {"input": empty_tier(), "output": empty_tier()},
-            "cost_model": empty_cost_model(), "last_qualification": None, "last_session": None}
+            "cost_model": empty_cost_model(), "qualifications": {}, "last_session": None}
 
 
 def empty_source() -> dict:
@@ -37,6 +42,33 @@ def empty_source() -> dict:
 def empty_observed() -> dict:
     return {"version": OBSERVED_VERSION, "copy": None, "sources": {}, "routes": {}, "last_check": None,
             "last_gate_run": None, "spend": {}}
+
+
+def migrate_observed(doc: dict) -> dict:
+    """v1 → v2 in place (§7.2): qualifications keyed by wire, baselines by harness, sessions carry the harness.
+    Idempotent; a v2 document is returned untouched."""
+    if not isinstance(doc, dict) or doc.get("version") != 1:
+        return doc
+    for r in (doc.get("routes") or {}).values():
+        q = r.pop("last_qualification", None)
+        r.setdefault("qualifications", {})
+        if q:
+            fp = dict(q.get("fingerprint") or {})
+            fp["harness_version"] = fp.pop("claude_code", None)
+            r["qualifications"]["messages"] = {**q, "wire": "messages", "fingerprint": fp}
+        cm = r.get("cost_model") or {}
+        hb = cm.get("harness_baseline_tokens")
+        if isinstance(hb, dict) and "value" in hb:                                 # the flat v1 record
+            cm["harness_baseline_tokens"] = {"claude": {"value": hb.get("value"), "measured_by": hb.get("measured_by"),
+                                                         "harness_version": hb.get("claude_code"), "at": hb.get("at")}}
+        elif hb is None:
+            cm["harness_baseline_tokens"] = {}
+        ls = r.get("last_session")
+        if isinstance(ls, dict) and "skipped" not in ls:
+            ls.setdefault("harness", "claude")
+            ls["harness_version"] = ls.pop("claude_code", ls.get("harness_version"))
+    doc["version"] = 2
+    return doc
 
 
 def forbid_claude_cost(obj, path: str = "$") -> None:
@@ -70,6 +102,8 @@ def validate_session(s, where: str) -> None:
             raise SchemaError("observed.session.shape", f"{where}.skipped must say why")
         return
     _require_keys(s, SESSION_KEYS, where, "observed.session.shape")
+    if s["harness"] not in HARNESSES:
+        raise SchemaError("observed.session.shape", f"{where}.harness must be one of {HARNESSES}")
     if s["first_request"] is not None:
         _require_keys(s["first_request"], ("input_tokens_total", "usage"), f"{where}.first_request", "observed.session.shape")
     for part, extra in (("this_run", ("models_seen",)), ("session_total", ("covered_turns", "uncovered_turns"))):
@@ -90,12 +124,25 @@ def validate_route(r, where: str) -> None:
         raise SchemaError("observed.route.shape", f"{where}.cost_model.caching must be true, false or 'unknown'")
     if r["served"] not in (True, False, None):
         raise SchemaError("observed.route.shape", f"{where}.served must be true, false or null")
-    q = r["last_qualification"]
-    if q is not None:
-        _require_keys(q, QUALIFICATION_KEYS, f"{where}.last_qualification", "observed.qualification.shape")
-        _require_keys(q["fingerprint"], FINGERPRINT_KEYS, f"{where}.last_qualification.fingerprint", "observed.qualification.shape")
+    qs = r["qualifications"]
+    if not isinstance(qs, dict):
+        raise SchemaError("observed.qualification.shape", f"{where}.qualifications must be an object keyed by wire")
+    for wire, q in qs.items():
+        if wire not in WIRES:
+            raise SchemaError("observed.qualification.shape", f"{where}.qualifications.{wire}: unknown wire; wires: {WIRES}")
+        _require_keys(q, QUALIFICATION_KEYS, f"{where}.qualifications.{wire}", "observed.qualification.shape")
+        _require_keys(q["fingerprint"], FINGERPRINT_KEYS, f"{where}.qualifications.{wire}.fingerprint", "observed.qualification.shape")
+        if q["wire"] != wire:
+            raise SchemaError("observed.qualification.shape", f"{where}.qualifications.{wire}.wire must be {wire!r}")
         if not isinstance(q["gates"], dict) or not all(isinstance(v, bool) for v in q["gates"].values()):
-            raise SchemaError("observed.qualification.shape", f"{where}.last_qualification.gates must map gate names to booleans")
+            raise SchemaError("observed.qualification.shape", f"{where}.qualifications.{wire}.gates must map gate names to booleans")
+    hb = r["cost_model"]["harness_baseline_tokens"]
+    if not isinstance(hb, dict):
+        raise SchemaError("observed.route.shape", f"{where}.cost_model.harness_baseline_tokens must be an object keyed by harness")
+    for h, b in hb.items():
+        if h not in HARNESSES:
+            raise SchemaError("observed.route.shape", f"{where}.cost_model.harness_baseline_tokens.{h}: unknown harness; harnesses: {HARNESSES}")
+        _require_keys(b, BASELINE_KEYS, f"{where}.cost_model.harness_baseline_tokens.{h}", "observed.route.shape")
     if r["last_session"] is not None:
         validate_session(r["last_session"], f"{where}.last_session")
 

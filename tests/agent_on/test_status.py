@@ -75,19 +75,19 @@ class StatusTest(unittest.TestCase):
 
     def test_text_view_shows_the_last_qualifications_outcome(self):  # F3
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
-            fp = {"effective_route_sha": "sha", "wire_model": "alpha", "source_identity": None, "claude_code": None}
+            fp = {"effective_route_sha": "sha", "wire_model": "alpha", "source_identity": None, "harness_version": None}
 
             def plant_failing(doc):
                 doc["routes"]["mock/alpha"] = empty_route()
-                doc["routes"]["mock/alpha"]["last_qualification"] = {
-                    "pass": False, "at": "2026-09-08T00:00:00Z",
+                doc["routes"]["mock/alpha"]["qualifications"]["messages"] = {
+                    "pass": False, "at": "2026-09-08T00:00:00Z", "wire": "messages",
                     "gates": {"text_sse": True, "forced_structured_tool": False},
                     "thinking_block_seen": False, "completed": True, "fingerprint": fp}
 
             def plant_passing(doc):
                 doc["routes"]["paid/vendor/model-x"] = empty_route()
-                doc["routes"]["paid/vendor/model-x"]["last_qualification"] = {
-                    "pass": True, "at": "2026-09-08T01:00:00Z", "gates": {"text_sse": True},
+                doc["routes"]["paid/vendor/model-x"]["qualifications"]["messages"] = {
+                    "pass": True, "at": "2026-09-08T01:00:00Z", "wire": "messages", "gates": {"text_sse": True},
                     "thinking_block_seen": True, "completed": True, "fingerprint": fp}
 
             def plant_never(doc):
@@ -97,8 +97,8 @@ class StatusTest(unittest.TestCase):
             update_observed(sb.paths, plant_passing)
             update_observed(sb.paths, plant_never)
             text = render_text(build_status(sb.paths))
-            self.assertIn("qualified ✗ 2026-09-08T00:00:00Z (forced_structured_tool)", text)
-            self.assertIn("qualified ✓ 2026-09-08T01:00:00Z", text)
+            self.assertIn("qualified[messages] ✗ 2026-09-08T00:00:00Z (forced_structured_tool)", text)
+            self.assertIn("qualified[messages] ✓ 2026-09-08T01:00:00Z", text)
             self.assertIn("qualified: never", text)
 
     def test_broken_routes_toml_is_reported_not_raised(self):

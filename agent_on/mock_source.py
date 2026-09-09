@@ -8,13 +8,18 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from .qualify import GATES_RESPONSES as RESPONSES_GATE_NAMES
+
 MARKERS = ("SYSTEM_BLOCK_ALPHA", "SYSTEM_BLOCK_BETA")
 GATE_NAMES = ("text_sse", "claude_system_block_instructions", "forced_structured_tool", "streaming_input_json_delta",
               "tool_result_continuation", "claude_adaptive_effort_policy", "thinking")
+# RESPONSES_GATE_NAMES (imported above) is qualify.GATES_RESPONSES — D5: one home for the gate names.
 # a provider quirk, not a failure: F2 measured GLM-5.2 through OpenRouter returning a correct tool_use block with
 # stop_reason: "end_turn" — Claude Code completed the tool-call loop on that route regardless. "thinking_no_usage_detail"
 # exercises F-fix 2's fallback: a source that emits a thinking block but no usage.output_tokens_details.
-QUIRKS = ("end_turn_on_tool", "thinking_no_usage_detail")
+# "responses_incomplete_status" is the Responses-wire counterpart: GLM through OpenRouter answers a forced function
+# call with status "incomplete" instead of "completed".
+QUIRKS = ("end_turn_on_tool", "thinking_no_usage_detail", "responses_incomplete_status")
 THINKING_TOKENS_DETAIL = 9   # the mock's fixed, measured value — distinct from output_tokens (12) — for the preferred path
 
 
@@ -47,11 +52,16 @@ def _system_text(system) -> str:
     return " ".join(b.get("text", "") for b in (system or []) if isinstance(b, dict))
 
 
+def _message(text: str) -> dict:
+    return {"type": "message", "id": "msg_mock_1", "role": "assistant", "status": "completed",
+            "content": [{"type": "output_text", "text": text, "annotations": []}]}
+
+
 class MockSource:
     def __init__(self, catalog: list[dict] | None = None, spend: dict | None = None, expect_key: str | None = None, *,
                  caching: bool = True, delay_s: float = 0.0, serialize: bool = False, max_context: int | None = None,
                  fail_gates: tuple[str, ...] = (), quirks: tuple[str, ...] = ()):
-        bad = set(fail_gates) - set(GATE_NAMES)
+        bad = set(fail_gates) - (set(GATE_NAMES) | set(RESPONSES_GATE_NAMES))
         if bad:
             raise ValueError(f"unknown fail_gates {sorted(bad)}")
         bad = set(quirks) - set(QUIRKS)
@@ -64,6 +74,7 @@ class MockSource:
         self.quirks = tuple(quirks)
         self.requests: list[tuple[str, dict]] = []
         self.messages: list[dict] = []
+        self.responses_bodies: list[dict] = []
         self._seen_system: set[str] = set()
         self._serial = threading.Lock()
         self._server: ThreadingHTTPServer | None = None
@@ -148,6 +159,73 @@ class MockSource:
         events.append({"type": "message_stop"})
         return events
 
+    # ---- the deterministic model — Responses wire -----------------------------------------------------------------
+
+    def _responses_prompt_tokens(self, body: dict) -> int:
+        inp = body.get("input")
+        text = inp if isinstance(inp, str) else json.dumps(inp or [])
+        return _tokens(text) + _tokens(body.get("instructions") or "") + _tokens(body.get("tools") or [])
+
+    def reply_responses(self, body: dict) -> tuple[int, dict]:
+        prompt = self._responses_prompt_tokens(body)
+        if self.max_context is not None and prompt > self.max_context:
+            return 400, {"error": {"message": f"input is too long: {prompt} tokens > {self.max_context} maximum", "type": "invalid_request_error"}}
+        if body.get("reasoning") and "reasoning_effort" in self.fail_gates:
+            return 400, {"error": {"message": "reasoning is not supported by this model", "type": "invalid_request_error"}}
+        instructions = body.get("instructions") or ""
+        cached = 0
+        if instructions:
+            if instructions in self._seen_system and self.caching:
+                cached = _tokens(instructions)
+            self._seen_system.add(instructions)
+        items = body.get("input") if isinstance(body.get("input"), list) else []
+        has_output = any(isinstance(i, dict) and i.get("type") == "function_call_output" for i in items)
+        output: list[dict] = []
+        reasoning_tokens = 0
+        if body.get("reasoning"):
+            output.append({"type": "reasoning", "id": "rs_mock_1", "summary": [{"type": "summary_text", "text": "Considering briefly."}]})
+            reasoning_tokens = 9
+        markers = [m for m in MARKERS if m in instructions]
+        status = "completed"
+        if body.get("tools") and not has_output and "forced_function_call" not in self.fail_gates:
+            output.append({"type": "function_call", "id": "fc_mock_1", "call_id": "call_mock_1", "name": body["tools"][0]["name"], "arguments": json.dumps({"city": "Seoul"})})
+            if "responses_incomplete_status" in self.quirks:
+                status = "incomplete"
+        elif has_output:
+            if "function_call_output_continuation" not in self.fail_gates:
+                output.append(_message("It is 18C and sunny in Seoul."))
+        elif markers and "instructions" not in self.fail_gates:
+            output.append(_message(" ".join(markers)))
+        elif body.get("reasoning"):
+            output.append(_message("OK"))
+        elif "text_stream" not in self.fail_gates:
+            output.append(_message("OK — the mock route is ready."))
+        usage = {"input_tokens": prompt, "output_tokens": 12, "total_tokens": prompt + 12,
+                 "input_tokens_details": {"cached_tokens": cached}, "output_tokens_details": {"reasoning_tokens": reasoning_tokens}}
+        return 200, {"id": "resp_mock", "object": "response", "status": status, "model": body.get("model"), "output": output, "usage": usage}
+
+    def responses_events(self, resp: dict) -> list[dict]:
+        events: list[dict] = [{"type": "response.created", "response": {**resp, "output": [], "status": "in_progress"}}]
+        for i, item in enumerate(resp["output"]):
+            events.append({"type": "response.output_item.added", "output_index": i,
+                            "item": {k: v for k, v in item.items() if k not in ("content", "arguments")}})
+            if item["type"] == "message":
+                text = item["content"][0]["text"]
+                events.append({"type": "response.content_part.added", "output_index": i, "content_index": 0,
+                                "part": {"type": "output_text", "text": ""}})
+                for piece in _chunks(text, 8):
+                    events.append({"type": "response.output_text.delta", "output_index": i, "content_index": 0, "delta": piece})
+                events.append({"type": "response.output_text.done", "output_index": i, "content_index": 0, "text": text})
+                events.append({"type": "response.content_part.done", "output_index": i, "content_index": 0, "part": item["content"][0]})
+            elif item["type"] == "function_call":
+                if "function_call_arguments_stream" not in self.fail_gates:
+                    for piece in _chunks(item["arguments"], 6):
+                        events.append({"type": "response.function_call_arguments.delta", "output_index": i, "item_id": item["id"], "delta": piece})
+                events.append({"type": "response.function_call_arguments.done", "output_index": i, "item_id": item["id"], "arguments": item["arguments"]})
+            events.append({"type": "response.output_item.done", "output_index": i, "item": item})
+        events.append({"type": "response.completed", "response": resp})
+        return events
+
     def _paced(self):
         """Sleep delay_s per request; under `serialize` hold one lock so concurrent requests queue."""
         if self.serialize:
@@ -182,6 +260,16 @@ class MockSource:
                     self.wfile.write(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode("utf-8"))
                     self.wfile.flush()
 
+            def _send_responses_sse(self, events: list[dict]) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(b": keepalive\n\n")
+                for e in events:
+                    self.wfile.write(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+
             def do_GET(self):
                 mock.requests.append((self.path, dict(self.headers)))
                 if self.path in ("/v1/models", "/api/v1/models"):
@@ -203,6 +291,13 @@ class MockSource:
                 mock.requests.append((self.path, dict(self.headers)))
                 if not mock._auth_ok(self.headers):
                     return self._send(401, {"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}})
+                if self.path in ("/v1/responses", "/api/v1/responses"):
+                    mock.responses_bodies.append(body)
+                    mock._paced()
+                    code, resp = mock.reply_responses(body)
+                    if code != 200 or not body.get("stream"):
+                        return self._send(code, resp)
+                    return self._send_responses_sse(mock.responses_events(resp))
                 if self.path in ("/v1/messages/count_tokens", "/api/v1/messages/count_tokens"):
                     return self._send(200, {"input_tokens": mock.prompt_tokens(body)})
                 if self.path in ("/v1/messages", "/api/v1/messages"):

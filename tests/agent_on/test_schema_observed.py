@@ -23,7 +23,7 @@ def full_session(cost="unknown") -> dict:
             "first_request": {"input_tokens_total": 10, "usage": usage(input_tokens=10)},
             "this_run": {"turns": 1, "usage": usage(input_tokens=10), "cost_usd": cost, "models_seen": ["m"]},
             "session_total": {"turns": 1, "usage": usage(input_tokens=10), "cost_usd": cost, "covered_turns": 1, "uncovered_turns": 0},
-            "scope_note": "fresh", "duration_ms": 1, "effort": None, "permission_mode": None, "claude_code": "2.1.263"}
+            "scope_note": "fresh", "duration_ms": 1, "effort": None, "permission_mode": None, "harness": "claude", "harness_version": "2.1.263"}
 
 
 class ShapeTest(unittest.TestCase):
@@ -44,7 +44,7 @@ class ShapeTest(unittest.TestCase):
     def test_missing_keys_and_bad_values_are_rejected_by_name(self):
         doc = empty_observed(); del doc["spend"]
         self.assertRule("observed.shape", doc)
-        doc = empty_observed(); doc["version"] = 2
+        doc = empty_observed(); doc["version"] = 3
         self.assertRule("observed.shape", doc)
         doc = empty_observed(); doc["sources"]["s"] = {"reachable": True}
         self.assertRule("observed.shape", doc)

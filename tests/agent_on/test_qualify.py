@@ -5,14 +5,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import helpers  # noqa: E402,F401
+from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
 from agent_on import mock_source  # noqa: E402
 from agent_on.mock_source import GATE_NAMES, MockSource  # noqa: E402
-from agent_on.qualify import GATES, Wire, probe_caching, probe_concurrency, probe_limits, probe_throughput, run_gates  # noqa: E402
+from agent_on.qualify import GATES, Wire, probe_caching, probe_concurrency, probe_limits, probe_throughput, run_gates, run_qualify  # noqa: E402
 from agent_on.schemas.errors import SchemaError  # noqa: E402
 from agent_on.schemas.observed import empty_observed, empty_route, validate_observed  # noqa: E402
+
+BASE = "http://127.0.0.1:1"
 
 
 class GatesTest(unittest.TestCase):
@@ -135,13 +138,27 @@ class QualificationShapeTest(unittest.TestCase):
     def test_last_qualification_must_carry_gates_and_a_fingerprint(self):
         doc = empty_observed()
         doc["routes"]["r"] = empty_route()
-        doc["routes"]["r"]["last_qualification"] = {"pass": True, "gates": {g: True for g in GATES}, "thinking_block_seen": False, "completed": True,
-                                                   "at": "2026-09-08T00:00:00Z", "fingerprint": {"effective_route_sha": "a", "wire_model": "m", "source_identity": None, "claude_code": None}}
+        doc["routes"]["r"]["qualifications"]["messages"] = {"pass": True, "gates": {g: True for g in GATES}, "thinking_block_seen": False, "completed": True, "wire": "messages",
+                                                   "at": "2026-09-08T00:00:00Z", "fingerprint": {"effective_route_sha": "a", "wire_model": "m", "source_identity": None, "harness_version": None}}
         validate_observed(doc)
-        doc["routes"]["r"]["last_qualification"]["fingerprint"] = {"wire_model": "m"}
+        doc["routes"]["r"]["qualifications"]["messages"]["fingerprint"] = {"wire_model": "m"}
         with self.assertRaises(SchemaError) as cm:
             validate_observed(doc)
         self.assertEqual(cm.exception.rule, "observed.qualification.shape")
+
+
+class PaidBaselineRefusalTest(unittest.TestCase):
+    # final-fix minor: the refusal always named "Claude Code" and its ~50,000-token estimate even when --wire
+    # responses would run Codex — now wire-aware.
+    def test_refusal_names_claude_code_on_the_messages_wire(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            doc = run_qualify(sb.paths, "x", wire="messages", baseline=True, env={})
+            self.assertIn("runs Claude Code (~50000 input tokens)", doc["refused"])
+
+    def test_refusal_names_codex_on_the_responses_wire(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            doc = run_qualify(sb.paths, "x", wire="responses", baseline=True, env={})
+            self.assertIn("runs Codex (~7000 input tokens)", doc["refused"])
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ from .harness import child_env
 from .paths import Paths, describe_copy
 from .schemas.errors import RULES, SchemaError
 from .schemas.knowledge import validate_file
-from .schemas.observed import forbid_claude_cost
+from .schemas.observed import HARNESSES, forbid_claude_cost
 from .schemas.routes import RouteTable, load_routes
 from .state import read_observed
 
@@ -42,6 +42,7 @@ class Context:
     tree: Path                  # the code tree the lints scan
     home: Path
     claude_code: str | None
+    codex_version: str | None
 
 
 @dataclass(frozen=True)
@@ -89,7 +90,21 @@ def claude_code_version(binary: str | None = None) -> str | None:
     return m.group(1) if m else None
 
 
-def build_context(paths: Paths, *, with_claude_code: bool = False, claude_bin: str | None = None) -> Context:
+def codex_version(binary: str | None = None) -> str | None:
+    """`codex --version` prints `codex-cli 0.153.4`; the launch's own binary when given (AGENT_ON_CODEX_BIN)."""
+    exe = binary or shutil.which("codex")
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"(\d+\.\d+\.\d+)", out)
+    return m.group(1) if m else None
+
+
+def build_context(paths: Paths, *, with_claude_code: bool = False, claude_bin: str | None = None,
+                  codex_bin: str | None = None) -> Context:
     try:
         table, err = load_routes(paths), None
     except (SchemaError, OSError) as e:
@@ -99,7 +114,8 @@ def build_context(paths: Paths, *, with_claude_code: bool = False, claude_bin: s
     except (SchemaError, ValueError, OSError) as e:
         observed = {"_error": str(e), "copy": None, "sources": {}, "routes": {}, "last_check": None, "last_gate_run": None, "spend": {}}
     return Context(paths, table, err, observed, paths.code_tree, paths.home,
-                   claude_code_version(claude_bin) if with_claude_code else None)
+                   claude_code_version(claude_bin) if with_claude_code else None,
+                   codex_version(codex_bin) if with_claude_code else None)
 
 
 def evaluate(ctx: Context, ids: list[str] | None = None, route: str | None = None) -> list[Result]:
@@ -208,21 +224,26 @@ def copy_single(ctx: Context):
 
 
 @invariant("credential.not_in_child_env",
-           statement="no source credential reaches the child environment of any route's launch",
-           fix="the launcher must scrub every source's auth_env and the routing denylist before spawn (§11)")
+           statement="no source credential reaches the child environment of any route's launch, on either harness",
+           fix="the launcher must scrub every source's auth_env and the routing denylist before spawn, for both harness branches of child_env (§11)")
 def credential_not_in_child_env(ctx: Context):
+    # final-fix item 3: the old check computed child_env for the claude harness only, so a regression in the
+    # separate codex branch would still report pass. Loop both harnesses; a marker parent that also carries
+    # OPENAI_API_KEY and CODEX_HOME proves the codex branch scrubs them too.
     if ctx.routes is None:
         return skip(f"routes did not load: {ctx.routes_error}")
     markers = {src.auth_env: f"SECRET-{src.auth_env}" for src in ctx.routes.sources.values() if src.auth_env}
-    parent = {**markers, "ANTHROPIC_API_KEY": "SECRET-inherited", "ANTHROPIC_AUTH_TOKEN": "SECRET-inherited", "PATH": "/usr/bin"}
+    parent = {**markers, "ANTHROPIC_API_KEY": "SECRET-inherited", "ANTHROPIC_AUTH_TOKEN": "SECRET-inherited",
+              "OPENAI_API_KEY": "SECRET-inherited", "CODEX_HOME": "SECRET-inherited", "PATH": "/usr/bin"}
     leaks: list[str] = []
     for route in ctx.routes.routes.values():
-        env = child_env(parent, ctx.routes, route, context=None, config_dir=Path("/nonexistent"))
-        leaks += [f"{route.name}:{k}" for k, v in env.items() if "SECRET-" in str(v)]
+        for h in HARNESSES:
+            env = child_env(parent, ctx.routes, route, context=None, config_dir=Path("/nonexistent"), harness=h)
+            leaks += [f"{h}:{route.name}:{k}" for k, v in env.items() if "SECRET-" in str(v)]
     if leaks:
         return fail(f"a credential reached the child environment: {leaks[:5]}")
     names = ", ".join(sorted(markers)) or "none declared"
-    return ok(f"{len(ctx.routes.routes)} routes: no source credential ({names}) reaches the child environment")
+    return ok(f"{len(ctx.routes.routes)} routes x {len(HARNESSES)} harnesses: no source credential ({names}) reaches the child environment")
 
 
 ENV_DENY = ("ANTHROPIC_*", "CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_MAX_*", "*_PROXY")
@@ -379,18 +400,21 @@ def cost_not_copied(ctx: Context):
 
 
 @invariant("qualification.current", per_route=True,
-           statement="the route's last qualification fingerprint still matches the effective configuration, the wire model, the source identity and the Claude Code version",
+           statement="every wire's last qualification fingerprint still matches the effective configuration, the wire model, the source identity and the harness version",
            fix="re-run `agent-on qualify <route>`")
 def qualification_current(ctx: Context, route):
     r = ctx.observed["routes"].get(route.name)
-    q = r.get("last_qualification") if r else None
-    if not q:
+    qs = (r or {}).get("qualifications") or {}
+    if not qs:
         return skip("never qualified")
-    fp = q.get("fingerprint") or {}
-    now = {"effective_route_sha": ctx.routes.effective_sha(route), "wire_model": route.wire_model,
-           "source_identity": (ctx.observed["sources"].get(route.source) or {}).get("identity"), "claude_code": ctx.claude_code}
-    stale = [k for k, v in now.items() if v is not None and fp.get(k) != v]
+    versions = {"messages": ctx.claude_code, "responses": ctx.codex_version}
+    stale, current = [], []
+    for wire, q in sorted(qs.items()):
+        fp = q.get("fingerprint") or {}
+        now = {"effective_route_sha": ctx.routes.effective_sha(route), "wire_model": route.wire_model,
+               "source_identity": (ctx.observed["sources"].get(route.source) or {}).get("identity"), "harness_version": versions.get(wire)}
+        bad = [k for k, v in now.items() if v is not None and fp.get(k) != v]
+        (stale if bad else current).append(f"{wire}: {'stale ' + str(bad) if bad else 'current'} (qualified {q.get('at')})")
     if stale:
-        return fail(f"stale: {stale} (qualified {q.get('at')})")
-    unchecked = [k for k, v in now.items() if v is None]
-    return ok(f"current (qualified {q.get('at')})" + (f"; not compared: {unchecked}" if unchecked else ""))
+        return fail("; ".join(stale + current))
+    return ok("; ".join(current))

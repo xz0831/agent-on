@@ -67,6 +67,27 @@ class ChildEnvTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 harness.child_env({}, t, t.routes["mock/alpha"], context=None, config_dir=Path("/c"), sonnet=t.routes["paid/vendor/model-x"])
 
+    def test_child_env_for_codex_scrubs_everything_and_sets_only_codex_home(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            table = load_routes(sb.paths)
+            parent = {"PATH": "/usr/bin", "HOME": "/h", "OPENROUTER_API_KEY": "sk-x", "OPENAI_API_KEY": "sk-o", "ANTHROPIC_API_KEY": "sk-a",
+                      "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "1", "CODEX_HOME": "/elsewhere", "CODEX_API_KEY": "sk-c", "MOCK_PAID_KEY": "sk-p", "TERM": "xterm"}
+            env = harness.child_env(parent, table, table.resolve("x"), context=100000, config_dir=Path("/run/codex-home"), harness="codex")
+            self.assertEqual(env["CODEX_HOME"], "/run/codex-home")
+            for k in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CODEX_API_KEY", "MOCK_PAID_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"):
+                self.assertNotIn(k, env)
+            self.assertFalse(any(k.startswith(("ANTHROPIC_", "CLAUDE_", "OPENAI_")) for k in env))
+            self.assertEqual(env["TERM"], "xterm")
+
+    def test_child_env_for_claude_also_drops_a_parent_codex_home(self):
+        # final-fix item 3: credential.not_in_child_env now checks both harness branches with the same marker
+        # parent, including CODEX_HOME — the claude branch must not leak it either.
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            t = table(sb)
+            env = harness.child_env({"CODEX_HOME": "/elsewhere", "PATH": "/usr/bin"}, t, t.routes["mock/alpha"],
+                                    context=None, config_dir=Path("/c"))
+            self.assertNotIn("CODEX_HOME", env)
+
 
 class ConfigDirTest(unittest.TestCase):
     def test_shared_items_are_symlinked_and_the_project_is_trusted(self):
@@ -143,17 +164,20 @@ class SessionArgsTest(unittest.TestCase):
 class CostLineTest(unittest.TestCase):
     def test_renders_measured_values_and_never_invents(self):
         self.assertEqual(harness.cost_line("mock/alpha", None), "mock/alpha  ctx ? · ? tok/s · $? · cache ? · concurrency ? · thinking ?")
-        obs = {"cost_model": {"context": 131072, "harness_baseline_tokens": {"value": 48312}, "tok_s": 63.2,
+        obs = {"cost_model": {"context": 131072, "harness_baseline_tokens": {"claude": {"value": 48312}}, "tok_s": 63.2,
                               "usd_per_mtok": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}, "caching": True, "concurrency": 1,
                               "thinking": {"observed": True, "tokens_on_probe": 2600}}}
-        self.assertEqual(harness.cost_line("mock/x", obs), "mock/x  ctx 131072 (48312 baseline = 37%) · 63 tok/s · $0 · cache ✓ · serial · thinking on (~2.6K tok/probe)")
-        obs = {"cost_model": {"context": 200000, "harness_baseline_tokens": None, "tok_s": None, "usd_per_mtok": {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_write": None},
+        self.assertEqual(harness.cost_line("mock/x", obs), "mock/x  ctx 131072 (claude 48312 baseline = 37%) · 63 tok/s · $0 · cache ✓ · serial · thinking on (~2.6K tok/probe)")
+        obs = {"cost_model": {"context": 200000, "harness_baseline_tokens": {}, "tok_s": None, "usd_per_mtok": {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_write": None},
                               "caching": False, "concurrency": 4, "thinking": {"observed": False, "tokens_on_probe": None}}}
         self.assertEqual(harness.cost_line("paid/x", obs), "paid/x  ctx 200000 · ? tok/s · $1.0/5.0 per Mtok · cache ✗ · 4× concurrent · thinking off")
         obs = {"cost_model": {"usd_per_mtok": {"input": 1.0, "output": None, "cache_read": None, "cache_write": None}}}
         self.assertEqual(harness.cost_line("mock/half", obs), "mock/half  ctx ? · ? tok/s · $? · cache ? · concurrency ? · thinking ?")
         obs = {"cost_model": {"usd_per_mtok": {"input": 0, "output": None, "cache_read": None, "cache_write": None}}}
         self.assertEqual(harness.cost_line("mock/half2", obs), "mock/half2  ctx ? · ? tok/s · $? · cache ? · concurrency ? · thinking ?")
+        obs = {"cost_model": {"context": 131072, "harness_baseline_tokens": {"claude": {"value": 54380}, "codex": {"value": 6859}}, "tok_s": None,
+                              "usd_per_mtok": None, "caching": "unknown", "concurrency": None, "thinking": None}}
+        self.assertIn("ctx 131072 (claude 54380 = 41% · codex 6859 = 5%)", harness.cost_line("mock/two", obs))
 
 
 class TranscriptTest(unittest.TestCase):
@@ -223,7 +247,7 @@ class TranscriptTest(unittest.TestCase):
                             "message": {"id": "a", "model": "vendor/model-x", "usage": usage}}])
             launch1 = {"launch_id": "L1", "route": "paid/vendor/model-x", "source": "paid", "wire_model": "vendor/model-x", "started": "2026-09-08T01:00:00Z",
                        "session_id": "s2", "price": paid, "priced_models": {"vendor/model-x": paid}}
-            rec = harness.record_session(sb.paths, launch1, ended="2026-09-08T01:00:10Z", transcript=p, mode="fresh")
+            rec = harness.record_session(sb.paths, launch1, ended="2026-09-08T01:00:10Z", transcript=harness.read_transcript(p), mode="fresh")
             self.assertEqual(rec["this_run"]["cost_usd"], 1.0)
             self.assertEqual(rec["session_total"]["cost_usd"], 1.0)
             self.assertEqual(rec["scope_note"], "fresh session; this_run == session_total")
@@ -234,7 +258,7 @@ class TranscriptTest(unittest.TestCase):
                 f.write(json.dumps({"type": "assistant", "timestamp": "2026-09-08T02:00:01Z", "message": {"id": "b", "model": "alpha", "usage": usage}}) + "\n")
             launch2 = {"launch_id": "L2", "route": "mock/alpha", "source": "mock", "wire_model": "alpha", "started": "2026-09-08T02:00:00Z",
                        "session_id": "s2", "price": harness.FREE, "priced_models": {"alpha": harness.FREE}}
-            rec = harness.record_session(sb.paths, launch2, ended="2026-09-08T02:00:10Z", transcript=p, mode="resume")
+            rec = harness.record_session(sb.paths, launch2, ended="2026-09-08T02:00:10Z", transcript=harness.read_transcript(p), mode="resume")
             self.assertEqual(rec["this_run"]["cost_usd"], 0.0)
             self.assertEqual(rec["this_run"]["turns"], 1)
             self.assertEqual(rec["session_total"]["turns"], 2)
@@ -248,7 +272,7 @@ class TranscriptTest(unittest.TestCase):
             self.write(p, [{"type": "user", "timestamp": "2026-09-08T03:00:00Z", "sessionId": "s3", "version": "2.1.263"}])
             launch = {"launch_id": "L3", "route": "mock/alpha", "source": "mock", "wire_model": "alpha", "started": "2026-09-08T03:00:00Z",
                       "session_id": "s3", "price": harness.FREE, "priced_models": {"alpha": harness.FREE}}
-            rec = harness.record_session(sb.paths, launch, ended="2026-09-08T03:00:01Z", transcript=p, mode="fresh")
+            rec = harness.record_session(sb.paths, launch, ended="2026-09-08T03:00:01Z", transcript=harness.read_transcript(p), mode="fresh")
             self.assertIsNone(rec["first_request"])
             self.assertEqual(rec["this_run"]["turns"], 0)
             self.assertEqual(rec["session_total"]["cost_usd"], 0.0)
@@ -259,7 +283,7 @@ class TranscriptTest(unittest.TestCase):
             launch = {"launch_id": "L", "route": "mock/alpha", "source": "mock", "wire_model": "alpha", "started": "2026-09-08T01:00:00Z", "session_id": None, "price": harness.FREE, "priced_models": {}}
             rec = harness.record_session(sb.paths, launch, ended="2026-09-08T01:00:01Z", transcript=None, mode="no-persistence")
             self.assertEqual(rec, {"skipped": "no-session-persistence"})
-            rec = harness.record_session(sb.paths, launch, ended="2026-09-08T01:00:01Z", transcript=sb.paths.transcript_path("zz", "/w"), mode="fresh")
+            rec = harness.record_session(sb.paths, launch, ended="2026-09-08T01:00:01Z", transcript=None, mode="fresh")
             self.assertIn("no transcript", rec["skipped"])
             self.assertEqual(read_observed(sb.paths)["routes"]["mock/alpha"]["last_session"]["skipped"], rec["skipped"])
 

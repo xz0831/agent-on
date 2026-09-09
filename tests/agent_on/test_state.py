@@ -60,7 +60,7 @@ class ObservedTest(unittest.TestCase):
             update_observed(sb.paths, lambda d: None)
             stale = sb.paths.state / "observed.json.tmp.99999"
             stale.write_text("{garbage", encoding="utf-8")
-            self.assertEqual(read_observed(sb.paths)["version"], 1)
+            self.assertEqual(read_observed(sb.paths)["version"], 2)
             update_observed(sb.paths, lambda d: None)
             self.assertFalse(stale.exists())
             self.assertEqual(sweep_tmp(sb.paths.state, "observed.json"), 0)

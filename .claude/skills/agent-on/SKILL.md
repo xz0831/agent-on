@@ -12,11 +12,14 @@ accumulate; this one only tells you where the accumulated facts are and how to a
 
 - `./bin/agent-on status --json` — every route's declared limits beside what was measured (`observed`), the cost
   model, the last session's cost (Q1), whether the route is served (Q3), the last gate run (Q4), OpenRouter spend
-  (Q6), the harness baseline tokens (Q8), and per route `knowledge.observations` (last three) and
-  `knowledge.traps` (what applies to `status` on that route).
+  (Q6), the harness baseline tokens (Q8), one `qualified[<wire>]` line per wire qualified, and per route
+  `knowledge.observations` (last three) and `knowledge.traps` (what applies to `status` on that route).
+- `./bin/agent-on qualify <route> --wire responses` — the six gate analogues on the Responses wire (what Codex
+  speaks); `--wire messages` (the default) is the Anthropic wire Claude Code speaks.
 - `./bin/agent-on status --check` — every invariant with its result and fix; `last_check` is written. What an
   action must not break is the list of invariants that name it (Q10).
-- `./bin/agent-on install` — links the two shims into `~/.local/bin` and creates the state root; idempotent.
+- `./bin/agent-on install` — links the three shims (`agent-on`, `claude-on`, `codex-on`) into `~/.local/bin` and
+  creates the state root; idempotent.
 - `knowledge/decisions.jsonl` — the settled decisions with rationale; a record with `supersedes` replaces the one it
   names. Read the active set before proposing a change that touches one.
 - `knowledge/traps.jsonl` — mechanisms that have bitten this repo, with `applies_to` (a verb, a source, a route or
@@ -42,6 +45,7 @@ work that produced it.
     ./bin/agent-on learn task create <name> --goal '…' [--worktree <dir>]
     ./bin/agent-on learn task handoff <id> --to <route> --objective '…' [--from <route>] [--summary '…'] [--commit <sha>] [--tests '…']
     ./bin/claude-on --task <id> [--handoff n|latest] <route> [claude args…]      # runs in the worktree; the handoff prompt is Claude's last argument — give list options as --opt=value
+    ./bin/codex-on --task <id> <route> exec                                      # the Codex form: same worktree, same handoff, Codex's own exec
     ./bin/agent-on learn task complete <id> --summary '…' [--commit <sha>] [--tests '…'] [--close]
 
 A dispatcher (Orca or another) reads `learn task prompt <id> --json` to pick a host and invokes the same launcher.

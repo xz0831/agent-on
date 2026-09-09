@@ -85,6 +85,9 @@ class Paths:
     def claude_config_dir(self) -> Path:
         return self.state / "claude-config"             # §11 item 1: the isolated CLAUDE_CONFIG_DIR
 
+    def codex_home_for(self, launch_id: str) -> Path:
+        return self.run_dir / launch_id / "codex-home"   # Plan F Task 5: the per-launch CODEX_HOME (D14)
+
     def transcript_path(self, session_id: str, cwd: str) -> Path:
         return self.claude_config_dir / "projects" / project_slug(cwd) / f"{session_id}.jsonl"
 

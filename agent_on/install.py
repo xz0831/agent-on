@@ -1,4 +1,4 @@
-"""`agent-on install` (§9, D9): the checkout is the installation. Link the two shims into ~/.local/bin, create the
+"""`agent-on install` (§9, D9): the checkout is the installation. Link the three shims into ~/.local/bin, create the
 state root, check the interpreter, report copy.*. Nothing is copied, hashed or pinned — drift is `git status` plus
 "does the shim point here" (copy.single)."""
 from __future__ import annotations
@@ -10,7 +10,7 @@ from pathlib import Path
 from .invariants import build_context, evaluate
 from .paths import Paths, describe_copy, ensure_state
 
-SHIMS = ("agent-on", "claude-on")
+SHIMS = ("agent-on", "claude-on", "codex-on")
 MIN_PYTHON = (3, 11)
 
 

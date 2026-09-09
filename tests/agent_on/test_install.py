@@ -22,7 +22,8 @@ class InstallTest(unittest.TestCase):
             self.assertFalse(sb.paths.state.exists())
             doc = run_install(sb.paths)
             self.assertTrue(doc["written"], doc)
-            for name in ("agent-on", "claude-on"):
+            self.assertEqual(len(doc["links"]), 3)
+            for name in ("agent-on", "claude-on", "codex-on"):
                 link = sb.paths.home / ".local" / "bin" / name
                 self.assertTrue(link.is_symlink())
                 self.assertEqual(os.readlink(link), str((REPO / "bin" / name).resolve()))

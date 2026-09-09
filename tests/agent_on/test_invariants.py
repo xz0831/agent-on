@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from helpers import MOCK_ROUTES, REPO, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
+from unittest import mock  # noqa: E402
 
 from agent_on.invariants import REGISTRY, build_context, evaluate, skipped_ids  # noqa: E402
 from agent_on.schemas.knowledge import validate_file, validate_record  # noqa: E402
@@ -251,13 +252,14 @@ class CostAndQualificationTest(unittest.TestCase):
             sha = ctx.routes.effective_sha(ctx.routes.routes["mock/alpha"])
             def plant(doc):
                 doc["routes"]["mock/alpha"] = empty_route()
-                doc["routes"]["mock/alpha"]["last_qualification"] = {"pass": True, "at": "2026-09-07T00:00:00Z", "gates": {}, "thinking_block_seen": False, "completed": True,
-                    "fingerprint": {"effective_route_sha": sha, "wire_model": "alpha", "source_identity": None, "claude_code": None}}
+                doc["routes"]["mock/alpha"]["qualifications"]["messages"] = {"pass": True, "at": "2026-09-07T00:00:00Z", "gates": {}, "thinking_block_seen": False, "completed": True, "wire": "messages",
+                    "fingerprint": {"effective_route_sha": sha, "wire_model": "alpha", "source_identity": None, "harness_version": None}}
             update_observed(sb.paths, plant)
             self.assertEqual({x.subject: x.result for x in one(sb.paths, "qualification.current")}["mock/alpha"], "pass")
             sb.paths.routes_toml.write_text(text.replace("input = 8192", "input = 4096"), encoding="utf-8")   # inherited limit changed
             r = {x.subject: x for x in one(sb.paths, "qualification.current")}
             self.assertEqual(r["mock/alpha"].result, "fail")
+            self.assertIn("messages: stale", r["mock/alpha"].reason)
             self.assertIn("effective_route_sha", r["mock/alpha"].reason)
 
     def test_corrupt_observed_json_reaches_the_error_branch_instead_of_crashing(self):
@@ -278,6 +280,25 @@ class CredentialTest(unittest.TestCase):
             r = one(sb.paths, "credential.not_in_child_env")
             self.assertEqual(r.result, "pass")
             self.assertIn("MOCK_PAID_KEY", r.reason)
+
+    def test_a_leak_confined_to_the_codex_branch_is_still_caught_and_named(self):
+        # final-fix item 3: the old check only ever called child_env(harness="claude"), so a regression that
+        # leaked a marker only on the codex branch would have reported pass. Patch child_env to leak on codex
+        # only, and confirm the invariant both fails and names "codex" — proof the loop reaches that branch.
+        import agent_on.invariants as inv_mod
+        real_child_env = inv_mod.child_env
+
+        def leaky(parent, table, route, **kw):
+            env = real_child_env(parent, table, route, **kw)
+            if kw.get("harness") == "codex":
+                env["OPENAI_API_KEY"] = parent.get("OPENAI_API_KEY", "SECRET-inherited")
+            return env
+
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            with mock.patch.object(inv_mod, "child_env", side_effect=leaky):
+                r = one(sb.paths, "credential.not_in_child_env")
+            self.assertEqual(r.result, "fail")
+            self.assertIn("codex:", r.reason)
 
 
 class ClaudeCodeVersionTest(unittest.TestCase):
