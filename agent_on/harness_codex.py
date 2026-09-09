@@ -73,10 +73,17 @@ def _usage(u: dict) -> dict:
             "cache_read_input_tokens": cached, "cache_creation_input_tokens": int(u.get("cache_write_input_tokens") or 0)}
 
 
+_TOTAL_FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens")
+
+
 def read_rollout(path: Path) -> dict:
+    """Final-fix item 1: Codex re-emits `token_count` events with no new model call, so summing every event's
+    `last_token_usage` overcounts by up to 25% on real rollouts. Each event's `info.total_token_usage` is
+    cumulative, so a turn is the delta between consecutive totals; a re-emit (zero delta) adds no turn. Falls
+    back to the old per-event `last_token_usage` mapping only when NO event in the file carries a usable
+    `total_token_usage` (older Codex)."""
     session_id = version = model = effort = permission = None
-    turns: list[dict] = []
-    first = None
+    events: list[tuple[int, str | None, str | None, dict]] = []   # (line no, timestamp, model at that point, info)
     for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         try:
             e = json.loads(line)
@@ -91,13 +98,36 @@ def read_rollout(path: Path) -> dict:
             model = p.get("model") or model
             effort = p.get("effort") or p.get("reasoning_effort") or effort
             sp = p.get("sandbox_policy") or p.get("sandbox")
-            permission = (sp.get("mode") if isinstance(sp, dict) else sp) or permission
+            permission = ((sp.get("mode") or sp.get("type")) if isinstance(sp, dict) else sp) or permission
         elif e.get("type") == "event_msg" and p.get("type") == "token_count":
-            last = (p.get("info") or {}).get("last_token_usage") if isinstance(p.get("info"), dict) else None
+            info = p.get("info") if isinstance(p.get("info"), dict) else None
+            if info is not None:
+                events.append((n, e.get("timestamp"), model, info))
+    turns: list[dict] = []
+    first = None
+    has_total = any(isinstance(info.get("total_token_usage"), dict) and info["total_token_usage"] for _, _, _, info in events)
+    if has_total:
+        prev = {f: 0 for f in _TOTAL_FIELDS}
+        for n, ts, m, info in events:
+            total = info.get("total_token_usage")
+            if not isinstance(total, dict) or not total:
+                continue
+            cur = {f: int(total.get(f) or 0) for f in _TOTAL_FIELDS}
+            delta = {f: max(0, cur[f] - prev[f]) for f in _TOTAL_FIELDS}
+            prev = cur
+            if not any(delta.values()):
+                continue                                          # a re-emit: no new model call, no turn
+            usage = _usage(delta)
+            turns.append({"timestamp": ts, "model": m, "usage": usage, "id": f"turn-{n}"})
+            if first is None:
+                first = {"usage": usage, "input_tokens_total": delta["input_tokens"]}
+    else:
+        for n, ts, m, info in events:
+            last = info.get("last_token_usage")
             if not last:
                 continue
             usage = _usage(last)
-            turns.append({"timestamp": e.get("timestamp"), "model": model, "usage": usage, "id": f"turn-{n}"})
+            turns.append({"timestamp": ts, "model": m, "usage": usage, "id": f"turn-{n}"})
             if first is None:
                 first = {"usage": usage, "input_tokens_total": int(last.get("input_tokens") or 0)}
     return {"session_id": session_id, "version": version, "model": model, "turns": turns, "first_request": first,

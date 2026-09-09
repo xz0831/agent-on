@@ -86,11 +86,18 @@ if codex_home:
                             "payload": {"id": session_id, "cli_version": "0.0.0", "model_provider": model_provider,
                                         "cwd": os.getcwd()}}) + "\n")
         f.write(json.dumps({"timestamp": ts(), "type": "turn_context", "payload": {"model": model}}) + "\n")
+        last = None
         for _ in range(turns):
             last = {"input_tokens": 7000, "cached_input_tokens": 6000, "cache_write_input_tokens": 0,
                     "output_tokens": 20, "reasoning_output_tokens": 5, "total_tokens": 7020}
             for k, v in last.items():
                 running[k] += v
+            f.write(json.dumps({"timestamp": ts(), "type": "event_msg",
+                                "payload": {"type": "token_count",
+                                            "info": {"last_token_usage": last, "total_token_usage": dict(running)}}}) + "\n")
+        # real Codex re-emits the last token_count event with no new model call (info.total_token_usage
+        # unchanged): a zero-delta re-emit that read_rollout must drop, not count as a phantom turn.
+        if last is not None:
             f.write(json.dumps({"timestamp": ts(), "type": "event_msg",
                                 "payload": {"type": "token_count",
                                             "info": {"last_token_usage": last, "total_token_usage": dict(running)}}}) + "\n")

@@ -92,24 +92,67 @@ class CodexLaunchTest(unittest.TestCase):
             self.assertEqual((out / "cwd.txt").read_text().strip(), str(wt.resolve()))
             self.assertEqual(tasks.load(sb.paths, t["id"])["handoffs"][0]["status"], "launched")
 
+    def test_spawn_failure_still_cleans_up_the_per_launch_key_dir(self):
+        # final-fix minor: a launch that fails to spawn (nonexistent binary) must still remove the per-launch
+        # CODEX_HOME under run_dir in `finally` — the key must never outlive the child, success or not.
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            (sb.paths.home / ".codex").mkdir(parents=True, exist_ok=True)
+            base_env = {"PATH": os.environ.get("PATH", ""), "HOME": str(sb.paths.home)}
+            with self.assertRaises(OSError):
+                harness.run_launch(sb.paths, "x", ["exec", "hi"], harness="codex", env=base_env,
+                                   codex_bin="/nonexistent/codex", cwd=str(sb.paths.checkout), probe_timeout=0.5, announce=False)
+            self.assertEqual(list(sb.paths.run_dir.glob("*")), [])
+
 
 class RolloutTest(unittest.TestCase):
-    def test_read_rollout_maps_usage_and_reads_meta(self):
+    def test_read_rollout_derives_turn_deltas_from_cumulative_total_and_drops_a_zero_delta_reemit(self):
+        # final-fix item 1: a turn is the delta between consecutive `total_token_usage` totals, not a straight
+        # sum of `last_token_usage` — the third event below re-emits the second turn's total with no new model
+        # call (a zero delta) and must add no turn. final-fix item 2: `sandbox_policy` carries `type`, not
+        # `mode`, on real 0.153.4 rollouts; a later turn_context's `mode` (when present) still wins.
         lines = [{"timestamp": "2026-09-09T00:00:00.000Z", "type": "session_meta", "payload": {"id": "sid-1", "cli_version": "0.153.4", "model_provider": "agent-on", "cwd": "/w"}},
-                 {"timestamp": "2026-09-09T00:00:01.000Z", "type": "turn_context", "payload": {"model": "m1", "effort": "low", "sandbox_policy": {"mode": "read-only"}}},
-                 {"timestamp": "2026-09-09T00:00:02.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 100, "cached_input_tokens": 40, "cache_write_input_tokens": 3, "output_tokens": 10, "reasoning_output_tokens": 4}, "total_token_usage": {}}}},
-                 {"timestamp": "2026-09-09T00:00:03.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 200, "cached_input_tokens": 150, "cache_write_input_tokens": 0, "output_tokens": 5, "reasoning_output_tokens": 0}, "total_token_usage": {}}}},
+                 {"timestamp": "2026-09-09T00:00:01.000Z", "type": "turn_context", "payload": {"model": "m1", "effort": "low", "sandbox_policy": {"type": "read-only"}}},
+                 {"timestamp": "2026-09-09T00:00:02.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {
+                     "last_token_usage": {"input_tokens": 100, "cached_input_tokens": 40, "cache_write_input_tokens": 3, "output_tokens": 10, "reasoning_output_tokens": 4},
+                     "total_token_usage": {"input_tokens": 100, "cached_input_tokens": 40, "cache_write_input_tokens": 3, "output_tokens": 10, "reasoning_output_tokens": 4}}}},
+                 {"timestamp": "2026-09-09T00:00:02.500Z", "type": "turn_context", "payload": {"model": "m1", "sandbox_policy": {"mode": "x", "type": "ignored"}}},
+                 {"timestamp": "2026-09-09T00:00:03.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {
+                     "last_token_usage": {"input_tokens": 200, "cached_input_tokens": 150, "cache_write_input_tokens": 0, "output_tokens": 5, "reasoning_output_tokens": 0},
+                     "total_token_usage": {"input_tokens": 300, "cached_input_tokens": 190, "cache_write_input_tokens": 3, "output_tokens": 15, "reasoning_output_tokens": 4}}}},
+                 {"timestamp": "2026-09-09T00:00:03.500Z", "type": "event_msg", "payload": {"type": "token_count", "info": {
+                     "last_token_usage": {"input_tokens": 0, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "output_tokens": 0, "reasoning_output_tokens": 0},
+                     "total_token_usage": {"input_tokens": 300, "cached_input_tokens": 190, "cache_write_input_tokens": 3, "output_tokens": 15, "reasoning_output_tokens": 4}}}},
                  {"timestamp": "2026-09-09T00:00:04.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": None}}]
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             p = sb.root / "rollout-x.jsonl"
             p.write_text("\n".join(json.dumps(l) for l in lines) + "\nnot json\n", encoding="utf-8")
             r = read_rollout(p)
-            self.assertEqual((r["session_id"], r["version"], r["model"], r["effort"], r["permission_mode"]), ("sid-1", "0.153.4", "m1", "low", "read-only"))
+            self.assertEqual((r["session_id"], r["version"], r["model"], r["effort"], r["permission_mode"]), ("sid-1", "0.153.4", "m1", "low", "x"))
+            self.assertEqual(len(r["turns"]), 2)                                      # the zero-delta re-emit adds no turn
             self.assertEqual([t["usage"] for t in r["turns"]],
                              [{"input_tokens": 60, "output_tokens": 10, "cache_read_input_tokens": 40, "cache_creation_input_tokens": 3},
                               {"input_tokens": 50, "output_tokens": 5, "cache_read_input_tokens": 150, "cache_creation_input_tokens": 0}])
+            summed = {k: sum(t["usage"][k] for t in r["turns"]) for k in r["turns"][0]["usage"]}
+            # the invariant: summed per-turn usage equals the final total_token_usage (input_tokens + cache_read
+            # = 300, cache_creation = 3, output = 15) — nothing is double-counted by the re-emit.
+            self.assertEqual(summed["input_tokens"] + summed["cache_read_input_tokens"], 300)
+            self.assertEqual(summed["cache_creation_input_tokens"], 3)
+            self.assertEqual(summed["output_tokens"], 15)
             self.assertEqual(r["first_request"]["input_tokens_total"], 100)
             self.assertTrue(all(t["model"] == "m1" for t in r["turns"]))
+
+    def test_read_rollout_falls_back_to_last_token_usage_when_no_event_carries_a_total(self):
+        # older Codex rollouts with no info.total_token_usage at all: nothing regresses.
+        lines = [{"timestamp": "2026-09-09T00:00:00.000Z", "type": "session_meta", "payload": {"id": "sid-2", "cli_version": "0.140.0"}},
+                 {"timestamp": "2026-09-09T00:00:01.000Z", "type": "turn_context", "payload": {"model": "m1"}},
+                 {"timestamp": "2026-09-09T00:00:02.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 100, "cached_input_tokens": 40, "cache_write_input_tokens": 3, "output_tokens": 10}}}},
+                 {"timestamp": "2026-09-09T00:00:03.000Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 200, "cached_input_tokens": 150, "cache_write_input_tokens": 0, "output_tokens": 5}}}}]
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            p = sb.root / "rollout-y.jsonl"
+            p.write_text("\n".join(json.dumps(l) for l in lines) + "\n", encoding="utf-8")
+            r = read_rollout(p)
+            self.assertEqual(len(r["turns"]), 2)
+            self.assertEqual(r["first_request"]["input_tokens_total"], 100)
 
     def test_profile_toml_escapes_and_omits_what_is_unknown(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
