@@ -10,7 +10,7 @@ declarations — `agent-on status` shows them.
 
 | source | base_url | auth_env | catalog | discover | limits in / out |
 |---|---|---|---|---|---|
-| `exo` | http://127.0.0.1:52415 | none | /v1/models | yes | 131072 / 32768 (owned-policy) |
+| `exo` | http://127.0.0.1:52415 | none | /v1/models | no | 131072 / 32768 (owned-policy) |
 | `omlx` | http://127.0.0.1:8000 | none | /v1/models | yes | 131072 / 32768 (configured) |
 | `omlx-tp2` | http://127.0.0.1:8003 | none | /v1/models | yes | 131072 / 32768 (owned-policy) |
 | `omlx@morty` | http://mortys-mac-studio:8000 | none | /v1/models | yes | 131072 / 32768 (owned-policy) |
@@ -22,7 +22,8 @@ declarations — `agent-on status` shows them.
 
 | route | aliases | wire model | limits in / out | from | price | reasoning |
 |---|---|---|---|---|---|---|
-no packaged routes
+| `exo/mlx-community/Llama-3.2-1B-Instruct-4bit` | `exo1b` | mlx-community/Llama-3.2-1B-Instruct-4bit | 131072 / 32768 (owned-policy) | source | free | — |
+| `exo/mlx-community/Qwen3-0.6B-8bit` | `exoq` | mlx-community/Qwen3-0.6B-8bit | 131072 / 32768 (owned-policy) | source | free | — |
 
 ### omlx
 

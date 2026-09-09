@@ -154,7 +154,9 @@ class SeedTest(unittest.TestCase):
         text = (REPO / "routes.toml").read_text(encoding="utf-8")
         srcs, rts, _ = routes(text)
         self.assertEqual(set(srcs), {"openrouter", "omlx", "omlx@morty", "omlx-tp2", "exo"})
-        self.assertEqual(len(rts), 6)
+        import re
+        self.assertEqual(len(rts), len(re.findall(r'^\[routes\."[^"]+"\]$', text, re.M)))   # every declared block parses; the count lives in the file (D5)
+        self.assertGreaterEqual(len(rts), 6)
         self.assertEqual(sum(r.source == "openrouter" for r in rts.values()), 4)
         self.assertEqual(sum(r.source == "omlx" for r in rts.values()), 2)
         self.assertFalse(any("chatgpt" in n or "xai" in n or "gpt-" in n for n in rts))  # D3

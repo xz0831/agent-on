@@ -158,7 +158,10 @@ def run_gates(wire: Wire) -> dict:
     details["claude_system_block_instructions_status"] = status
 
     tool_prompt = "Call get_weather exactly once for Seoul. Put the city in the structured city argument."
-    forced = {"max_tokens": MAX_TOKENS, "tools": [WEATHER_TOOL], "tool_choice": {"type": "tool", "name": "get_weather"},
+    # Plan E (2026-09-09): a thinking-on local model spends the first ~130 output tokens on its thinking block before
+    # the tool_use block — at 128 exo returned a truncated 200 with no stop_reason and no usage, at 512 a correct call.
+    # The forced probe therefore budgets like the text probes; the gate still judges the tool block, not the length.
+    forced = {"max_tokens": RESPONSE_MAX_TOKENS, "tools": [WEATHER_TOOL], "tool_choice": {"type": "tool", "name": "get_weather"},
               "messages": [{"role": "user", "content": tool_prompt}]}
     status, resp = wire.post(forced)
     tool = _blocks(resp.get("content"), "tool_use")[0] if status == 200 and _blocks(resp.get("content"), "tool_use") else None
