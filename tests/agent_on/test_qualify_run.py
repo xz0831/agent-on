@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
 
 import unittest  # noqa: E402
 
+from agent_on import cli  # noqa: E402
 from agent_on.invariants import build_context, evaluate  # noqa: E402
 from agent_on.mock_source import MockSource, omlx_entry, openrouter_entry  # noqa: E402
 from agent_on.qualify import GATES, run_qualify  # noqa: E402
@@ -117,6 +121,17 @@ class RunQualifyTest(unittest.TestCase):
             self.assertEqual(cm["caching"], "unknown")                                     # a probe that got 401 measured nothing
             self.assertIsNone(cm["thinking"]["observed"])
             self.assertIsNone(cm["tok_s"])
+
+    def test_cli_wire_responses_exits_ok_and_the_envelope_carries_the_wire(self):
+        with MockSource(catalog=CATALOG) as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(sb.paths.home), "AGENT_ON_STATE": str(sb.paths.state),
+                   "AGENT_ON_CHECKOUT": str(sb.paths.checkout)}
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=True), redirect_stdout(out):
+                code = cli.main(["--json", "qualify", "a", "--wire", "responses"])
+            doc = json.loads(out.getvalue())
+            self.assertEqual(code, 0, doc)
+            self.assertEqual(doc["wire"], "responses")
 
     def test_qualify_appends_its_qualification_and_a_throughput_observation_when_knowledge_exists(self):
         from agent_on import knowledge

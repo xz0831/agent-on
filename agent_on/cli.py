@@ -46,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     l.add_argument("claude_args", nargs=argparse.REMAINDER, help="passed to Claude Code unchanged")
     q = sub.add_parser("qualify", parents=[common], help="six fidelity gates + throughput/concurrency/caching/thinking probes; --baseline and --limits (paid sources need --allow-paid)")
     q.add_argument("route")
+    q.add_argument("--wire", choices=["messages", "responses"], default="messages", help="the wire to qualify (default messages)")
     q.add_argument("--baseline", action="store_true")
     q.add_argument("--limits", action="store_true")
     q.add_argument("--allow-paid", action="store_true")
@@ -122,6 +123,8 @@ def render_launch(doc: dict) -> str:
 
 def render_qualify(doc: dict) -> str:
     lines = [copy_line(doc["copy"])]
+    if doc.get("wire", "messages") != "messages":
+        lines.append(f"wire: {doc['wire']}")
     if doc["refused"]:
         return "\n".join(lines + [f"refused: {doc['refused']}"])
     lines += [f"  {'pass' if ok else 'FAIL'} {g}" for g, ok in doc["gates"].items()]
@@ -199,8 +202,8 @@ def main(argv: list[str] | None = None) -> int:
             text = render_launch(doc)
         elif args.command == "qualify":
             from .qualify import run_qualify
-            doc = run_qualify(paths, args.route, baseline=args.baseline, limits=args.limits, allow_paid=args.allow_paid, timeout=args.timeout,
-                              claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"))
+            doc = run_qualify(paths, args.route, wire=args.wire, baseline=args.baseline, limits=args.limits, allow_paid=args.allow_paid, timeout=args.timeout,
+                              claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"), codex_bin=os.environ.get("AGENT_ON_CODEX_BIN"))
             code = EXIT_OK if doc["written"] and all(doc["gates"].values()) else EXIT_FAIL
             text = render_qualify(doc)
         elif args.command == "learn":

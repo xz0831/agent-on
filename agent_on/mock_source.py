@@ -8,13 +8,12 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from .qualify import GATES_RESPONSES as RESPONSES_GATE_NAMES
+
 MARKERS = ("SYSTEM_BLOCK_ALPHA", "SYSTEM_BLOCK_BETA")
 GATE_NAMES = ("text_sse", "claude_system_block_instructions", "forced_structured_tool", "streaming_input_json_delta",
               "tool_result_continuation", "claude_adaptive_effort_policy", "thinking")
-# The Responses-wire counterpart of GATE_NAMES. The mock's own copy for now — Task 3 replaces this with an import
-# from qualify.GATES_RESPONSES once that module defines the gate.
-RESPONSES_GATE_NAMES = ("text_stream", "instructions", "forced_function_call", "function_call_arguments_stream",
-                        "function_call_output_continuation", "reasoning_effort")
+# RESPONSES_GATE_NAMES (imported above) is qualify.GATES_RESPONSES — D5: one home for the gate names.
 # a provider quirk, not a failure: F2 measured GLM-5.2 through OpenRouter returning a correct tool_use block with
 # stop_reason: "end_turn" — Claude Code completed the tool-call loop on that route regardless. "thinking_no_usage_detail"
 # exercises F-fix 2's fallback: a source that emits a thinking block but no usage.output_tokens_details.
