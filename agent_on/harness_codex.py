@@ -182,6 +182,7 @@ def run_launch_codex(paths: Paths, name: str, codex_args: list[str], *, dry_run:
         shutil.rmtree(run_dir, ignore_errors=True)                                   # the key never outlives the child
     ended = utc_ceil()
     launch["session_id"] = (rollout or {}).get("session_id") or plan.launch_id
+    doc["session"] = {"id": launch["session_id"], "mode": "fresh"}               # render_launch reads doc[session][id/mode] (claude parity)
     doc["transcript"] = str(rollout_path) if rollout_path else None
     return epilogue(paths, plan, launch, code=code, ended=ended, transcript=rollout, mode="fresh", harness="codex",
                     harness_version=(rollout or {}).get("version"), doc=doc)

@@ -57,6 +57,18 @@ class CodexLaunchTest(unittest.TestCase):
             self.assertEqual(len(read_session_runs(sb.paths, ls["id"])), 1)
             self.assertEqual(read_observed(sb.paths)["routes"]["paid/vendor/model-x"]["last_session"]["harness"], "codex")
 
+    def test_codex_doc_carries_a_session_dict_so_render_launch_does_not_crash(self):
+        # regression: run_launch_codex used to omit doc["session"], so cli.render_launch (which reads
+        # doc["session"]["id"]/["mode"]) raised KeyError -> codex-on always exited 2 with "error: session".
+        from agent_on.cli import render_launch
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            doc, _ = self.launch(sb, "x", ["exec", "Reply OK"], env={"MOCK_PAID_KEY": "sk-from-env"})
+            self.assertEqual(doc["exit_code"], 0)
+            self.assertEqual(doc["session"], {"id": doc["last_session"]["id"], "mode": "fresh"})
+            self.assertTrue(doc["session"]["id"])                                                       # a real session id, not None/empty
+            rendered = render_launch(doc)                                                               # must not raise KeyError
+            self.assertIn(f"session {doc['session']['id']} (fresh)", rendered)
+
     def test_keyless_launch_has_no_header_and_shares_the_user_items(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             doc, out = self.launch(sb, "a", ["exec", "hi"])
