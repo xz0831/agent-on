@@ -669,7 +669,7 @@ command prints `copy.*`.
 Rev 9 additions to the table above:
 
 - `codex-on <route|alias> [codex args…]` — `agent-on launch --harness codex`: bind Codex CLI to the route and spawn it (§11.1); everything after the route is Codex's (`codex [PROMPT]` opens the TUI, `codex exec …` runs non-interactively); a `--task <id>` handoff appends the rendered prompt last, as for Claude; after exit the rollout under the per-launch `CODEX_HOME` is read back into `last_session` with `harness = "codex"`.
-- `agent-on qualify <route> [--wire messages|responses] [--harness claude|codex]` — `--wire` (default `messages`) selects the gate set and the endpoint (§8.1); the record lands in `qualifications.<wire>`; `--baseline` measures the named harness's pre-task tokens into `harness_baseline_tokens.<harness>` (`codex exec 'Reply with exactly: OK'` for codex; a paid source still needs `--allow-paid`).
+- `agent-on qualify <route> [--wire messages|responses]` — `--wire` (default `messages`) selects the gate set and the endpoint (§8.1); the record lands in `qualifications.<wire>`; `--baseline` measures the harness implied by the wire (messages → Claude Code, responses → Codex) into `harness_baseline_tokens.<harness>` (`codex exec 'Reply with exactly: OK'` for codex; a paid source still needs `--allow-paid`).
 - `agent-on install` links three shims: `agent-on`, `claude-on`, `codex-on`.
 
 9 → 7: the mapping said an agent needs nine — the seven above plus `task

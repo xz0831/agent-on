@@ -32,6 +32,8 @@ enters Claude Code's environment: the launcher writes it to a per-launch 0600 fi
 
     ./bin/claude-on <route|alias> [claude args…]         # launch options (--dry-run, --sonnet, --haiku, --task, --discover) go before the route
     ./bin/claude-on --dry-run glm                         # environment keys, argv and cost line; spawns nothing
+    ./bin/codex-on huihui                        # Codex CLI on the same route; options before the route, everything after it is Codex's
+    ./bin/agent-on qualify huihui --wire responses   # the six gate analogues on the Responses wire (what Codex speaks)
     ./bin/agent-on status [route] [--check]               # L1 beside L2; --check evaluates every invariant
     ./bin/agent-on sync                                   # probe every source: served, limits, spend; rewrite routes.discovered.toml
     ./bin/agent-on add openrouter/<vendor>/<model> --alias <a>
@@ -50,6 +52,15 @@ shown by `status`, never copied into declarations.
 
 One Claude Code process is pinned to one route; the tier slots and the subagent slot all resolve to it. To change
 model, exit and relaunch. Qualification results and traps are shown before a launch; they never block it.
+
+## Harnesses
+
+Two harnesses bind to the same routes: Claude Code (`claude-on`, the Anthropic Messages wire) and Codex CLI
+(`codex-on`, the OpenAI Responses wire). Both take the key from a per-launch file the launcher writes and removes —
+Claude Code through `apiKeyHelper` in a per-launch settings file, Codex through `http_headers` in a per-launch
+profile under a per-launch `CODEX_HOME` (your `~/.codex` config, skills, plugins and hooks are linked in; sessions
+stay per launch). Neither harness ever sees the key in its environment. Qualify each wire separately
+(`--wire messages|responses`); `status` shows one `qualified[<wire>]` line per wire and one baseline per harness.
 
 ## Knowledge
 
