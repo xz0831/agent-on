@@ -77,6 +77,15 @@ Rev 8 errata (final-fix round, 2026-09-08): §11's placeholder-token example sti
 read `ANTHROPIC_AUTH_TOKEN=claude-on`, left over from before this revision's
 rename; the code and this document now both say `agent-on`.
 
+Rev 9 (owner-approved 2026-09-09, after spikes S6/S7/S8 and Plan D): the
+second harness. Codex CLI 0.153.4 runs on any route through the OpenAI
+**Responses** wire (`/v1/responses`), which oMLX and OpenRouter both serve
+(measured: six gate analogues pass on both, §8); the key travels in a
+per-launch `CODEX_HOME` profile file, never the environment (D14, §11.1);
+`observed.json` moves to version 2 so qualifications are keyed by wire and
+baselines by harness (§7). `codex-on <route>` is `agent-on launch --harness
+codex`. Plan F implements it; Plan E stays blocked on exo.
+
 ## 0. One paragraph
 
 `agent-on` runs an agent harness — Claude Code today, Codex next — on any model from any source —
@@ -266,6 +275,12 @@ rev-3 adversarial review; ⟲⟲ one amended again by the owner's rev-4 review.
 | D11 | **Strangler migration**, decomposed into five plans (§14). | `55e17e3` deleted direct mode *and its rationale* in one commit; irreversible big steps have failed here twice. |
 | D12 ⟲ | **Thinking on a local model is whatever the source's template does; `agent-on` measures and reports its cost and does not pretend to control it.** There is no `thinking:` field in `routes.toml`. `qualify` records whether a `thinking` block appeared and whether the answer completed. The controls that exist are the source's own server/template default and `CLAUDE_CODE_MAX_OUTPUT_TOKENS`. | §1.1a. Rev 2's "cost hint passed through by the launcher" was unimplementable: no per-request field reaches a non-Anthropic model. The cost is real (1.9–3.3K thinking tokens on a five-sentence task; >6,000 on the 2026-08-23 run) and is what the cost model shows. |
 | D13 | **Machine-written state lives in one place, outside git.** `$XDG_STATE_HOME/agent-on/` (default `~/.local/state/agent-on/`) holds `routes.discovered.toml`, `observed.json`, `locks/observed.lock` (§7.1 — the `add` lock is `<checkout>/.routes.lock`, keyed by the resource it protects), `sessions/<session-id>.jsonl` (the per-run cost ledger — §11), `run/<launch-id>/` (per-launch files under a launcher-minted id, removed on exit — §7.1), the isolated Claude config dir, and the 0600 `env` file. `knowledge/` and `routes.toml` live in the checkout and are git-tracked. `AGENT_ON_STATE` overrides the state root for scratch runs. Storage rules: §7.1. | The review's day-one gap: rev 2 never said where the three machine-written files live or which copy owns them. With D9 there is one copy; with this rule there is one state root. `sync` never dirties a tracked file; `learn` and `add` produce diffs the agent can commit. |
+
+Rev 9 addition:
+
+| # | decision | rationale |
+|---|---|---|
+| D14 | **Codex gets its key from a per-launch config file, never the environment.** The launcher creates `$STATE/run/<launch-id>/codex-home/` (0700) with `config.toml` → `~/.codex/config.toml` (symlink, so the operator's plugins, marketplaces and settings apply), `skills/`, `plugins/`, `hooks.json` → symlinks, and a 0600 profile file `agent-on.config.toml` carrying `model`, `model_provider = "agent-on"`, `[model_providers.agent-on]` with `base_url`, `wire_api = "responses"`, `http_headers = { Authorization = "Bearer <key>" }` and `model_context_window`; Codex runs with `CODEX_HOME` pointing there and `--profile agent-on`; the directory is removed when the child exits. Sessions, history and logs land in the per-launch home (isolated, as Claude's transcripts are). `env_key` is never used. | Measured 2026-09-09 (S7): with `http_headers` in the config the model's own `printenv` finds no key and the rollout carries none; `http_headers_helper`, the documented analogue of `apiKeyHelper`, is ignored by Codex 0.153.4 (401 — recorded as a trap); `env_key` would put the key in every shell-tool child, §1.1c again. S8: a profile file overrides the symlinked base config and defines the provider table. |
 
 ## 4. The tower
 
@@ -539,6 +554,32 @@ it is computed from Anthropic's price table and is meaningless on any other
 model (F11; measured `costUSD 0.183` on a free local model). Cost is
 `usage × price` from L1.
 
+### 7.2 Version 2 (rev 9): keyed by wire and by harness
+
+`observed.version` becomes 2. `read_observed` upgrades a version-1 document
+in memory and the next `update_observed` writes it back as 2; nothing else
+changes on disk until then.
+
+- `routes.*.qualifications` — a map from wire to the qualification record:
+  `{"messages": {...}, "responses": {...}}`; each record keeps the rev-8
+  shape (`pass, gates, thinking_block_seen, completed, at, fingerprint`) and
+  gains `wire`. `last_qualification` is gone (migration: the old record
+  becomes `qualifications.messages`). `qualification.current` is evaluated
+  per wire present; `status` prints one `qualified` line per wire.
+- `routes.*.cost_model.harness_baseline_tokens` — a map from harness to the
+  baseline record: `{"claude": {value, measured_by, harness_version, at},
+  "codex": {...}}` (migration wraps the old record under `"claude"`, renaming
+  its `claude_code` to `harness_version`). The cost line shows the baseline of
+  the harness being launched.
+- `routes.*.last_session` — `claude_code` becomes `harness_version`, and
+  `harness` (`"claude"` | `"codex"`) is added (migration fills both).
+  `effort` and `permission_mode` keep their names; for Codex they carry
+  `model_reasoning_effort` and the sandbox mode when the rollout records them,
+  else `null`.
+
+`knowledge/qualifications.jsonl` records gain `wire` (`learn` and the seeds
+test accept records without it as the messages wire).
+
 ## 8. L3 — Invariants
 
 A registry of named predicates over a context `(routes, observed, tree,
@@ -585,6 +626,29 @@ checks. The gate becomes: unit tests (including an in-process mock
 verifier as a process, every invariant, then `last_gate_run` to L2 and a
 record to `knowledge/gate-runs.jsonl`.
 
+### 8.1 The Responses wire (rev 9)
+
+`qualify --wire responses` runs the six gates' analogues against
+`<base_url>/responses` (the wire Codex speaks; `wire_api = "responses"` is
+the only value Codex 0.153.4 supports):
+
+| messages-wire gate | responses-wire analogue | pass when |
+|---|---|---|
+| `text_sse` | `text_stream` | `stream: true` yields `response.output_text.delta` events and ends in `response.completed` with non-empty text |
+| `claude_system_block_instructions` | `instructions` | top-level `instructions` carrying two markers is honoured: both appear in the reply |
+| `forced_structured_tool` | `forced_function_call` | `tools: [{type: function, …}]` + `tool_choice: {type: function, name}` → an output item `function_call` with a non-empty `call_id` and JSON `arguments` naming the city (the `status` may be `completed` or `incomplete`; the item decides) |
+| `streaming_input_json_delta` | `function_call_arguments_stream` | the streamed form yields `response.function_call_arguments.delta` and a `response.output_item.done` whose item is the same call |
+| `tool_result_continuation` | `function_call_output_continuation` | replaying the model's `function_call` item plus a `function_call_output` with the same `call_id` produces a message that names the returned weather |
+| `claude_adaptive_effort_policy` | `reasoning_effort` | `reasoning: {effort: "low"}` is accepted (200) and a `reasoning` output item or `usage.output_tokens_details.reasoning_tokens > 0` is seen; a 400 naming `reasoning` is a fail, any other 400 a fail |
+
+Every probe uses `max_output_tokens` 512 (a reasoning model spends the budget
+before the message otherwise — measured on glm-5.2 at 64). Throughput,
+concurrency and caching probes run on the same wire (`usage.input_tokens_details.cached_tokens`
+is the cache-read figure). Measured 2026-09-09: 6/6 on oMLX huihui and 6/6 on
+OpenRouter glm-5.2 (with the 512 budget); OpenRouter interleaves
+`: OPENROUTER PROCESSING` comment lines in the SSE stream, which a reader
+must skip.
+
 ## 9. L4 — Actions
 
 Seven commands. Six are tower verbs, `agent-on <verb>`; the launch is the
@@ -601,6 +665,12 @@ command prints `copy.*`.
 | `agent-on qualify <route> [--baseline] [--limits]` | six fidelity gates + throughput / concurrency / caching / thinking probes, recorded with the fingerprint (§8); `--baseline` measures `harness_baseline_tokens` with the fixed minimal prompt; `--limits` finds the enforced input boundary (`verified`) | L1 L2 | L2 L5 (`qualifications.jsonl`) | `route.served` |
 | `agent-on learn <kind> --json-record '<record>'` (or stdin; `--json` stays the output switch — Plan C) | validate and append to `knowledge/<kind>.jsonl`; assigns `id = <kind>-<ULID>` and `ts`; validates `supersedes` | — | L5 | `knowledge.typed` |
 | `agent-on install` | link the shim, create the state root, check `python3 ≥ 3.11`, record `copy.*` | checkout | shim, state | `copy.single` |
+
+Rev 9 additions to the table above:
+
+- `codex-on <route|alias> [codex args…]` — `agent-on launch --harness codex`: bind Codex CLI to the route and spawn it (§11.1); everything after the route is Codex's (`codex [PROMPT]` opens the TUI, `codex exec …` runs non-interactively); a `--task <id>` handoff appends the rendered prompt last, as for Claude; after exit the rollout under the per-launch `CODEX_HOME` is read back into `last_session` with `harness = "codex"`.
+- `agent-on qualify <route> [--wire messages|responses] [--harness claude|codex]` — `--wire` (default `messages`) selects the gate set and the endpoint (§8.1); the record lands in `qualifications.<wire>`; `--baseline` measures the named harness's pre-task tokens into `harness_baseline_tokens.<harness>` (`codex exec 'Reply with exactly: OK'` for codex; a paid source still needs `--allow-paid`).
+- `agent-on install` links three shims: `agent-on`, `claude-on`, `codex-on`.
 
 9 → 7: the mapping said an agent needs nine — the seven above plus `task
 create/handoff` (now `learn task …`, §10.1) and `proxy status` (moot).
@@ -678,6 +748,49 @@ differential test; the permission-mode subsystem; the effort validator (the
 provider is the truth); the tier alias map; every OAuth env manipulation. Kept
 from the old overlay: only the ~10 lines that write the helper settings file.
 
+### 11.1 Codex binding: `agent_on/harness_codex.py` (rev 9)
+
+One file, the tower unchanged. The launch shares its prologue with the Claude
+binding (route resolution, the `route.served` probe, the knowledge traps, the
+price snapshot, the run-dir sweep, the task handoff, the `--task` `launched`
+event) and its epilogue (the ledger line, `last_session`, the cost
+observation); only the middle differs:
+
+1. **Home isolation.** `$STATE/run/<launch-id>/codex-home/` (0700):
+   `config.toml`, `skills`, `plugins`, `hooks.json` are symlinks into
+   `~/.codex` when they exist there (shared deliberately, as Claude's settings,
+   plugins and skills are); `sessions/`, `history.jsonl`, `log/`, the sqlite
+   state are per-launch. `CODEX_HOME` points there.
+2. **The profile file** `agent-on.config.toml` (0600) — `model = <wire_model>`,
+   `model_provider = "agent-on"`, `model_context_window = <cost_model.context>`
+   when known, and `[model_providers.agent-on]` with `name`, `base_url =
+   <source base_url>/v1` (a source whose `base_url` already ends in `/v1` is
+   used as is), `wire_api = "responses"`, and — keyed source only —
+   `http_headers = { Authorization = "Bearer <key>" }`. Codex is spawned as
+   `codex --profile agent-on <args…>`; a user `--profile` in the arguments is
+   stripped with a warning (the launcher's profile carries the credential;
+   S8: a profile file overrides the base config and defines the provider).
+3. **Env.** Every source's `auth_env`, the routing denylist, every
+   `ANTHROPIC_*`/`CLAUDE_*` and `OPENAI_*` variable are removed (the same
+   `child_env`, with `CODEX_HOME` set and no Anthropic variables added);
+   `credential.not_in_child_env` covers both harnesses because the scrub is
+   the same function.
+4. **Read-back.** The newest `sessions/**/rollout-*.jsonl` under the
+   per-launch home: `session_meta` (`id`, `cli_version`, `model_provider`),
+   `turn_context` (`model`, one per turn), the last `token_count` event's
+   `info.total_token_usage` — mapped to the tower's usage fields as
+   `input_tokens = input − cached_input`, `cache_read_input_tokens =
+   cached_input`, `cache_creation_input_tokens = cache_write_input`,
+   `output_tokens = output` (reasoning included) — priced with the snapshot
+   like a Claude run; `first_request` from the first `token_count`'s
+   `last_token_usage`. `--resume` inside Codex is not supported by the
+   launcher (a per-launch home has one rollout); `last_session.harness =
+   "codex"`, `harness_version = cli_version`.
+5. **Measured 2026-09-09** (S6–S8): plain reply and a Read task on oMLX
+   huihui, plain reply on OpenRouter glm-5.2, `printenv` inside Codex →
+   `NONE`, key absent from the rollout; Codex's pre-task baseline is 6,859
+   input tokens on huihui (Claude Code: 54,380).
+
 ## 12. The cost model
 
 Every route's `observed.cost_model`:
@@ -751,6 +864,7 @@ commit series, is verified before the next starts, and records a
 | **C** | 6 | `knowledge/` + `learn`; seeds; memory-note migration; the skill; `status` shows traps for the action in hand | **nothing** | a peer session answers Q1, Q3–Q6, Q8, Q10 from `status --json` and `knowledge/` alone |
 | **D** | 7–8, S4, S5 | `install` as shims + state root; rename to `agent-on`; docs generated from `routes.toml`; `omlx-tp2` and `omlx@morty` qualified when reachable | **everything old, in one plan**: LiteLLM runtime, venv, OAuth code and routes, integrity chain, `lib.zsh`, `shell.zsh`, `check.zsh`, `harnesses/`, the budget/overlay/permission/callback layers, the context/reasoning ledgers, `model-qualifications.json`, all vestigial | a fresh clone + `install` launches every reachable route with stdlib Python only; no hit for `litellm` under `agent_on/`, `bin/`, `routes.toml`, `tests/`; Q2/Q7/Q9 moot and the peer check re-run; line count ≤ 6,000; gate green. Until this plan lands, `git revert` of any A–C commit restores the old path intact |
 | **E** | 9, S3 | `exo` | — | six gates direct on :52415 |
+| **F** | S6, S7, S8 (done 2026-09-09) | `harness_codex.py` (§11.1), `codex-on` shim, `qualify --wire responses` (§8.1), observed v2 (§7.2), mock `/v1/responses`, `install` links three shims | — | `codex-on huihui` completes a Read task; `codex-on glm` — the model's own `printenv` finds no key; `qualify --wire responses` 6/6 on huihui and glm; `--baseline --harness codex` recorded; a `--task` handoff runs through `codex-on`; observed v1 files upgrade in place; `status` shows both wires and both baselines; gate green |
 
 Plan B is ordered free-before-paid deliberately. Plans A–C add and never
 delete: the old path keeps every file it references until D, so each plan is
