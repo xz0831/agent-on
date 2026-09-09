@@ -42,7 +42,7 @@ confidence = "owned-policy"
 source     = "assumed equal to the single-node oMLX settings until S4 measures the TP2 endpoint (down on 2026-09-07)"
 
 [sources.exo]
-base_url = "http://127.0.0.1:52415"
+base_url = "http://127.0.0.1:52416"   # exo-shim (com.rick.exo-shim): folds messages[].role=system into system (exo issue 2193 / PR 2201); the :52415 bundle rejects it
 catalog  = "/v1/models"
 discover = false   # exo's catalog lists downloadable models, not loaded ones (Plan E, 2026-09-09): declare the loaded ones
 
@@ -155,3 +155,7 @@ aliases = ["exo1b"]
 [routes."exo/mlx-community/Qwen3-0.6B-8bit"]
 wire_model = "mlx-community/Qwen3-0.6B-8bit"
 aliases = ["exoq"]
+
+[routes."exo/mlx-community/Qwen3-VL-32B-Instruct-4bit"]
+wire_model = "mlx-community/Qwen3-VL-32B-Instruct-4bit"
+aliases = ["exovl"]
