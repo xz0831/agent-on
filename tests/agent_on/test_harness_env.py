@@ -67,6 +67,18 @@ class ChildEnvTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 harness.child_env({}, t, t.routes["mock/alpha"], context=None, config_dir=Path("/c"), sonnet=t.routes["paid/vendor/model-x"])
 
+    def test_child_env_for_codex_scrubs_everything_and_sets_only_codex_home(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            table = load_routes(sb.paths)
+            parent = {"PATH": "/usr/bin", "HOME": "/h", "OPENROUTER_API_KEY": "sk-x", "OPENAI_API_KEY": "sk-o", "ANTHROPIC_API_KEY": "sk-a",
+                      "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "1", "CODEX_HOME": "/elsewhere", "MOCK_PAID_KEY": "sk-p", "TERM": "xterm"}
+            env = harness.child_env(parent, table, table.resolve("x"), context=100000, config_dir=Path("/run/codex-home"), harness="codex")
+            self.assertEqual(env["CODEX_HOME"], "/run/codex-home")
+            for k in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MOCK_PAID_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"):
+                self.assertNotIn(k, env)
+            self.assertFalse(any(k.startswith(("ANTHROPIC_", "CLAUDE_", "OPENAI_")) for k in env))
+            self.assertEqual(env["TERM"], "xterm")
+
 
 class ConfigDirTest(unittest.TestCase):
     def test_shared_items_are_symlinked_and_the_project_is_trusted(self):
