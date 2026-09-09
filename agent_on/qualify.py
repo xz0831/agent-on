@@ -454,7 +454,8 @@ def probe_limits(wire: Wire, lo: int, hi: int, *, count_tokens: bool = True, max
 # ---- the command (§9 qualify row) ----------------------------------------------------------------------------
 
 BASELINE_PROMPT = "Reply with exactly: OK"
-BASELINE_TOKENS_ESTIMATE = 50_000
+BASELINE_TOKENS_ESTIMATE = 50_000          # measured: Claude Code baseline prompt, ~54,380 input tokens
+CODEX_BASELINE_TOKENS_ESTIMATE = 7_000     # measured: Codex baseline prompt, ~6,859 input tokens
 
 
 def _estimate_paid_usd(price: dict | None, tokens: int) -> float | None:
@@ -474,9 +475,13 @@ def run_qualify(paths: Paths, name: str, *, wire: str = "messages", baseline: bo
     doc: dict = {"command": "qualify", "copy": describe_copy(paths), "route": route.name, "wire": wire, "refused": None, "gates": {}, "details": {},
                  "probes": {}, "baseline": None, "fingerprint": None, "written": False, "invariants": []}
     if paid and (baseline or limits) and not allow_paid:
+        # minor fix-before-merge: this refusal ran Codex under --wire responses but always named Claude Code and
+        # its (much larger) baseline token estimate — wire-aware now.
+        baseline_tokens = BASELINE_TOKENS_ESTIMATE if wire == "messages" else CODEX_BASELINE_TOKENS_ESTIMATE
+        baseline_harness = "Claude Code" if wire == "messages" else "Codex"
         lim = table.effective_limits(route)
-        est = _estimate_paid_usd(price, (BASELINE_TOKENS_ESTIMATE if baseline else 0) + (2 * (lim.input or 0) if limits and lim else 0))
-        doc["refused"] = (f"{route.source} bills per token: --baseline runs Claude Code (~{BASELINE_TOKENS_ESTIMATE} input tokens) and --limits "
+        est = _estimate_paid_usd(price, (baseline_tokens if baseline else 0) + (2 * (lim.input or 0) if limits and lim else 0))
+        doc["refused"] = (f"{route.source} bills per token: --baseline runs {baseline_harness} (~{baseline_tokens} input tokens) and --limits "
                           f"sends up to ~2× the input limit; estimated ${est if est is not None else '?'} — re-run with --allow-paid")
         return doc
     key = resolve_secret(paths, source.auth_env, parent) if source.auth_env else None
