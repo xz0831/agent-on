@@ -20,6 +20,11 @@ accumulate; this one only tells you where the accumulated facts are and how to a
   action must not break is the list of invariants that name it (Q10).
 - `./bin/agent-on install` — links the three shims (`agent-on`, `claude-on`, `codex-on`) into `~/.local/bin` and
   creates the state root; idempotent.
+- `./bin/claude-on --session-store native <route> --resume <uuid>` — continue an ordinary Claude Code session in
+  its native `~/.claude` store. The default remains the isolated Agent-on store; never run one native session twice
+  concurrently.
+- `$AGENT_ON_STATE/routes.local.toml` — optional per-host `base_url` overrides for sources already declared in the
+  tracked route table. It is machine state, not a Git file.
 - `knowledge/decisions.jsonl` — the settled decisions with rationale; a record with `supersedes` replaces the one it
   names. Read the active set before proposing a change that touches one.
 - `knowledge/traps.jsonl` — mechanisms that have bitten this repo, with `applies_to` (a verb, a source, a route or

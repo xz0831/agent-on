@@ -378,9 +378,9 @@ def docs_current(ctx: Context):
     if not page.exists():
         return skip("no docs/ROUTES.md in this tree")
     from .docs import render_routes_doc
-    from .paths import Paths
+    from .schemas.routes import load_declared_routes
     try:
-        table = load_routes(Paths(checkout=ctx.tree, state=ctx.paths.state, home=ctx.home, tree=ctx.tree))
+        table = load_declared_routes(ctx.paths.__class__(checkout=ctx.tree, state=ctx.paths.state, home=ctx.home, tree=ctx.tree))
     except (SchemaError, OSError) as e:
         return fail(f"routes.toml unreadable: {e}")
     return ok("current") if page.read_text(encoding="utf-8") == render_routes_doc(table) else fail("docs/ROUTES.md is stale — run scripts/routes-doc.py")

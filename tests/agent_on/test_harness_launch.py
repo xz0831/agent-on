@@ -112,6 +112,30 @@ class LaunchTest(unittest.TestCase):
             self.assertFalse((out / "env.json").exists())                                # nothing was spawned
             self.assertIn("ANTHROPIC_BASE_URL", doc["env_keys"])
 
+    def test_native_store_resumes_the_same_normal_claude_transcript_in_place(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            sid = "11111111-2222-3333-4444-555555555555"
+            cwd = str(sb.paths.checkout.resolve())
+            native = sb.paths.native_transcript_path(sid, cwd)
+            native.parent.mkdir(parents=True)
+            old_usage = {"input_tokens": 10, "output_tokens": 2, "cache_read_input_tokens": 0,
+                         "cache_creation_input_tokens": 0}
+            old = {"type": "assistant", "timestamp": "2020-01-01T00:00:00.000Z", "sessionId": sid,
+                   "version": "2.1.277", "effort": "high", "permissionMode": "default",
+                   "message": {"id": "msg_native", "model": "alpha", "usage": old_usage, "content": []}}
+            native.write_text(json.dumps(old) + "\n", encoding="utf-8")
+
+            doc, out = self.launch(sb, "a", ["--resume", sid], session_store="native")
+
+            child = json.loads((out / "env.json").read_text())
+            self.assertNotIn("CLAUDE_CONFIG_DIR", child)
+            self.assertEqual(doc["session_store"], "native")
+            self.assertEqual(doc["transcript"], str(native))
+            self.assertEqual(doc["last_session"]["id"], sid)
+            self.assertEqual(doc["last_session"]["this_run"]["turns"], 2)
+            self.assertEqual(doc["last_session"]["session_total"]["turns"], 3)
+            self.assertFalse(sb.paths.transcript_path(sid, cwd).exists())
+
     def test_a_routing_key_in_the_shared_settings_is_warned_about_not_gated(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             (sb.paths.home / ".claude").mkdir()

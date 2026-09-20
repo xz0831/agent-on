@@ -2,12 +2,18 @@
 # agent-on shim. The checkout is the installation (D9): nothing here but "find python3 >= 3.11 and exec the package".
 set -u
 checkout="${0:A:h:h}"
-py="${AGENT_ON_PYTHON:-$(command -v python3 2>/dev/null || true)}"
+py="${AGENT_ON_PYTHON:-}"
+if [[ -z "$py" ]]; then
+  candidates=("$(command -v python3 2>/dev/null || true)" /opt/homebrew/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3.14 /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11)
+  for candidate in $candidates; do
+    if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+      py="$candidate"; break
+    fi
+  done
+fi
 if [[ -z "$py" ]] || ! "$py" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
-  print -u2 -- "agent-on: python3 >= 3.11 not found on PATH (or AGENT_ON_PYTHON is not one)"
-  exit 3
+  print -u2 -- "agent-on: python3 >= 3.11 not found on PATH (or AGENT_ON_PYTHON is not one)"; exit 3
 fi
 export PYTHONPATH="$checkout${PYTHONPATH:+:$PYTHONPATH}"
-# -P: don't prepend the caller's cwd to sys.path — without it, `-m` puts cwd ahead of PYTHONPATH,
-# so running this shim from inside another agent_on checkout would import that checkout's package.
+# -P keeps the caller's cwd from shadowing this checkout's package.
 exec "$py" -P -m agent_on "$@"

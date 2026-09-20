@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import urljoin, urlsplit
 
 from ..util import canonical_json, sha16
 from .errors import SchemaError
 
 L1_CONFIDENCES = ("provider", "owned-policy", "configured")   # `advertised` and `verified` are L2 tiers (§7)
+SOURCE_BACKENDS = ("passthrough", "omlx", "splash", "openrouter")
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
-_SOURCE_KEYS = ("base_url", "auth_env", "catalog", "discover", "limits")
+_SOURCE_KEYS = ("base_url", "auth_env", "catalog", "discover", "backend", "limits")
 _ROUTE_KEYS = ("wire_model", "aliases", "limits", "reasoning", "price")
 
 
@@ -45,6 +47,10 @@ class Reasoning:
     provider_efforts: tuple[str, ...]
     confidence: str | None
     source: str
+    effort_map: tuple[tuple[str, str | int], ...] = ()
+
+    def map_effort(self, effort: str) -> str | int:
+        return dict(self.effort_map).get(effort, effort)
 
 
 @dataclass(frozen=True)
@@ -55,6 +61,7 @@ class Source:
     catalog: str | None
     discover: bool
     limits: Limits | None
+    backend: str = "passthrough"
 
     def catalog_url(self) -> str | None:
         if self.catalog is None:
@@ -106,11 +113,13 @@ class RouteTable:
         with its source (base_url, auth_env, catalog, inherited limits) — not HEAD and not the route entry alone."""
         src = self.sources[route.source]
         lim = self.effective_limits(route)
-        doc = {"source": {"base_url": src.base_url, "auth_env": src.auth_env, "catalog": src.catalog},
+        doc = {"source": {"base_url": src.base_url, "auth_env": src.auth_env, "catalog": src.catalog,
+                          "backend": src.backend},
                "route": {"wire_model": route.wire_model, "limits": lim.as_dict() if lim else None,
                          "reasoning": None if route.reasoning is None else {
                              "supported": route.reasoning.supported, "efforts": list(route.reasoning.efforts),
-                             "provider_efforts": list(route.reasoning.provider_efforts)},
+                             "provider_efforts": list(route.reasoning.provider_efforts),
+                             "effort_map": dict(route.reasoning.effort_map)},
                          "price": None if route.price is None else route.price.per_mtok()}}
         return sha16(canonical_json(doc))
 
@@ -178,6 +187,22 @@ def _parse_reasoning(d, where: str) -> Reasoning:
         return tuple(v)
 
     efforts, provider_efforts = strs("efforts"), strs("provider_efforts")
+    if len(set(efforts)) != len(efforts):
+        raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.efforts contains a duplicate")
+    raw_map = d.get("effort_map", {})
+    if not isinstance(raw_map, dict):
+        raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.effort_map must be a table")
+    effort_map: list[tuple[str, str | int]] = []
+    for key, value in raw_map.items():
+        if not isinstance(key, str) or not key:
+            raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.effort_map keys must be non-empty strings")
+        if isinstance(value, bool) or not ((isinstance(value, str) and value) or (isinstance(value, int) and 1 <= value <= 100)):
+            raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.effort_map.{key} must be a non-empty string or integer 1..100")
+        effort_map.append((key, value))
+    if effort_map and set(dict(effort_map)) != set(efforts):
+        raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.effort_map must map every declared effort exactly once")
+    if effort_map and not set(dict(effort_map)).issubset(CLAUDE_EFFORTS):
+        raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.effort_map keys must be Claude levels {CLAUDE_EFFORTS}")
     supported = d.get("supported", bool(efforts or provider_efforts))
     if not isinstance(supported, bool):
         raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.supported must be a bool")
@@ -187,9 +212,9 @@ def _parse_reasoning(d, where: str) -> Reasoning:
     if not isinstance(d.get("source"), str) or not d["source"]:
         raise SchemaError("routes.reasoning.shape", f"{where}: reasoning.source must say where it came from")
     for k in d:
-        if k not in ("supported", "efforts", "provider_efforts", "confidence", "source"):
+        if k not in ("supported", "efforts", "provider_efforts", "effort_map", "confidence", "source"):
             raise SchemaError("routes.reasoning.shape", f"{where}: unknown reasoning key {k!r}")
-    return Reasoning(supported, efforts, provider_efforts, confidence, d["source"])
+    return Reasoning(supported, efforts, provider_efforts, confidence, d["source"], tuple(effort_map))
 
 
 def _parse_source(name: str, d) -> Source:
@@ -204,11 +229,14 @@ def _parse_source(name: str, d) -> Source:
             raise SchemaError("routes.source.shape", f"source {name!r}: {k} must be a non-empty string")
     if not isinstance(d.get("discover", False), bool):
         raise SchemaError("routes.source.shape", f"source {name!r}: discover must be a bool")
+    backend = d.get("backend", "passthrough")
+    if backend not in SOURCE_BACKENDS:
+        raise SchemaError("routes.source.shape", f"source {name!r}: backend must be one of {SOURCE_BACKENDS}")
     for k in d:
         if k not in _SOURCE_KEYS:
             raise SchemaError("routes.source.shape", f"source {name!r}: unknown key {k!r}")
     return Source(name, base, d.get("auth_env"), d.get("catalog"), d.get("discover", False),
-                  _parse_limits(d["limits"], f"source {name!r}") if "limits" in d else None)
+                  _parse_limits(d["limits"], f"source {name!r}") if "limits" in d else None, backend)
 
 
 def _parse_route(name: str, d, sources: dict[str, Source], packaged: bool) -> Route:
@@ -229,9 +257,12 @@ def _parse_route(name: str, d, sources: dict[str, Source], packaged: bool) -> Ro
     aliases = d.get("aliases", [])
     if not isinstance(aliases, list) or not all(isinstance(a, str) and a and "/" not in a for a in aliases):
         raise SchemaError("routes.alias.shape", f"route {name!r}: aliases must be non-empty strings without '/'")
+    reasoning = _parse_reasoning(d["reasoning"], f"route {name!r}") if "reasoning" in d else None
+    if reasoning and reasoning.effort_map and sources[src].backend != "omlx":
+        raise SchemaError("routes.reasoning.shape", f"route {name!r}: reasoning.effort_map is only used by backend='omlx'")
     return Route(name, src, wm, tuple(aliases),
                  _parse_limits(d["limits"], f"route {name!r}") if "limits" in d else None,
-                 _parse_reasoning(d["reasoning"], f"route {name!r}") if "reasoning" in d else None,
+                 reasoning,
                  _parse_price(d["price"], f"route {name!r}") if "price" in d else None, packaged)
 
 
@@ -297,8 +328,53 @@ def merge_tables(packaged: dict[str, Route], discovered: dict[str, Route]) -> tu
     return merged, tuple(shadowed)
 
 
-def load_routes(paths) -> RouteTable:
+def apply_source_overrides(text: str, sources: dict[str, Source]) -> dict[str, Source]:
+    """Apply host-local base URLs without making a shared Git checkout host-specific.
+
+    The state file is intentionally narrow: it may only replace ``base_url`` on an
+    already-declared source. Routes, credentials, limits, and source identity remain
+    governed by the tracked routes.toml.
+    """
+    try:
+        doc = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise SchemaError("routes.local.shape", f"routes.local.toml is not valid TOML: {e}") from None
+    if doc.get("version") != 1:
+        raise SchemaError("routes.local.shape", f"routes.local.toml version must be 1, got {doc.get('version')!r}")
+    for key in doc:
+        if key not in ("version", "sources"):
+            raise SchemaError("routes.local.shape", f"routes.local.toml: unknown top-level key {key!r}")
+    raw = doc.get("sources") or {}
+    if not isinstance(raw, dict):
+        raise SchemaError("routes.local.shape", "routes.local.toml: sources must be a table")
+    out = dict(sources)
+    for name, override in raw.items():
+        if name not in out:
+            raise SchemaError("routes.local.shape", f"routes.local.toml: source {name!r} is not declared in routes.toml")
+        if not isinstance(override, dict) or set(override) != {"base_url"}:
+            raise SchemaError("routes.local.shape", f"routes.local.toml: source {name!r} may override base_url only")
+        base_url = override["base_url"]
+        if not isinstance(base_url, str) or not base_url.startswith(("http://", "https://")):
+            raise SchemaError("routes.local.shape", f"routes.local.toml: source {name!r} base_url must be an http(s) URL")
+        out[name] = replace(out[name], base_url=base_url)
+    return out
+
+
+def load_packaged_routes(paths) -> tuple[dict[str, Source], dict[str, Route]]:
     srcs, packaged, _ = parse_routes_text(paths.routes_toml.read_text(encoding="utf-8"), packaged=True)
+    if paths.local_routes_toml.exists():
+        srcs = apply_source_overrides(paths.local_routes_toml.read_text(encoding="utf-8"), srcs)
+    return srcs, packaged
+
+
+def load_declared_routes(paths) -> RouteTable:
+    """Tracked L1 only: no discovered routes and no host-local address overrides."""
+    srcs, packaged, _ = parse_routes_text(paths.routes_toml.read_text(encoding="utf-8"), packaged=True)
+    return RouteTable(srcs, packaged)
+
+
+def load_routes(paths) -> RouteTable:
+    srcs, packaged = load_packaged_routes(paths)
     discovered: dict[str, Route] = {}
     if paths.discovered_toml.exists():
         _, discovered, _ = parse_routes_text(paths.discovered_toml.read_text(encoding="utf-8"), packaged=False, sources=srcs)
@@ -342,6 +418,9 @@ def route_block(route: Route) -> str:
             lines.append(f"efforts = {_val(list(r.efforts))}")
         if r.provider_efforts:
             lines.append(f"provider_efforts = {_val(list(r.provider_efforts))}")
+        if r.effort_map:
+            body = ", ".join(f"{_key(k)} = {_val(v)}" for k, v in r.effort_map)
+            lines.append(f"effort_map = {{ {body} }}")
         if r.confidence:
             lines.append(f"confidence = {_val(r.confidence)}")
         lines.append(f"source = {_val(r.source)}")

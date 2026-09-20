@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .cost import attribute_run, fold_session
+from .effort import OmlxEffortAdapter, explicit_claude_effort, launch_effort_metadata
 from .ids import ulid
 from .knowledge import append as knowledge_append, knowledge_view
 from .paths import Paths, describe_copy, ensure_state, project_slug
@@ -57,7 +58,7 @@ PASS_THROUGH = ("CLAUDE_CODE_MAX_OUTPUT_TOKENS",)
 
 # ---- child environment (§11 item 2) --------------------------------------------------------------------------
 
-def child_env(parent: dict, table: RouteTable, route: Route, *, context: int | None, config_dir: Path,
+def child_env(parent: dict, table: RouteTable, route: Route, *, context: int | None, config_dir: Path | None,
               discover: bool = False, sonnet: Route | None = None, haiku: Route | None = None, harness: str = "claude") -> dict:
     """The environment the harness is spawned with. Every source's auth_env and the routing denylist are removed;
     a keyed source gets NO key variable (the apiKeyHelper supplies it); a keyless one gets the placeholder token.
@@ -96,7 +97,8 @@ def child_env(parent: dict, table: RouteTable, route: Route, *, context: int | N
     env["CLAUDE_CODE_ATTRIBUTION_HEADER"] = "0"
     if discover:
         env[DISCOVERY_ENV] = "1"
-    env["CLAUDE_CONFIG_DIR"] = str(config_dir)
+    if config_dir is not None:
+        env["CLAUDE_CONFIG_DIR"] = str(config_dir)
     return env
 
 
@@ -361,14 +363,16 @@ def read_transcript(path: Path) -> dict:
     return {"turns": list(turns.values()), "first_request": first, **meta}
 
 
-def find_transcript(paths: Paths, session_id: str | None, cwd: str, mode: str, started: str) -> Path | None:
+def find_transcript(paths: Paths, session_id: str | None, cwd: str, mode: str, started: str,
+                    *, config_dir: Path | None = None) -> Path | None:
     """The file to read after exit: the known session id, else (resume without id / continue) the newest transcript
     of this project modified since the launch started."""
     if mode == "no-persistence":
         return None
+    root = config_dir or paths.claude_config_dir
     if session_id:
-        return paths.transcript_path(session_id, cwd)
-    pdir = paths.claude_config_dir / "projects" / project_slug(cwd)
+        return root / "projects" / project_slug(cwd) / f"{session_id}.jsonl"
+    pdir = root / "projects" / project_slug(cwd)
     if not pdir.exists():
         return None
     since = parse_utc(started).timestamp() - 1
@@ -572,8 +576,13 @@ def epilogue(paths: Paths, plan: LaunchPlan, launch: dict, *, code: int, ended: 
 def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str = "claude", discover: bool = False,
                sonnet: str | None = None, haiku: str | None = None, dry_run: bool = False, env: dict | None = None,
                claude_bin: str | None = None, codex_bin: str | None = None, cwd: str | None = None, probe_timeout: float = 2.0,
-               announce: bool = True, task: str | None = None, handoff: str = "latest") -> dict:
+               announce: bool = True, task: str | None = None, handoff: str = "latest",
+               session_store: str = "isolated") -> dict:
+    if session_store not in ("isolated", "native"):
+        raise ValueError("session_store must be 'isolated' or 'native'")
     if harness == "codex":
+        if session_store != "isolated":
+            raise ValueError("--session-store applies to Claude Code only")
         from .harness_codex import run_launch_codex
         return run_launch_codex(paths, name, claude_args, dry_run=dry_run, env=env, codex_bin=codex_bin, cwd=cwd,
                                 probe_timeout=probe_timeout, announce=announce, task=task, handoff=handoff)
@@ -592,34 +601,63 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     claude_args = stripped_args if plan.key is not None else plan.args
     if settings_merged and "apiKeyHelper" in user_settings:
         plan.warnings.append("user --settings apiKeyHelper replaced by the launcher's credential helper")
-    config_dir = prepare_config_dir(paths, plan.cwd)
+    # Native mode deliberately leaves CLAUDE_CONFIG_DIR unset. Claude Code then uses
+    # ~/.claude directly, so its picker, --continue, --resume, history, session-env,
+    # and auto-memory all address the same store as a normal `claude` launch.
+    if session_store == "isolated":
+        config_dir = prepare_config_dir(paths, plan.cwd)
+    else:
+        ensure_state(paths)
+        config_dir = None
+    transcript_root = paths.claude_config_dir if config_dir is not None else paths.home / ".claude"
     args, session_id, mode = session_args(claude_args)
+    explicit_effort = explicit_claude_effort(args)
+    effort = launch_effort_metadata(source, route)
+    effort = {**effort, "explicit_cli_effort": explicit_effort}
+    if source.backend == "omlx":
+        effort = {**effort, "receipt": str(paths.state / "effort" / f"{plan.launch_id}.jsonl")}
+        if effort["profile"] is None:
+            plan.warnings.append("oMLX model has no effort profile: Claude default/UI effort passes through un-applied; explicit --effort is rejected")
     launch = {"launch_id": plan.launch_id, "route": route.name, "source": route.source, "wire_model": route.wire_model, "started": plan.started,
               "session_id": session_id, "mode": mode, "cwd": plan.cwd, "price": plan.price,
-              "priced_models": plan.priced_models, "context": plan.context, "claude_args": args}
+              "priced_models": plan.priced_models, "context": plan.context, "claude_args": args, "effort": effort,
+              "session_store": session_store}
     cenv = child_env(plan.parent, table, route, context=plan.context, config_dir=config_dir, discover=discover, sonnet=sonnet_r, haiku=haiku_r)
     line = cost_line(route.name, plan.obs_route)
     doc = {"command": "launch", "copy": describe_copy(paths), "route": route.name, "wire_model": route.wire_model, "base_url": source.base_url,
            "launch_id": plan.launch_id, "session": {"id": session_id, "mode": mode}, "cost_line": line, "invariants": [plan.served, *plan.lint],
            "env_keys": sorted(k for k in cenv if k.startswith(("ANTHROPIC_", "CLAUDE_"))), "swept": plan.swept, "warnings": plan.warnings,
-           "settings_merged": settings_merged, "traps": plan.traps, "task": plan.task_doc}
+           "settings_merged": settings_merged, "traps": plan.traps, "task": plan.task_doc, "effort": effort,
+           "session_store": session_store}
     binary = claude_bin or shutil.which("claude") or "claude"
     if dry_run:
         doc.update({"dry_run": True, "argv": [binary, *(["--settings", "<run-dir>/settings.json"] if plan.key is not None else []), *args]})
         return doc
     run_dir, helper = write_run_dir(paths, plan.launch_id, key=plan.key, launch=launch, user_settings=user_settings)
-    if plan.task_doc:
-        from .tasks import launched
-        launched(paths, plan.task_doc["id"], handoff=str(plan.task_doc["handoff"]), launch_id=plan.launch_id, route=route.name)
     argv = [binary, *(["--settings", str(helper)] if helper else []), *args]   # a keyed source's --settings is always ours (F1): the user's was folded into it, or there is none
-    if announce:
-        print(line, file=sys.stderr)                                              # the §12 line, before spawning
+    adapter = None
     try:
+        if source.backend == "omlx":
+            adapter_routes = [r for r in (route, sonnet_r, haiku_r) if r is not None]
+            adapter = OmlxEffortAdapter(source.base_url, adapter_routes, Path(effort["receipt"]),
+                                        strict_unknown=explicit_effort is not None)
+            adapter.start()
+            cenv["ANTHROPIC_BASE_URL"] = adapter.base_url
+        if plan.task_doc:
+            from .tasks import launched
+            launched(paths, plan.task_doc["id"], handoff=str(plan.task_doc["handoff"]), launch_id=plan.launch_id, route=route.name)
+        if announce:
+            print(line, file=sys.stderr)                                          # the §12 line, before spawning
+            for warning in plan.warnings:
+                print(f"warning: {warning}", file=sys.stderr)
         code = spawn(argv, cenv, plan.cwd)
     finally:
+        if adapter is not None:
+            adapter.close()
+            doc["effort"] = {**effort, "requests": adapter.records()}
         shutil.rmtree(run_dir, ignore_errors=True)                                 # the key never outlives the child
     ended = utc_ceil()                                                            # inclusive of the last turn's milliseconds
-    transcript_path = find_transcript(paths, session_id, plan.cwd, mode, plan.started)
+    transcript_path = find_transcript(paths, session_id, plan.cwd, mode, plan.started, config_dir=transcript_root)
     parsed = read_transcript(transcript_path) if transcript_path and transcript_path.exists() else None
     doc["transcript"] = str(transcript_path) if transcript_path else None
     return epilogue(paths, plan, launch, code=code, ended=ended, transcript=parsed, mode=mode, harness="claude",

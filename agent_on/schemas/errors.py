@@ -15,6 +15,7 @@ RULES: dict[str, str] = {
     "routes.price.shape": "price has input_usd_per_mtok and output_usd_per_mtok (numbers ≥ 0), optional cache_read/cache_write, and a source string",
     "routes.alias.shape": "aliases is a list of non-empty strings without '/'",
     "routes.unique": "no two routes share a name, an alias, or (source, wire_model); a discovered route may not reuse a packaged alias",
+    "routes.local.shape": "routes.local.toml has version = 1 and may override only base_url for sources already declared in routes.toml",
     # L2 — observed.json (§7)
     "observed.shape": "observed.json has version, copy, sources, routes, last_check, last_gate_run, spend; each present record carries every key of its empty record",
     "observed.route.shape": "a route observation carries every key of the empty route record; unmeasured is null; caching is true, false or 'unknown'; served is true, false or null",

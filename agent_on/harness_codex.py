@@ -1,11 +1,14 @@
-"""L6 — the Codex binding (§11.1, D14). One file; the tower unchanged. Home isolation: a per-launch CODEX_HOME with the
-operator's config, skills, plugins and hooks linked in and a 0600 profile file carrying the provider and the key."""
+"""Codex binding: durable isolated session homes, with per-launch credential files."""
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import shutil
 import sys
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .harness import child_env, cost_line, epilogue, prologue, spawn, utc_ceil
@@ -38,18 +41,63 @@ def write_profile(codex_home: Path, *, model: str, base_url: str, key: str | Non
     return p
 
 
-def prepare_codex_home(paths: Paths, launch_id: str, home: Path, launch: dict) -> Path:
+def prepare_codex_home(paths: Paths, launch_id: str, home: Path, launch: dict, *, existing: Path | None = None) -> Path:
     d = paths.run_dir / launch_id
     d.mkdir(mode=0o700)
     (d / "pid").write_text(str(os.getpid()), encoding="utf-8")
     (d / "launch.json").write_text(json.dumps(launch, indent=1, sort_keys=True), encoding="utf-8")
-    ch = d / "codex-home"
-    ch.mkdir(mode=0o700)
+    ch = existing or paths.codex_home_for(launch_id)
+    ch.mkdir(parents=True, exist_ok=True, mode=0o700)
     native = home / ".codex"
     for item in CODEX_SHARED:
-        if (native / item).exists():
+        if (native / item).exists() and not (ch / item).exists() and not (ch / item).is_symlink():
             (ch / item).symlink_to(native / item)
     return ch
+
+
+def resume_target(paths: Paths, args: list[str]) -> tuple[Path | None, Path | None]:
+    """Resolve explicit UUID resumes only within this launcher's durable homes.
+
+    Pickers and --last are deliberately rejected: selecting a different home silently
+    would lose the intended conversation. Native ~/.codex sessions are never imported.
+    """
+    valued = {"-c", "--config", "--enable", "--disable", "-m", "--model", "-s", "--sandbox",
+              "-a", "--ask-for-approval", "-C", "--cd", "--add-dir", "-i", "--image",
+              "-o", "--output-last-message", "--output-schema", "--local-provider", "--thread-source"}
+    i = 0
+    while i < len(args) and args[i].startswith("-") and args[i] != "--":
+        i += 2 if args[i] in valued else 1
+    if i < len(args) and args[i] in ("exec", "e"):
+        i += 1
+        while i < len(args) and args[i].startswith("-") and args[i] != "--":
+            i += 2 if args[i] in valued else 1
+    index = i + 1 if i < len(args) and args[i] == "resume" else None
+    if index is None:
+        return None, None
+    try:
+        session_id = str(uuid.UUID(args[index]))
+    except (IndexError, ValueError):
+        raise ValueError("codex resume requires an explicit session UUID immediately after resume; --last and session names are not supported") from None
+    files = list((paths.state / "codex-homes").glob(f"*/codex-home/sessions/**/rollout-*-{session_id}.jsonl"))
+    if len(files) != 1:
+        raise ValueError(f"codex session {session_id} has {len(files)} saved rollouts in {paths.state / 'codex-homes'}; refusing a fresh or ambiguous resume")
+    rollout = files[0]
+    ch = next(p for p in rollout.parents if p.name == "codex-home")
+    return ch, rollout
+
+
+@contextmanager
+def session_lock(codex_home: Path):
+    """Do not allow concurrent writers to the same resumed session home."""
+    fd = os.open(codex_home / ".agent-on.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError(f"codex session is already active: {codex_home}") from None
+        yield
+    finally:
+        os.close(fd)
 
 
 def extract_user_profile(args: list[str]) -> tuple[list[str], str | None]:
@@ -148,9 +196,9 @@ def run_launch_codex(paths: Paths, name: str, codex_args: list[str], *, dry_run:
     args, user_profile = extract_user_profile(plan.args)
     if user_profile is not None:
         plan.warnings.append(f"user --profile {user_profile} replaced by the launcher's profile {PROFILE}")
-    if any("resume" in a.lower() for a in args):
-        plan.warnings.append("codex resume is not supported by agent-on yet (Plan F Task 5); launching a fresh session")
-    codex_home = paths.codex_home_for(plan.launch_id)
+    existing_home, previous_rollout = resume_target(paths, args)
+    mode = "resume" if existing_home else "fresh"
+    codex_home = existing_home or paths.codex_home_for(plan.launch_id)
     cenv = child_env(plan.parent, table, route, context=plan.context, config_dir=codex_home, harness="codex")
     binary = codex_bin or shutil.which("codex") or "codex"
     argv = [binary, "--profile", PROFILE, *args]
@@ -158,31 +206,46 @@ def run_launch_codex(paths: Paths, name: str, codex_args: list[str], *, dry_run:
                  "base_url": source.base_url, "launch_id": plan.launch_id,
                  "cost_line": cost_line(route.name, plan.obs_route, harness="codex"), "invariants": [plan.served, *plan.lint],
                  "env_keys": sorted(k for k in cenv if k.startswith(("CODEX_", "OPENAI_"))), "swept": plan.swept,
-                 "warnings": plan.warnings, "traps": plan.traps, "task": plan.task_doc}
+                 "warnings": plan.warnings, "traps": plan.traps, "task": plan.task_doc,
+                 "codex_home": str(codex_home)}
     if dry_run:
         doc.update({"dry_run": True, "argv": argv})
         return doc
+    # Subsecond precision prevents a quick resume from re-attributing earlier turns.
+    plan.started = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     launch = {"launch_id": plan.launch_id, "route": route.name, "source": route.source, "wire_model": route.wire_model,
-              "started": plan.started, "session_id": None, "mode": "fresh", "cwd": plan.cwd, "price": plan.price,
+              "started": plan.started, "session_id": None, "mode": mode, "cwd": plan.cwd, "price": plan.price,
               "priced_models": plan.priced_models, "context": plan.context, "codex_args": args}
     ensure_state(paths)
-    ch = prepare_codex_home(paths, plan.launch_id, paths.home, launch)
-    write_profile(ch, model=route.wire_model, base_url=source.base_url, key=plan.key, context=plan.context)
-    if plan.task_doc:
-        from .tasks import launched
-        launched(paths, plan.task_doc["id"], handoff=str(plan.task_doc["handoff"]), launch_id=plan.launch_id, route=route.name)
-    if announce:
-        print(doc["cost_line"], file=sys.stderr)                                     # the §12 line, before spawning
     run_dir = paths.run_dir / plan.launch_id
     try:
-        code = spawn(argv, cenv, plan.cwd)
-        rollout_path = find_rollout(codex_home)
-        rollout = read_rollout(rollout_path) if rollout_path else None               # read back BEFORE the home is removed (D14)
+        ch = prepare_codex_home(paths, plan.launch_id, paths.home, launch, existing=existing_home)
+        with session_lock(ch):
+            profile_link = ch / f"{PROFILE}.config.toml"
+            # A crashed launcher can leave a dangling link; only replace launcher links.
+            if profile_link.is_symlink():
+                profile_link.unlink()
+            elif profile_link.exists():
+                raise ValueError(f"refusing to replace non-launcher profile: {profile_link}")
+            try:
+                profile = write_profile(run_dir, model=route.wire_model, base_url=source.base_url, key=plan.key, context=plan.context)
+                profile_link.symlink_to(profile.resolve())
+                if plan.task_doc:
+                    from .tasks import launched
+                    launched(paths, plan.task_doc["id"], handoff=str(plan.task_doc["handoff"]), launch_id=plan.launch_id, route=route.name)
+                if announce:
+                    print(doc["cost_line"], file=sys.stderr)
+                code = spawn(argv, cenv, plan.cwd)
+                rollout_path = previous_rollout or find_rollout(codex_home)
+                rollout = read_rollout(rollout_path) if rollout_path else None
+            finally:
+                if profile_link.is_symlink():
+                    profile_link.unlink()
     finally:
         shutil.rmtree(run_dir, ignore_errors=True)                                   # the key never outlives the child
     ended = utc_ceil()
     launch["session_id"] = (rollout or {}).get("session_id") or plan.launch_id
-    doc["session"] = {"id": launch["session_id"], "mode": "fresh"}               # render_launch reads doc[session][id/mode] (claude parity)
+    doc["session"] = {"id": launch["session_id"], "mode": mode}
     doc["transcript"] = str(rollout_path) if rollout_path else None
-    return epilogue(paths, plan, launch, code=code, ended=ended, transcript=rollout, mode="fresh", harness="codex",
+    return epilogue(paths, plan, launch, code=code, ended=ended, transcript=rollout, mode=mode, harness="codex",
                     harness_version=(rollout or {}).get("version"), doc=doc)

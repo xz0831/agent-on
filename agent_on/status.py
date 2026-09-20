@@ -20,13 +20,15 @@ def fmt(v) -> str:
 
 def route_view(table, observed: dict, route) -> dict:
     lim = table.effective_limits(route)
-    declared = {"source": route.source, "wire_model": route.wire_model, "aliases": list(route.aliases), "packaged": route.packaged,
+    declared = {"source": route.source, "source_backend": table.sources[route.source].backend,
+                "wire_model": route.wire_model, "aliases": list(route.aliases), "packaged": route.packaged,
                 "limits": lim.as_dict() if lim else None,
                 "limits_from": "route" if route.limits is not None else ("source" if lim else None),
                 "price": route.price.per_mtok() if route.price else None,
                 "reasoning": None if route.reasoning is None else {"supported": route.reasoning.supported,
                                                                     "efforts": list(route.reasoning.efforts),
-                                                                    "provider_efforts": list(route.reasoning.provider_efforts)},
+                                                                    "provider_efforts": list(route.reasoning.provider_efforts),
+                                                                    "effort_map": dict(route.reasoning.effort_map)},
                 "effective_route_sha": table.effective_sha(route)}
     return {"declared": declared, "observed": observed["routes"].get(route.name)}
 

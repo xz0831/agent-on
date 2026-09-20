@@ -8,13 +8,13 @@ declarations — `agent-on status` shows them.
 
 ## Sources
 
-| source | base_url | auth_env | catalog | discover | limits in / out |
-|---|---|---|---|---|---|
-| `exo` | http://127.0.0.1:52416 | none | /v1/models | no | 131072 / 32768 (owned-policy) |
-| `omlx` | http://127.0.0.1:8000 | none | /v1/models | yes | 131072 / 32768 (configured) |
-| `omlx-tp2` | http://127.0.0.1:8003 | none | /v1/models | yes | 131072 / 32768 (owned-policy) |
-| `omlx@morty` | http://mortys-mac-studio:8000 | none | /v1/models | yes | 131072 / 32768 (owned-policy) |
-| `openrouter` | https://openrouter.ai/api | OPENROUTER_API_KEY | https://openrouter.ai/api/v1/models | no | — |
+| source | backend | base_url | auth_env | catalog | discover | limits in / out |
+|---|---|---|---|---|---|---|
+| `exo` | passthrough | http://127.0.0.1:52416 | none | /v1/models | no | 131072 / 32768 (owned-policy) |
+| `omlx` | omlx | http://127.0.0.1:8000 | none | /v1/models | yes | 131072 / 32768 (configured) |
+| `omlx-tp2` | omlx | http://127.0.0.1:8003 | none | /v1/models | yes | 131072 / 32768 (owned-policy) |
+| `omlx@morty` | omlx | http://127.0.0.1:18038 | none | /v1/models | yes | 131072 / 32768 (owned-policy) |
+| `openrouter` | openrouter | https://openrouter.ai/api | OPENROUTER_API_KEY | https://openrouter.ai/api/v1/models | no | — |
 
 ## Routes
 
@@ -43,7 +43,7 @@ no packaged routes
 
 | route | aliases | wire model | limits in / out | from | price | reasoning |
 |---|---|---|---|---|---|---|
-no packaged routes
+| `omlx@morty/Huihui-Qwen3.8-27B-oQ4e-mtp` | `morty-qwen` | Huihui-Qwen3.8-27B-oQ4e-mtp | 131072 / 32768 (owned-policy) | source | free | — |
 
 ### openrouter
 

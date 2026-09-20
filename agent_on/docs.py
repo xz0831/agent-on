@@ -32,9 +32,9 @@ def render_routes_doc(table: RouteTable) -> str:
     out = [HEADER, "", "Declared in `routes.toml` (L1). Measured values — served, limits verified, cost model, qualification — are in",
            "`agent-on status`, never here. Discovered routes (from `$STATE/routes.discovered.toml`) are state, not",
            "declarations — `agent-on status` shows them.", "", "## Sources", "",
-           "| source | base_url | auth_env | catalog | discover | limits in / out |", "|---|---|---|---|---|---|"]
+           "| source | backend | base_url | auth_env | catalog | discover | limits in / out |", "|---|---|---|---|---|---|---|"]
     for name, s in sorted(table.sources.items()):
-        out.append(f"| `{name}` | {s.base_url} | {s.auth_env or 'none'} | {s.catalog or '—'} | {'yes' if s.discover else 'no'} | {_lim(s.limits)} |")
+        out.append(f"| `{name}` | {s.backend} | {s.base_url} | {s.auth_env or 'none'} | {s.catalog or '—'} | {'yes' if s.discover else 'no'} | {_lim(s.limits)} |")
     out += ["", "## Routes", ""]
     for sname in sorted(table.sources):
         routes = sorted((r for r in table.by_source(sname) if r.packaged), key=lambda r: r.name)

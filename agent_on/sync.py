@@ -8,7 +8,7 @@ import os
 from .invariants import build_context, evaluate
 from .paths import Paths, describe_copy
 from .schemas.observed import compute_context, empty_route, empty_source
-from .schemas.routes import Route, discovered_text, load_routes, parse_routes_text
+from .schemas.routes import Route, discovered_text, load_packaged_routes, load_routes
 from .sources import fetch_openrouter_spend, omlx_settings_path, probe_all, read_configured_limits
 from .state import resolve_secret, update_observed, write_discovered
 from .util import utc_now
@@ -18,7 +18,7 @@ FREE = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
 
 def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> dict:
     env = os.environ if env is None else env
-    srcs, packaged, _ = parse_routes_text(paths.routes_toml.read_text(encoding="utf-8"), packaged=True)
+    srcs, packaged = load_packaged_routes(paths)
     probes = probe_all(srcs, timeout)
     now = utc_now()
 

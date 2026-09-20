@@ -7,11 +7,13 @@ version = 1
 base_url = "https://openrouter.ai/api"
 auth_env = "OPENROUTER_API_KEY"
 catalog  = "https://openrouter.ai/api/v1/models"
+backend  = "openrouter"
 
 [sources.omlx]
 base_url = "http://127.0.0.1:8000"
 catalog  = "/v1/models"
 discover = true
+backend  = "omlx"
 
 [sources.omlx.limits]
 input      = 131072
@@ -20,20 +22,22 @@ confidence = "configured"
 source     = "~/.omlx/settings.json sampling.max_context_window / sampling.max_tokens (read 2026-09-07)"
 
 [sources."omlx@morty"]
-base_url = "http://mortys-mac-studio:8000"
+base_url = "http://127.0.0.1:18038"  # Rick's ai.clusterops.morty-model-forward -> Morty loopback :1238
 catalog  = "/v1/models"
 discover = true
+backend  = "omlx"
 
 [sources."omlx@morty".limits]
 input      = 131072
 output     = 32768
 confidence = "owned-policy"
-source     = "assumed equal to the local oMLX settings until S5 measures morty; the remote settings file is not readable from here"
+source     = "operator caps retained on 2026-09-12; remote configured limits are not read from Rick's settings through the SSH forward"
 
 [sources.omlx-tp2]
 base_url = "http://127.0.0.1:8003"
 catalog  = "/v1/models"
 discover = true
+backend  = "omlx"
 
 [sources.omlx-tp2.limits]
 input      = 131072
@@ -45,6 +49,7 @@ source     = "assumed equal to the single-node oMLX settings until S4 measures t
 base_url = "http://127.0.0.1:52416"   # exo-shim (com.rick.exo-shim): folds messages[].role=system into system (exo issue 2193 / PR 2201); the :52415 bundle rejects it
 catalog  = "/v1/models"
 discover = false   # exo's catalog lists downloadable models, not loaded ones (Plan E, 2026-09-09): declare the loaded ones
+backend  = "passthrough"
 
 [sources.exo.limits]
 input      = 131072
@@ -147,6 +152,10 @@ aliases    = ["huihui"]
 [routes."omlx/Qwen3.8-27B-Uncensored-8bit"]
 wire_model = "Qwen3.8-27B-Uncensored-8bit"
 aliases    = ["uncensored8"]
+
+[routes."omlx@morty/Huihui-Qwen3.8-27B-oQ4e-mtp"]
+wire_model = "Huihui-Qwen3.8-27B-oQ4e-mtp"
+aliases    = ["morty-qwen"]
 
 [routes."exo/mlx-community/Llama-3.2-1B-Instruct-4bit"]
 wire_model = "mlx-community/Llama-3.2-1B-Instruct-4bit"

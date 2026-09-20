@@ -11,7 +11,7 @@ import unittest  # noqa: E402
 
 from agent_on.docs import render_routes_doc  # noqa: E402
 from agent_on.invariants import build_context, evaluate  # noqa: E402
-from agent_on.schemas.routes import load_routes  # noqa: E402
+from agent_on.schemas.routes import load_declared_routes, load_routes  # noqa: E402
 from agent_on.state import write_discovered  # noqa: E402
 
 BASE = "http://127.0.0.1:1"
@@ -45,9 +45,20 @@ class RenderTest(unittest.TestCase):
             self.assertNotIn("mock/extra", after)
             self.assertNotIn("extra-model", after)
 
+    def test_host_local_source_addresses_never_change_the_tracked_routes_page(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE), tree=None) as sb:
+            (sb.paths.checkout / "docs").mkdir()
+            declared = render_routes_doc(load_declared_routes(sb.paths))
+            (sb.paths.checkout / "docs" / "ROUTES.md").write_text(declared, encoding="utf-8")
+            sb.paths.state.mkdir()
+            sb.paths.local_routes_toml.write_text(
+                'version = 1\n[sources.mock]\nbase_url = "http://127.0.0.1:1238"\n', encoding="utf-8")
+            self.assertNotEqual(render_routes_doc(load_routes(sb.paths)), declared)
+            self.assertEqual(one(sb.paths, "docs.current").result, "pass")
+
     def test_the_real_page_is_current_and_the_invariant_sees_staleness(self):
         real = (REPO / "docs" / "ROUTES.md").read_text(encoding="utf-8")
-        self.assertEqual(real, render_routes_doc(load_routes(__import__("agent_on.paths", fromlist=["default_paths"]).default_paths({"HOME": str(REPO), "AGENT_ON_CHECKOUT": str(REPO)}))))
+        self.assertEqual(real, render_routes_doc(load_declared_routes(__import__("agent_on.paths", fromlist=["default_paths"]).default_paths({"HOME": str(REPO), "AGENT_ON_CHECKOUT": str(REPO)}))))
         with Sandbox(MOCK_ROUTES.format(base=BASE), tree=None) as sb:
             self.assertEqual(one(sb.paths, "docs.current").result, "skip")                  # no page in the sandbox tree
             (sb.paths.checkout / "docs").mkdir()

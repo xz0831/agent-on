@@ -101,6 +101,11 @@ class ProbeTest(unittest.TestCase):
         self.assertIsNone(omlx_settings_path(src("exo", "http://127.0.0.1:52415"), home))   # loopback, but not oMLX
         self.assertEqual(omlx_settings_path(src("omlx-tp2", "http://127.0.0.1:8003"), home), home / ".omlx" / "settings.json")
 
+    def test_forwarded_remote_source_does_not_read_local_settings(self):
+        for host in ("127.0.0.1", "localhost", "[::1]"):
+            with self.subTest(host=host):
+                self.assertIsNone(omlx_settings_path(src("omlx@morty", f"http://{host}:18038"), Path("/h")))
+
 
 class ConfiguredLimitsTest(unittest.TestCase):
     def test_reads_sampling_caps_and_names_the_file(self):

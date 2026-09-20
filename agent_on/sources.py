@@ -95,10 +95,14 @@ def probe_all(sources: dict[str, Source], timeout: float = 5.0) -> dict[str, Pro
 
 
 def omlx_settings_path(source: Source, home: Path) -> Path | None:
-    """Only a loopback *oMLX* source's settings file is ours to read: a tailnet host's file is its own, and a
-    non-oMLX loopback server (exo, vLLM, …) is not configured by ~/.omlx/settings.json at all. Spec §7 names the
-    tier `sources.omlx*`, so the source name's part before any `@` must start with `omlx`."""
-    if not is_loopback(source.base_url) or not source.name.partition("@")[0].startswith("omlx"):
+    """Only an unqualified loopback oMLX source uses this machine's settings.
+
+    A host-qualified source (for example omlx@morty) remains remote when an
+    SSH forward gives it a loopback URL. Its configured limits cannot come
+    from this machine's ~/.omlx/settings.json. Spec §7 keeps unqualified
+    sources.omlx* sources on the existing local settings tier.
+    """
+    if "@" in source.name or not is_loopback(source.base_url) or not source.name.startswith("omlx"):
         return None
     return home / ".omlx" / "settings.json"
 

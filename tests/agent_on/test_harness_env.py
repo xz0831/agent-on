@@ -88,6 +88,14 @@ class ChildEnvTest(unittest.TestCase):
                                     context=None, config_dir=Path("/c"))
             self.assertNotIn("CODEX_HOME", env)
 
+    def test_native_session_store_leaves_claude_config_dir_unset(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            t = table(sb)
+            env = harness.child_env({"CLAUDE_CONFIG_DIR": "/parent", "HOME": "/h"}, t, t.routes["mock/alpha"],
+                                    context=None, config_dir=None)
+            self.assertNotIn("CLAUDE_CONFIG_DIR", env)
+            self.assertEqual(env["HOME"], "/h")
+
 
 class ConfigDirTest(unittest.TestCase):
     def test_shared_items_are_symlinked_and_the_project_is_trusted(self):

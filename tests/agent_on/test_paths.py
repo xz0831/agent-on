@@ -44,6 +44,7 @@ class PathsTest(unittest.TestCase):
         p = Paths(checkout=Path("/co"), state=Path("/s"), home=Path("/h"))
         self.assertEqual(p.routes_toml, Path("/co/routes.toml"))
         self.assertEqual(p.discovered_toml, Path("/s/routes.discovered.toml"))
+        self.assertEqual(p.local_routes_toml, Path("/s/routes.local.toml"))
         self.assertEqual(p.observed_json, Path("/s/observed.json"))
         self.assertEqual(p.sessions_dir, Path("/s/sessions"))
         self.assertEqual(p.env_file, Path("/s/env"))
@@ -83,6 +84,7 @@ class PathsTest(unittest.TestCase):
         self.assertEqual(project_slug("/Users/rick/.openclaw"), "-Users-rick--openclaw")
         self.assertEqual(project_slug("/Users/rick/Projects/agent-on"), "-Users-rick-Projects-agent-on")
         self.assertEqual(p.transcript_path("abc-123", "/Users/rick/x y"), Path("/s/claude-config/projects/-Users-rick-x-y/abc-123.jsonl"))
+        self.assertEqual(p.native_transcript_path("abc-123", "/Users/rick/x y"), Path("/h/.claude/projects/-Users-rick-x-y/abc-123.jsonl"))
 
     def test_ensure_state_creates_the_run_dir(self):
         import tempfile, stat

@@ -11,7 +11,7 @@ from helpers import MOCK_ROUTES, Sandbox  # noqa: E402
 import unittest  # noqa: E402
 
 from agent_on import harness  # noqa: E402
-from agent_on.harness_codex import read_rollout, write_profile  # noqa: E402
+from agent_on.harness_codex import read_rollout, write_profile, session_lock  # noqa: E402
 from agent_on.state import read_observed, read_session_runs  # noqa: E402
 
 FAKE = str(Path(__file__).resolve().parent / "fakecodex.py")
@@ -48,7 +48,9 @@ class CodexLaunchTest(unittest.TestCase):
             argv = json.loads((out / "argv.json").read_text())
             self.assertEqual(argv[:2], ["--profile", "agent-on"])
             self.assertEqual(argv[2:], ["exec", "Reply OK"])
-            self.assertFalse(list(sb.paths.run_dir.glob("*")))                                          # the home never outlives the child
+            self.assertFalse(list(sb.paths.run_dir.glob("*")))                                          # credentials do not outlive the child
+            self.assertTrue(Path(doc["transcript"]).is_file())
+            self.assertFalse((Path(doc["codex_home"]) / "agent-on.config.toml").exists())
             ls = doc["last_session"]
             self.assertEqual((ls["harness"], ls["harness_version"]), ("codex", "0.0.0"))
             self.assertEqual(ls["this_run"]["turns"], 1)
@@ -114,6 +116,52 @@ class CodexLaunchTest(unittest.TestCase):
                 harness.run_launch(sb.paths, "x", ["exec", "hi"], harness="codex", env=base_env,
                                    codex_bin="/nonexistent/codex", cwd=str(sb.paths.checkout), probe_timeout=0.5, announce=False)
             self.assertEqual(list(sb.paths.run_dir.glob("*")), [])
+
+    def test_resume_reuses_durable_home_and_session_without_double_counting(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            first, _ = self.launch(sb, "a", ["exec", "hi"])
+            sid = first["session"]["id"]
+            second, _ = self.launch(sb, "a", ["exec", "resume", sid, "continue"])
+            self.assertEqual(second["session"], {"id": sid, "mode": "resume"})
+            self.assertEqual(second["codex_home"], first["codex_home"])
+            self.assertEqual(second["last_session"]["this_run"]["turns"], 1)
+            self.assertEqual(second["last_session"]["session_total"]["turns"], 2)
+            self.assertEqual(len(read_session_runs(sb.paths, sid)), 2)
+            self.assertTrue(Path(first["transcript"]).exists())
+            self.assertFalse(list(sb.paths.run_dir.glob("*")))
+
+    def test_resume_missing_or_ambiguous_selection_never_spawns_a_fresh_session(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            for args in (["resume"], ["exec", "resume", "--last"], ["resume", "a-name"],
+                         ["-s", "workspace-write", "exec", "resume", "11111111-1111-1111-1111-111111111111"]):
+                with self.assertRaises(ValueError):
+                    self.launch(sb, "a", list(args))
+            self.assertFalse((sb.root / "fake-out").exists())
+
+    def test_concurrent_resume_is_rejected_without_touching_active_profile(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            first, _ = self.launch(sb, "a", ["exec", "hi"])
+            ch = Path(first["codex_home"])
+            sentinel = ch / "active-profile"
+            sentinel.write_text("owned by existing child")
+            link = ch / "agent-on.config.toml"
+            link.symlink_to(sentinel)
+            with session_lock(ch):
+                with self.assertRaisesRegex(ValueError, "already active"):
+                    self.launch(sb, "a", ["resume", first["session"]["id"]])
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(sentinel.read_text(), "owned by existing child")
+
+    def test_crash_sweep_removes_credentials_but_keeps_transcript(self):
+        from agent_on.harness import sweep_run_dirs
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            first, _ = self.launch(sb, "a", ["exec", "hi"])
+            run = sb.paths.run_dir / "dead-launch"
+            run.mkdir()
+            (run / "pid").write_text("99999999")
+            (run / "secret").write_text("do not retain")
+            self.assertEqual(sweep_run_dirs(sb.paths, min_age_s=0), ["dead-launch"])
+            self.assertTrue(Path(first["transcript"]).is_file())
 
 
 class RolloutTest(unittest.TestCase):

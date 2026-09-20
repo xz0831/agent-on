@@ -10,6 +10,7 @@ import os
 import sys
 import tomllib
 import uuid
+from pathlib import Path
 from datetime import datetime, timezone
 
 args = sys.argv[1:]
@@ -76,13 +77,23 @@ if codex_home:
     model = (profile or {}).get("model")
     session_dir = os.path.join(codex_home, "sessions", "2026", "09", "09")
     os.makedirs(session_dir, exist_ok=True)
-    session_id = str(uuid.uuid4())
+    resumed = "resume" in args
+    session_id = args[args.index("resume") + 1] if resumed else str(uuid.uuid4())
     rollout_path = os.path.join(session_dir, f"rollout-2026-09-09T00-00-00-{session_id}.jsonl")
+    if resumed and not os.path.isfile(rollout_path):
+        sys.exit(42)
     turns = int(os.environ.get("FAKE_CODEX_TURNS", "1"))
     running = {"input_tokens": 0, "cached_input_tokens": 0, "cache_write_input_tokens": 0,
                "output_tokens": 0, "reasoning_output_tokens": 0, "total_tokens": 0}
-    with open(rollout_path, "w") as f:
-        f.write(json.dumps({"timestamp": ts(), "type": "session_meta",
+    if resumed:
+        for line in Path(rollout_path).read_text().splitlines():
+            event = json.loads(line)
+            total = event.get("payload", {}).get("info", {}).get("total_token_usage")
+            if total:
+                running = total
+    with open(rollout_path, "a" if resumed else "w") as f:
+        if not resumed:
+            f.write(json.dumps({"timestamp": ts(), "type": "session_meta",
                             "payload": {"id": session_id, "cli_version": "0.0.0", "model_provider": model_provider,
                                         "cwd": os.getcwd()}}) + "\n")
         f.write(json.dumps({"timestamp": ts(), "type": "turn_context", "payload": {"model": model}}) + "\n")

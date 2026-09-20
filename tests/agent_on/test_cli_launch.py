@@ -39,8 +39,9 @@ def sandboxed_env(sb, **extra) -> dict:
 class LaunchCliTest(unittest.TestCase):
     def test_parser_splits_launch_options_from_claude_args(self):
         p = cli.build_parser()
-        a = p.parse_args(["launch", "--dry-run", "--haiku", "h", "some/route", "-p", "hi", "--model", "x"])
+        a = p.parse_args(["launch", "--dry-run", "--haiku", "h", "--session-store", "native", "some/route", "-p", "hi", "--model", "x"])
         self.assertEqual((a.command, a.route, a.dry_run, a.haiku, a.harness), ("launch", "some/route", True, "h", "claude"))
+        self.assertEqual(a.session_store, "native")
         self.assertEqual(a.claude_args, ["-p", "hi", "--model", "x"])
         q = p.parse_args(["qualify", "some/route", "--limits", "--allow-paid"])
         self.assertEqual((q.command, q.route, q.limits, q.allow_paid, q.baseline), ("qualify", "some/route", True, True, False))

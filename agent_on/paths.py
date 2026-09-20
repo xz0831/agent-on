@@ -51,6 +51,11 @@ class Paths:
         return self.state / "routes.discovered.toml"
 
     @property
+    def local_routes_toml(self) -> Path:
+        """Per-host source addresses. This file is state, never part of the Git checkout."""
+        return self.state / "routes.local.toml"
+
+    @property
     def observed_json(self) -> Path:
         return self.state / "observed.json"
 
@@ -86,10 +91,14 @@ class Paths:
         return self.state / "claude-config"             # §11 item 1: the isolated CLAUDE_CONFIG_DIR
 
     def codex_home_for(self, launch_id: str) -> Path:
-        return self.run_dir / launch_id / "codex-home"   # Plan F Task 5: the per-launch CODEX_HOME (D14)
+        # A session's home survives child exit; credential files stay in run/<launch-id>.
+        return self.state / "codex-homes" / launch_id / "codex-home"
 
     def transcript_path(self, session_id: str, cwd: str) -> Path:
         return self.claude_config_dir / "projects" / project_slug(cwd) / f"{session_id}.jsonl"
+
+    def native_transcript_path(self, session_id: str, cwd: str) -> Path:
+        return self.home / ".claude" / "projects" / project_slug(cwd) / f"{session_id}.jsonl"
 
 
 def default_paths(env: dict | None = None) -> Paths:

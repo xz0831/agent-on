@@ -101,6 +101,35 @@ class SyncTest(unittest.TestCase):
             self.assertIn("MOCK_PAID_KEY", obs["spend"]["paid"]["error"])            # no key anywhere → said where it looked
             self.assertTrue(sb.paths.discovered_toml.exists())
 
+    def test_forwarded_remote_catalog_keeps_local_limits_out_of_observed(self):
+        routes = '''version = 1
+[sources."omlxmock@remote"]
+base_url = "{base}"
+catalog = "/v1/models"
+discover = true
+[sources."omlxmock@remote".limits]
+input = 8192
+output = 1024
+confidence = "owned-policy"
+source = "remote operator cap"
+[routes."omlxmock@remote/alpha"]
+'''
+        with MockSource(catalog=CATALOG) as mock, Sandbox(routes.format(base=mock.base_url)) as sb:
+            settings = sb.paths.home / ".omlx" / "settings.json"
+            settings.parent.mkdir()
+            settings.write_text(json.dumps({"sampling": {"max_context_window": 524288, "max_tokens": 65536}}))
+            report = run_sync(sb.paths, timeout=3, env={})
+            observed = read_observed(sb.paths)
+            self.assertTrue(report["sources"]["omlxmock@remote"]["reachable"])
+            self.assertIsNone(observed["sources"]["omlxmock@remote"]["configured_limits"])
+            for name in ("omlxmock@remote/alpha", "omlxmock@remote/beta"):
+                route = observed["routes"][name]
+                self.assertTrue(route["served"])
+                self.assertIsNone(route["limits"]["input"]["configured"])
+                self.assertIsNone(route["limits"]["output"]["configured"])
+                self.assertEqual(route["cost_model"]["context"], 8192)
+                self.assertEqual(route["cost_model"]["context_basis"], "declared")
+
     def test_a_source_that_goes_unreachable_loses_its_stale_catalog_and_identity(self):
         m = MockSource(catalog=CATALOG).start()
         with Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:

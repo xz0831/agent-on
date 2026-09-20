@@ -8,7 +8,7 @@ import time
 from .invariants import Result, build_context, evaluate
 from .paths import Paths, describe_copy
 from .schemas.errors import SchemaError
-from .schemas.routes import Limits, Price, Reasoning, Route, Source, parse_routes_text, route_block
+from .schemas.routes import Limits, Price, Reasoning, Route, Source, load_packaged_routes, parse_routes_text, route_block
 from .sources import Probe, probe_source
 from .state import atomic_write, checkout_locked
 from .util import utc_now
@@ -48,7 +48,7 @@ def route_from_catalog(name: str, source: Source, entry: dict | None, aliases: t
 
 
 def run_add(paths: Paths, name: str, *, alias: str | None = None, timeout: float = 5.0) -> dict:
-    srcs, packaged, _ = parse_routes_text(paths.routes_toml.read_text(encoding="utf-8"), packaged=True)
+    srcs, packaged = load_packaged_routes(paths)
     src_name, _, model = name.partition("/")
     if src_name not in srcs or not model:
         raise SchemaError("routes.route.name", f"{name!r} must be <source>/<model> with a declared source (sources: {sorted(srcs)})")

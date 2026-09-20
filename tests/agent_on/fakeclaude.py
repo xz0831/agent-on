@@ -56,7 +56,7 @@ if out:
             with open(os.path.join(out, "helper_key.txt"), "w") as f:
                 f.write(key)
 
-cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+cfg = os.environ.get("CLAUDE_CONFIG_DIR") or (os.path.join(os.environ["HOME"], ".claude") if os.environ.get("HOME") else None)
 if cfg and "--no-session-persistence" not in args:
     slug = re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())
     pdir = os.path.join(cfg, "projects", slug)

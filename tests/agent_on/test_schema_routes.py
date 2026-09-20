@@ -33,6 +33,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(srcs["mock"].catalog_url(), f"{BASE}/v1/models")
         self.assertEqual(srcs["paid"].catalog_url(), f"{BASE}/api/v1/models")
         self.assertEqual(srcs["mock"].port(), 1)
+        self.assertEqual(srcs["mock"].backend, "passthrough")
 
     def assertRule(self, rule: str, text: str):
         with self.assertRaises(SchemaError) as cm:
@@ -45,6 +46,7 @@ class ParseTest(unittest.TestCase):
         self.assertRule("routes.version", "this is not toml [[[")
         self.assertRule("routes.source.shape", 'version = 1\n[sources.mock]\nbase_url = "ftp://x"\n')
         self.assertRule("routes.source.shape", head + "discover = 1\n")
+        self.assertRule("routes.source.shape", head + 'backend = "magic"\n')
         self.assertRule("routes.route.name", head + '[routes."nosource"]\n')
         self.assertRule("routes.route.name", head + '[routes."other/m"]\n')
         self.assertRule("routes.route.shape", head + '[routes."mock/m"]\nthinking = true\n')
@@ -60,7 +62,7 @@ class ParseTest(unittest.TestCase):
         self.assertRule("routes.unique", head + '[routes."mock/m"]\nwire_model = "same"\n[routes."mock/n"]\nwire_model = "same"\n')
         for rule in ("routes.version", "routes.source.shape", "routes.route.name", "routes.route.shape", "routes.route.wire_model",
                      "routes.limits.shape", "routes.limits.no_globs", "routes.reasoning.shape", "routes.price.shape",
-                     "routes.alias.shape", "routes.unique"):
+                     "routes.alias.shape", "routes.unique", "routes.local.shape"):
             self.assertIn(rule, RULES)
 
     def test_reasoning_accepts_the_spec_shape_and_supported_alone(self):
@@ -71,6 +73,20 @@ class ParseTest(unittest.TestCase):
         _, rts, _ = routes(head + '[routes."mock/m".reasoning]\nsupported = true\nsource = "x"\n')
         r = rts["mock/m"].reasoning
         self.assertEqual((r.supported, r.efforts, r.confidence), (True, (), None))
+
+    def test_omlx_reasoning_effort_map_is_exact_and_round_trips(self):
+        head = 'version = 1\n[sources.local]\nbase_url = "http://127.0.0.1:1"\nbackend = "omlx"\n'
+        text = head + '[routes."local/m".reasoning]\nefforts = ["low", "high"]\neffort_map = { low = 25, high = 90 }\nsource = "fixture"\n'
+        _, rts, _ = routes(text)
+        r = rts["local/m"]
+        self.assertEqual(dict(r.reasoning.effort_map), {"low": 25, "high": 90})
+        emitted = head + route_block(r)
+        _, again, _ = routes(emitted)
+        self.assertEqual(again["local/m"], r)
+        self.assertRule("routes.reasoning.shape", head + '[routes."local/m".reasoning]\nefforts = ["low", "high"]\neffort_map = { low = "low" }\nsource = "x"\n')
+        self.assertRule("routes.reasoning.shape", head + '[routes."local/m".reasoning]\nefforts = ["minimal"]\neffort_map = { minimal = "low" }\nsource = "x"\n')
+        native = 'version = 1\n[sources.native]\nbase_url = "http://127.0.0.1:1"\nbackend = "splash"\n'
+        self.assertRule("routes.reasoning.shape", native + '[routes."native/m".reasoning]\nefforts = ["low"]\neffort_map = { low = "low" }\nsource = "x"\n')
 
     def test_unregistered_rule_cannot_be_raised(self):
         with self.assertRaises(KeyError):
@@ -113,6 +129,28 @@ class MergeAndTableTest(unittest.TestCase):
             self.assertIs(table.resolve("mock/beta"), beta)
             with self.assertRaises(KeyError):
                 table.resolve("nope")
+
+    def test_host_local_file_overrides_only_an_existing_source_base_url(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            sb.paths.state.mkdir()
+            sb.paths.local_routes_toml.write_text(
+                'version = 1\n[sources.mock]\nbase_url = "http://127.0.0.1:1238"\n', encoding="utf-8")
+            table = load_routes(sb.paths)
+            self.assertEqual(table.sources["mock"].base_url, "http://127.0.0.1:1238")
+            self.assertEqual(table.sources["paid"].base_url, BASE)
+            self.assertEqual(table.sources["mock"].catalog_url(), "http://127.0.0.1:1238/v1/models")
+
+            sb.paths.local_routes_toml.write_text(
+                'version = 1\n[sources.missing]\nbase_url = "http://127.0.0.1:1"\n', encoding="utf-8")
+            with self.assertRaises(SchemaError) as cm:
+                load_routes(sb.paths)
+            self.assertEqual(cm.exception.rule, "routes.local.shape")
+
+            sb.paths.local_routes_toml.write_text(
+                'version = 1\n[sources.mock]\ncatalog = "/other"\n', encoding="utf-8")
+            with self.assertRaises(SchemaError) as cm:
+                load_routes(sb.paths)
+            self.assertEqual(cm.exception.rule, "routes.local.shape")
 
     def test_effective_sha_tracks_the_source_entry_and_inherited_limits(self):
         # rev-5 P2: the fingerprint must change when the *source* changes, not only the route entry
@@ -169,6 +207,8 @@ class SeedTest(unittest.TestCase):
                 self.assertIsNotNone(s.limits, f"{s.name}: a discoverable source must declare limits or its routes are uncapped")
         self.assertEqual(srcs["omlx"].limits.confidence, "configured")
         self.assertEqual(srcs["openrouter"].auth_env, "OPENROUTER_API_KEY")
+        self.assertEqual(srcs["openrouter"].backend, "openrouter")
+        self.assertEqual(srcs["omlx@morty"].backend, "omlx")
 
 
 if __name__ == "__main__":

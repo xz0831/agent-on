@@ -42,6 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     l.add_argument("--dry-run", action="store_true", help="print the environment keys, argv and cost line; spawn nothing")
     l.add_argument("--task", metavar="ID", help="inject the task's handoff prompt and run in its worktree (§10.1)")
     l.add_argument("--handoff", default="latest")
+    l.add_argument("--session-store", choices=["isolated", "native"], default="isolated",
+                   help="Claude session store: isolated agent-on state (default) or normal ~/.claude for shared resume/continue")
     l.add_argument("route", help="a route name or alias")
     l.add_argument("claude_args", nargs=argparse.REMAINDER, help="passed to Claude Code unchanged")
     q = sub.add_parser("qualify", parents=[common], help="six fidelity gates + throughput/concurrency/caching/thinking probes; --baseline and --limits (paid sources need --allow-paid)")
@@ -104,6 +106,19 @@ def render_gate(doc: dict) -> str:
 
 def render_launch(doc: dict) -> str:
     lines = [copy_line(doc["copy"]), doc["cost_line"]]
+    effort = doc.get("effort") or {}
+    if effort:
+        detail = f"effort: {effort.get('backend')} via {effort.get('transport')} — {effort.get('status')}"
+        requests = effort.get("requests") or []
+        applied = next((item for item in reversed(requests) if item.get("requested") is not None), None)
+        if applied:
+            outcome = applied.get("result")
+            if applied.get("upstream_status") is not None:
+                outcome += f" HTTP {applied['upstream_status']}"
+            detail += f" · {applied.get('requested')} -> {applied.get('effective')} ({applied.get('mapping_result')}; {outcome})"
+        if effort.get("receipt"):
+            detail += f" · receipt {effort['receipt']}"
+        lines.append(detail)
     if doc.get("task"):
         lines.append(f"task {doc['task']['id']} handoff {doc['task']['handoff']} in {doc['task']['worktree']}")
     lines += [f"warning: {w}" for w in doc["warnings"]]
@@ -190,7 +205,8 @@ def main(argv: list[str] | None = None) -> int:
             from .harness import run_launch
             doc = run_launch(paths, args.route, args.claude_args, harness=args.harness, discover=args.discover, sonnet=args.sonnet,
                              haiku=args.haiku, dry_run=args.dry_run, claude_bin=os.environ.get("AGENT_ON_CLAUDE_BIN"),
-                             codex_bin=os.environ.get("AGENT_ON_CODEX_BIN"), task=args.task, handoff=args.handoff)
+                             codex_bin=os.environ.get("AGENT_ON_CODEX_BIN"), task=args.task, handoff=args.handoff,
+                             session_store=args.session_store)
             if args.dry_run:
                 code = 0
             else:

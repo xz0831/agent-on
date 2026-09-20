@@ -8,13 +8,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agent_on.docs import render_routes_doc  # noqa: E402
 from agent_on.paths import default_paths  # noqa: E402
-from agent_on.schemas.routes import load_routes  # noqa: E402
+from agent_on.schemas.routes import load_declared_routes  # noqa: E402
 
 
 def main(argv: list[str]) -> int:
     paths = default_paths()
     page = paths.checkout / "docs" / "ROUTES.md"
-    text = render_routes_doc(load_routes(paths))
+    text = render_routes_doc(load_declared_routes(paths))
     if "--check" in argv:
         current = page.read_text(encoding="utf-8") if page.exists() else None
         if current == text:
