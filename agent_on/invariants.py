@@ -250,7 +250,7 @@ def credential_not_in_child_env(ctx: Context):
     return ok(f"{checked} available route/harness pair(s): no source credential ({names}) reaches the child environment")
 
 
-ENV_DENY = ("ANTHROPIC_*", "CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_MAX_*", "*_PROXY")
+ENV_DENY = ("ANTHROPIC_*", "CLAUDE_CODE_MAX_*", "*_PROXY")
 
 
 @invariant("harness.env.clean",
@@ -270,7 +270,13 @@ def harness_env_clean(ctx: Context):
     if "apiKeyHelper" in d:
         return fail("apiKeyHelper is set in the shared settings")
     m = d.get("model")
-    return ok("clean" + (f" (model = {m!r} is overridden by the launcher's explicit --model)" if m else ""))
+    subagent = (d.get("env") or {}).get("CLAUDE_CODE_SUBAGENT_MODEL")
+    details = []
+    if m:
+        details.append(f"model = {m!r} is overridden by explicit --model")
+    if subagent:
+        details.append(f"CLAUDE_CODE_SUBAGENT_MODEL = {subagent!r} is overridden by the per-launch settings overlay")
+    return ok("clean" + (f" ({'; '.join(details)})" if details else ""))
 
 
 @invariant("gate.no_silent_skip",

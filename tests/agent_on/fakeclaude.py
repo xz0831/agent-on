@@ -56,6 +56,60 @@ if out:
             with open(os.path.join(out, "helper_key.txt"), "w") as f:
                 f.write(key)
 
+    # Fixture Claude settings precedence: ordinary persistent settings first,
+    # explicit --settings above them, managed settings last. This records the
+    # environment Claude Code would construct internally without changing the
+    # process environment captured in env.json.
+    work = os.path.realpath(os.getcwd())
+    roots = [work]
+    p = work
+    while True:
+        marker = os.path.join(p, ".git")
+        if os.path.exists(marker):
+            roots.append(p)
+            if os.path.isfile(marker):
+                try:
+                    with open(marker) as marker_file:
+                        label, value = marker_file.read().strip().split(":", 1)
+                    if label.strip().lower() == "gitdir":
+                        git_dir = value.strip()
+                        if not os.path.isabs(git_dir):
+                            git_dir = os.path.realpath(os.path.join(p, git_dir))
+                        with open(os.path.join(git_dir, "commondir")) as common_file:
+                            common = common_file.read().strip()
+                        if not os.path.isabs(common):
+                            common = os.path.realpath(os.path.join(git_dir, common))
+                        if os.path.basename(common) == ".git":
+                            roots.append(os.path.dirname(common))
+                except (OSError, ValueError):
+                    pass
+            break
+        parent = os.path.dirname(p)
+        if parent == p:
+            break
+        p = parent
+    persistent = []
+    config_root = os.environ.get("CLAUDE_CONFIG_DIR")
+    if not config_root and os.environ.get("HOME"):
+        config_root = os.path.join(os.environ["HOME"], ".claude")
+    if config_root:
+        persistent += [os.path.join(config_root, "settings.json"), os.path.join(config_root, "settings.local.json")]
+    for root in roots:
+        persistent += [os.path.join(root, ".claude", "settings.json"),
+                       os.path.join(root, ".claude", "settings.local.json")]
+    managed = ["/Library/Application Support/ClaudeCode/managed-settings.json",
+               "/etc/claude-code/managed-settings.json"]
+    effective = dict(os.environ)
+    for path in [*dict.fromkeys(persistent), settings, *managed]:
+        if not path or not os.path.exists(path):
+            continue
+        with open(path) as f:
+            settings_doc = json.load(f)
+        for key, value in (settings_doc.get("env") or {}).items():
+            effective[key] = str(value)
+    with open(os.path.join(out, "effective_env.json"), "w") as f:
+        json.dump(effective, f)
+
 cfg = os.environ.get("CLAUDE_CONFIG_DIR") or (os.path.join(os.environ["HOME"], ".claude") if os.environ.get("HOME") else None)
 if cfg and "--no-session-persistence" not in args:
     slug = re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())

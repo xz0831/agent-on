@@ -133,15 +133,18 @@ class ConfigDirTest(unittest.TestCase):
 class RunDirTest(unittest.TestCase):
     def test_write_run_dir_holds_the_key_privately_and_sweep_removes_dead_launches(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
-            d, helper = harness.write_run_dir(sb.paths, "01LAUNCHA", key="sk-secret", launch={"route": "paid/vendor/model-x"})
+            d, helper = harness.write_run_dir(sb.paths, "01LAUNCHA", key="sk-secret",
+                                              launch={"route": "paid/vendor/model-x"}, wire_model="vendor/model-x")
             self.assertEqual(d, sb.paths.run_dir / "01LAUNCHA")
             self.assertEqual(oct((d / "key").stat().st_mode & 0o777), "0o600")
             self.assertEqual((d / "key").read_text(), "sk-secret")
-            self.assertEqual(json.loads(helper.read_text())["apiKeyHelper"], f"cat {shlex.quote(str(d / 'key'))}")
+            keyed_settings = json.loads(helper.read_text())
+            self.assertEqual(keyed_settings["apiKeyHelper"], f"cat {shlex.quote(str(d / 'key'))}")
+            self.assertEqual(keyed_settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "vendor/model-x")
             self.assertEqual(int((d / "pid").read_text()), os.getpid())
             self.assertEqual(json.loads((d / "launch.json").read_text())["route"], "paid/vendor/model-x")
-            d2, helper2 = harness.write_run_dir(sb.paths, "01LAUNCHB", key=None, launch={})
-            self.assertIsNone(helper2)
+            d2, helper2 = harness.write_run_dir(sb.paths, "01LAUNCHB", key=None, launch={}, wire_model="alpha")
+            self.assertEqual(json.loads(helper2.read_text()), {"env": {"CLAUDE_CODE_SUBAGENT_MODEL": "alpha"}})
             self.assertFalse((d2 / "key").exists())
             dead = sb.paths.run_dir / "01DEAD"
             dead.mkdir()

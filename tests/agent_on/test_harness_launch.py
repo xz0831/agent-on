@@ -38,6 +38,8 @@ class LaunchTest(unittest.TestCase):
             self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env)
             self.assertNotIn("sk-from-env", json.dumps(env))
             self.assertEqual((out / "helper_key.txt").read_text(), "sk-from-env")      # the helper got it
+            settings = json.loads((out / "settings.json").read_text())
+            self.assertEqual(settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "vendor/model-x")
             argv = json.loads((out / "argv.json").read_text())
             self.assertEqual(argv[0], "--settings")
             self.assertTrue(argv[1].endswith("/settings.json"))
@@ -75,13 +77,17 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual((out / "helper_key.txt").read_text(), "sk-from-file")
             self.assertFalse(any("MOCK_PAID_KEY" in w for w in doc["warnings"]))          # the D6 "unreachable" warning may be present
 
-    def test_keyless_launch_uses_the_placeholder_and_no_settings_file(self):
+    def test_keyless_launch_uses_placeholder_and_route_settings_overlay(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             doc, out = self.launch(sb, "a", ["-p", "hi"])
             env = json.loads((out / "env.json").read_text())
             self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "agent-on")
-            self.assertNotIn("--settings", json.loads((out / "argv.json").read_text()))
+            self.assertIn("--settings", json.loads((out / "argv.json").read_text()))
             self.assertFalse((out / "helper_key.txt").exists())
+            settings = json.loads((out / "settings.json").read_text())
+            self.assertEqual(settings, {"env": {"CLAUDE_CODE_SUBAGENT_MODEL": "alpha"}})
+            effective = json.loads((out / "effective_env.json").read_text())
+            self.assertEqual(effective["CLAUDE_CODE_SUBAGENT_MODEL"], "alpha")
             self.assertEqual(doc["last_session"]["this_run"]["cost_usd"], 0.0)
 
     def test_session_modes_exit_code_and_dry_run(self):
@@ -142,14 +148,37 @@ class LaunchTest(unittest.TestCase):
             native_dir = sb.paths.home / ".claude"
             native_dir.mkdir()
             settings = native_dir / "settings.json"
-            original = json.dumps({"model": "literal-global-model", "permissions": {"allow": ["Read"]}}).encode()
+            original = json.dumps({"model": "literal-global-model", "permissions": {"allow": ["Read"]},
+                                   "env": {"CLAUDE_CODE_SUBAGENT_MODEL": "ordinary-claude-default"}}).encode()
             settings.write_bytes(original)
             doc, out = self.launch(sb, "x", ["-p", "hi"], env={"MOCK_PAID_KEY": "one"}, session_store="native")
             self.assertEqual(settings.read_bytes(), original)
             argv = json.loads((out / "argv.json").read_text())
             self.assertEqual(argv[argv.index("--model") + 1], "vendor/model-x")
             self.assertNotIn("CLAUDE_CONFIG_DIR", json.loads((out / "env.json").read_text()))
+            overlay = json.loads((out / "settings.json").read_text())
+            self.assertEqual(overlay["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "vendor/model-x")
+            self.assertTrue(overlay["apiKeyHelper"].startswith("cat "))
+            effective = json.loads((out / "effective_env.json").read_text())
+            self.assertEqual(effective["CLAUDE_CODE_SUBAGENT_MODEL"], "vendor/model-x")
+            self.assertEqual((out / "helper_key.txt").read_text(), "one")
             self.assertEqual(doc["wire_model"], "vendor/model-x")
+
+    def test_keyless_native_launch_overlays_subagent_and_preserves_plain_claude_settings(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            native_dir = sb.paths.home / ".claude"
+            native_dir.mkdir()
+            settings = native_dir / "settings.json"
+            original = json.dumps({"env": {"CLAUDE_CODE_SUBAGENT_MODEL": "ordinary-default"},
+                                   "permissions": {"allow": ["Read"]}}).encode()
+            settings.write_bytes(original)
+            doc, out = self.launch(sb, "a", ["-p", "hi"], session_store="native")
+            self.assertEqual(settings.read_bytes(), original)
+            self.assertEqual(json.loads((out / "settings.json").read_text()),
+                             {"env": {"CLAUDE_CODE_SUBAGENT_MODEL": "alpha"}})
+            self.assertEqual(json.loads((out / "effective_env.json").read_text())["CLAUDE_CODE_SUBAGENT_MODEL"], "alpha")
+            self.assertFalse((out / "helper_key.txt").exists())
+            self.assertEqual(doc["wire_model"], "alpha")
 
     def test_unavailable_source_refuses_before_spawning(self):
         routes = 'version = 1\n[sources.remote]\navailable = false\nauth_env = "REMOTE_KEY"\nbilling = "free"\n[routes."remote/model"]\n'
@@ -216,14 +245,16 @@ billing = "free"
             self.assertTrue(settings["apiKeyHelper"].startswith("cat "))
             self.assertTrue(doc["settings_merged"])
 
-    def test_a_keyless_routes_user_settings_passes_through_untouched(self):
+    def test_a_keyless_routes_safe_user_settings_merge_under_route_overlay(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             doc, out = self.launch(sb, "a", ["-p", "hi", "--settings", '{"x": 1}'])
             self.assertEqual(doc["exit_code"], 0)
             argv = json.loads((out / "argv.json").read_text())
             i = argv.index("--settings")
-            self.assertEqual(argv[i + 1], '{"x": 1}')
-            self.assertFalse(doc["settings_merged"])
+            self.assertTrue(argv[i + 1].endswith("/settings.json"))
+            self.assertEqual(json.loads((out / "settings.json").read_text()),
+                             {"x": 1, "env": {"CLAUDE_CODE_SUBAGENT_MODEL": "alpha"}})
+            self.assertTrue(doc["settings_merged"])
 
     def test_dry_run_on_a_keyed_route_with_user_settings_shows_one_launcher_settings_flag(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
@@ -232,6 +263,32 @@ billing = "free"
             self.assertEqual(doc["argv"].count("--settings"), 1)
             self.assertTrue(doc["argv"][doc["argv"].index("--settings") + 1].endswith("/settings.json"))
             self.assertNotIn('{"a": 1}', doc["argv"])
+            self.assertEqual(doc["settings"]["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "vendor/model-x")
+            self.assertEqual(doc["settings"]["apiKeyHelper"], "cat <run-dir>/key")
+
+    def test_dry_run_keyless_uses_the_same_route_overlay_shape(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            doc, _ = self.launch(sb, "a", ["-p", "hi"], dry_run=True)
+            self.assertEqual(doc["argv"][1:3], ["--settings", "<run-dir>/settings.json"])
+            self.assertEqual(doc["settings"], {"env": {"CLAUDE_CODE_SUBAGENT_MODEL": "alpha"}})
+
+    def test_main_checkout_settings_are_checked_from_a_nested_worktree_cwd(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            main = sb.root / "main"
+            git_dir = main / ".git" / "worktrees" / "fixture"
+            git_dir.mkdir(parents=True)
+            (git_dir / "commondir").write_text("../..\n")
+            (sb.paths.checkout / ".git").write_text(f"gitdir: {git_dir}\n")
+            nested = sb.paths.checkout / "nested" / "work"
+            nested.mkdir(parents=True)
+            root_settings = main / ".claude" / "settings.local.json"
+            root_settings.parent.mkdir()
+            root_settings.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://wrong"}}))
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(sb.paths.home),
+                   "FAKE_CLAUDE_OUT": str(sb.root / "root-out")}
+            with self.assertRaisesRegex(ValueError, "selected source remains authoritative"):
+                harness.run_launch(sb.paths, "a", ["-p", "hi"], env=env, claude_bin=FAKE,
+                                   cwd=str(nested), probe_timeout=0.5, announce=False)
 
     def test_tier_override_and_a_missing_key_are_reported(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:

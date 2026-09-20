@@ -61,9 +61,12 @@ session ID, credential file, and child environment. This process isolation does 
 requests inside a serving engine.
 
 Persistent user or project settings that set routing environment variables or `apiKeyHelper` are refused before
-spawn with the path and conflicting fields. Agent-on never edits those settings. Safe `--settings` content is merged
-under the launcher's temporary credential helper; routing or credential fields in an explicit `--settings` are
-refused. To change model, exit and relaunch on another route.
+spawn with the path and conflicting fields. The one supported preference is `CLAUDE_CODE_SUBAGENT_MODEL`: ordinary
+`claude` keeps that value, while every `claude-on` launch overrides it in a temporary highest-priority `--settings`
+overlay with the selected route model. Agent-on never edits the persistent file. Safe explicit `--settings` content
+is merged into that overlay; routing or credential fields in explicit settings are refused. Managed settings have
+higher priority than CLI settings, so conflicting managed route controls are refused rather than bypassed. To change
+model, exit and relaunch on another route.
 
 ### Continue normal Claude Code sessions
 

@@ -65,6 +65,17 @@ class ExtractUserSettingsTest(unittest.TestCase):
         self.assertEqual(harness.settings_route_conflicts({"env": {"ANTHROPIC_BASE_URL": "http://other"},
                                                             "apiKeyHelper": "echo wrong"}),
                          ["env.ANTHROPIC_BASE_URL", "apiKeyHelper"])
+        persistent = {"env": {"CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"}}
+        self.assertEqual(harness.settings_route_conflicts(persistent), ["env.CLAUDE_CODE_SUBAGENT_MODEL"])
+        self.assertEqual(harness.settings_route_conflicts(persistent, allow_persistent_subagent=True), [])
+
+    def test_launch_settings_merge_safe_user_content_and_pin_subagent(self):
+        settings = harness.build_launch_settings(
+            {"permissions": {"allow": ["Read"]}, "env": {"EDITOR": "vim"}}, "wire/model",
+            helper_command="cat /private/key")
+        self.assertEqual(settings["permissions"]["allow"], ["Read"])
+        self.assertEqual(settings["env"], {"EDITOR": "vim", "CLAUDE_CODE_SUBAGENT_MODEL": "wire/model"})
+        self.assertEqual(settings["apiKeyHelper"], "cat /private/key")
 
 
 if __name__ == "__main__":

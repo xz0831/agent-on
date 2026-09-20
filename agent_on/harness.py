@@ -183,18 +183,34 @@ def sweep_run_dirs(paths: Paths, min_age_s: float = 5.0) -> list[str]:
     return removed
 
 
-def write_run_dir(paths: Paths, launch_id: str, *, key: str | None, launch: dict,
-                  user_settings: dict | None = None) -> tuple[Path, Path | None]:
-    """Create run/<launch-id>/ with the launcher's pid, the launch record, and — for a keyed source — the key at
-    mode 0600 plus the settings file whose apiKeyHelper reads it. `user_settings` (F1) is folded shallowly under
-    that file so a user's --settings survives; any apiKeyHelper it carried is overwritten by ours last, on purpose —
-    the caller is responsible for warning about that. Returns (run_dir, helper settings path or None)."""
+def build_launch_settings(user_settings: dict | None, wire_model: str, *, helper_command: str | None = None) -> dict:
+    """The highest-priority per-launch settings overlay.
+
+    Safe explicit user settings survive. The route's subagent model wins over
+    persistent defaults, and a keyed launch adds its temporary apiKeyHelper.
+    """
+    merged = dict(user_settings or {})
+    user_env = merged.get("env") or {}
+    merged["env"] = {**user_env, "CLAUDE_CODE_SUBAGENT_MODEL": wire_model}
+    if helper_command is not None:
+        merged["apiKeyHelper"] = helper_command
+    return merged
+
+
+def write_run_dir(paths: Paths, launch_id: str, *, key: str | None, launch: dict, wire_model: str,
+                  user_settings: dict | None = None) -> tuple[Path, Path]:
+    """Create run/<launch-id>/ with pid, launch record, and the settings overlay.
+
+    A keyed source also gets a mode-0600 key file read by apiKeyHelper. Keyless
+    launches still need the overlay so a persistent subagent default cannot
+    displace the selected route. Returns (run_dir, settings_path).
+    """
     ensure_state(paths)
     d = paths.run_dir / launch_id
     d.mkdir(mode=0o700)
     (d / "pid").write_text(str(os.getpid()), encoding="utf-8")
     (d / "launch.json").write_text(json.dumps(launch, indent=1, sort_keys=True), encoding="utf-8")
-    helper = None
+    helper_command = None
     if key is not None:
         key_path = d / "key"
         fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -202,9 +218,10 @@ def write_run_dir(paths: Paths, launch_id: str, *, key: str | None, launch: dict
             os.write(fd, key.encode("utf-8"))
         finally:
             os.close(fd)
-        helper = d / "settings.json"
-        merged = {**(user_settings or {}), "apiKeyHelper": f"cat {shlex.quote(str(key_path))}"}
-        helper.write_text(json.dumps(merged), encoding="utf-8")
+        helper_command = f"cat {shlex.quote(str(key_path))}"
+    helper = d / "settings.json"
+    merged = build_launch_settings(user_settings, wire_model, helper_command=helper_command)
+    helper.write_text(json.dumps(merged), encoding="utf-8")
     return d, helper
 
 
@@ -283,13 +300,15 @@ def pin_model_args(claude_args: list[str], wire_model: str) -> list[str]:
     return ["--model", wire_model, *remaining]
 
 
-def settings_route_conflicts(doc: dict) -> list[str]:
+def settings_route_conflicts(doc: dict, *, allow_persistent_subagent: bool = False) -> list[str]:
     conflicts: list[str] = []
     env = doc.get("env") or {}
     if not isinstance(env, dict):
         return ["env is not an object"]
     for key in env:
         upper = str(key).upper()
+        if allow_persistent_subagent and upper == "CLAUDE_CODE_SUBAGENT_MODEL":
+            continue
         if any(fnmatch.fnmatchcase(upper, pattern) for pattern in SETTINGS_ROUTE_PATTERNS):
             conflicts.append(f"env.{key}")
     if "apiKeyHelper" in doc:
@@ -297,10 +316,48 @@ def settings_route_conflicts(doc: dict) -> list[str]:
     return conflicts
 
 
+def settings_project_roots(cwd: str) -> list[Path]:
+    """Current directory, worktree root, and main checkout root when detectable.
+
+    Git worktrees store a `.git` file pointing at `<main>/.git/worktrees/<id>`;
+    its `commondir` points back to the main checkout's `.git` directory.
+    Reading those two tiny files avoids invoking Git during every launch.
+    """
+    work = Path(cwd)
+    roots = [work]
+    worktree_root = next((root for root in (work, *work.parents) if (root / ".git").exists()), None)
+    if worktree_root is None:
+        return roots
+    roots.append(worktree_root)
+    marker = worktree_root / ".git"
+    if marker.is_file():
+        try:
+            line = marker.read_text(encoding="utf-8").strip()
+            label, sep, value = line.partition(":")
+            if sep and label.strip().lower() == "gitdir":
+                git_dir = Path(value.strip())
+                if not git_dir.is_absolute():
+                    git_dir = (worktree_root / git_dir).resolve()
+                common_value = (git_dir / "commondir").read_text(encoding="utf-8").strip()
+                common_dir = Path(common_value)
+                if not common_dir.is_absolute():
+                    common_dir = (git_dir / common_dir).resolve()
+                if common_dir.name == ".git":
+                    roots.append(common_dir.parent)
+        except (OSError, ValueError):
+            pass
+    return list(dict.fromkeys(roots))
+
+
 def assert_persistent_settings_route_safe(paths: Paths, cwd: str) -> None:
-    candidates = [paths.home / ".claude" / "settings.json", paths.home / ".claude" / "settings.local.json",
-                  Path(cwd) / ".claude" / "settings.json", Path(cwd) / ".claude" / "settings.local.json"]
-    for path in dict.fromkeys(candidates):
+    managed = [Path("/Library/Application Support/ClaudeCode/managed-settings.json"),
+               Path("/etc/claude-code/managed-settings.json")]
+    ordinary = [paths.home / ".claude" / "settings.json", paths.home / ".claude" / "settings.local.json",
+                *[root / ".claude" / name for root in settings_project_roots(cwd)
+                  for name in ("settings.json", "settings.local.json")]]
+    candidates = {path: False for path in managed}
+    candidates.update({path: True for path in ordinary})
+    for path, allow_subagent in candidates.items():
         if not path.exists():
             continue
         try:
@@ -309,8 +366,10 @@ def assert_persistent_settings_route_safe(paths: Paths, cwd: str) -> None:
             raise ValueError(f"{path} is not valid JSON: {exc}") from exc
         if not isinstance(doc, dict):
             raise ValueError(f"{path} must contain a JSON object")
-        conflicts = settings_route_conflicts(doc)
+        conflicts = settings_route_conflicts(doc, allow_persistent_subagent=allow_subagent)
         if conflicts:
+            if not allow_subagent:
+                raise ValueError(f"managed settings {path} set route controls {conflicts}; their priority is above --settings, so claude-on cannot override them")
             raise ValueError(f"{path} sets route controls {conflicts}; remove them before claude-on so the selected source remains authoritative")
 
 
@@ -671,16 +730,16 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     table, route, source = plan.table, plan.route, plan.source
     sonnet_r = table.resolve(sonnet) if sonnet else None
     haiku_r = table.resolve(haiku) if haiku else None
-    # F1: Claude Code does not merge repeated --settings — the last one wins — so a user's --settings would silently
-    # displace the launcher's apiKeyHelper file. A keyed source therefore extracts it and folds it under ours
-    # (write_run_dir); a keyless source has no helper file to displace, so the user's --settings is left untouched.
+    # F1: Claude Code does not merge repeated --settings — the last one wins. Extract every explicit settings input
+    # and fold it into one launcher-owned overlay. Both keyed and keyless launches need that overlay because it also
+    # pins CLAUDE_CODE_SUBAGENT_MODEL above a persistent ordinary-Claude preference.
     stripped_args, user_settings = extract_user_settings(plan.args)
     if user_settings is not None:
         conflicts = settings_route_conflicts(user_settings)
         if conflicts:
             raise ValueError(f"user --settings sets route controls {conflicts}; claude-on owns routing and credentials")
-    settings_merged = plan.key is not None and user_settings is not None
-    claude_args = stripped_args if plan.key is not None else plan.args
+    settings_merged = user_settings is not None
+    claude_args = stripped_args
     # Native mode deliberately leaves CLAUDE_CONFIG_DIR unset. Claude Code then uses
     # ~/.claude directly, so its picker, --continue, --resume, history, session-env,
     # and auto-memory all address the same store as a normal `claude` launch.
@@ -711,10 +770,14 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
            "session_store": session_store}
     binary = claude_bin or shutil.which("claude") or "claude"
     if dry_run:
-        doc.update({"dry_run": True, "argv": [binary, *(["--settings", "<run-dir>/settings.json"] if plan.key is not None else []), *args]})
+        preview = build_launch_settings(user_settings, route.wire_model,
+                                        helper_command="cat <run-dir>/key" if plan.key is not None else None)
+        doc.update({"dry_run": True, "argv": [binary, "--settings", "<run-dir>/settings.json", *args],
+                    "settings": preview})
         return doc
-    run_dir, helper = write_run_dir(paths, plan.launch_id, key=plan.key, launch=launch, user_settings=user_settings)
-    argv = [binary, *(["--settings", str(helper)] if helper else []), *args]   # a keyed source's --settings is always ours (F1): the user's was folded into it, or there is none
+    run_dir, helper = write_run_dir(paths, plan.launch_id, key=plan.key, launch=launch,
+                                    wire_model=route.wire_model, user_settings=user_settings)
+    argv = [binary, "--settings", str(helper), *args]
     adapter = None
     try:
         if source.backend == "omlx":
