@@ -38,7 +38,7 @@ jobs:
           assert inv["docs.current"] == "pass"
           PY
 
-      - name: install into a scratch bin dir, then dry-run every packaged route through the shim
+      - name: install into a scratch bin dir, then verify available and unavailable route boundaries
         run: |
           set -euo pipefail
           export AGENT_ON_STATE="$RUNNER_TEMP/agent-on-state"
@@ -49,6 +49,29 @@ jobs:
           assert d["written"], d
           assert {l["state"] for l in d["links"].values()} == {"linked"}, d["links"]
           PY
-          for r in $(./bin/agent-on status --json | python -c 'import json,sys; print(" ".join(json.load(sys.stdin)["routes"]))'); do
-            "$RUNNER_TEMP/bin/claude-on" --json --dry-run "$r" -p hi > /dev/null
-          done
+          python - <<'PY'
+          import json, os, subprocess
+          from agent_on.paths import default_paths
+          from agent_on.schemas.routes import load_routes
+
+          table = load_routes(default_paths())
+          available, unavailable = [], []
+          for route in table.routes.values():
+              if not route.packaged:
+                  continue
+              source = table.sources[route.source]
+              (available if source.available else unavailable).append(route.name)
+          assert available, "CI must exercise at least one available packaged route"
+          assert unavailable, "CI must exercise the host-local unavailable boundary"
+          shim = os.path.join(os.environ["RUNNER_TEMP"], "bin", "claude-on")
+          for route in available:
+              run = subprocess.run([shim, "--json", "--dry-run", route, "-p", "hi"],
+                                   text=True, capture_output=True)
+              assert run.returncode == 0, (route, run.stdout, run.stderr)
+          for route in unavailable:
+              run = subprocess.run([shim, "--json", "--dry-run", route, "-p", "hi"],
+                                   text=True, capture_output=True)
+              assert run.returncode != 0, (route, run.stdout, run.stderr)
+              error = json.loads(run.stdout)["error"]
+              assert "unavailable on this host" in error, (route, error)
+          PY

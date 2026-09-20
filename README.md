@@ -27,7 +27,8 @@ The shim checks the active `python3` first and then the standard Homebrew locati
 than 3.11 does not hide a suitable Homebrew Python. See [multi-host operation](docs/MULTI_HOST.md) for Rick, Morty,
 and xz0831 installation and update steps.
 
-Keys: put `OPENROUTER_API_KEY=…` in `~/.local/state/agent-on/env` (mode 0600) or in the environment. The key never
+Keys: put each declared source key, such as `OPENROUTER_API_KEY`, `OMLX_RICK_API_KEY`, or
+`OMLX_MORTY_API_KEY`, in `~/.local/state/agent-on/env` (mode 0600) or in the environment. The key never
 enters Claude Code's environment: the launcher writes it to a per-launch 0600 file and hands Claude Code an
 `apiKeyHelper` that reads it.
 
@@ -53,8 +54,16 @@ from it (`scripts/routes-doc.py`, checked by `docs.current`). Measured values �
 concurrency, caching, thinking, the last session's cost — live in `~/.local/state/agent-on/observed.json` and are
 shown by `status`, never copied into declarations.
 
-One Claude Code process is pinned to one route; the tier slots and the subagent slot all resolve to it. To change
-model, exit and relaunch. Qualification results and traps are shown before a launch; they never block it.
+One Claude Code process is pinned to one route. Agent-on sets every tier and subagent slot and passes an explicit
+`--model <wire_model>`, so a literal `model` in the user's Claude settings cannot displace the route. A conflicting
+user `--model` is refused. Several processes may run concurrently on different routes; each has its own launch ID,
+session ID, credential file, and child environment. This process isolation does not reserve GPU memory or schedule
+requests inside a serving engine.
+
+Persistent user or project settings that set routing environment variables or `apiKeyHelper` are refused before
+spawn with the path and conflicting fields. Agent-on never edits those settings. Safe `--settings` content is merged
+under the launcher's temporary credential helper; routing or credential fields in an explicit `--settings` are
+refused. To change model, exit and relaunch on another route.
 
 ### Continue normal Claude Code sessions
 
@@ -71,17 +80,21 @@ as `session_store` in JSON launch output. This is local machine state and is nev
 
 ### Per-host source addresses
 
-Tracked `routes.toml` is the shared route identity and policy. A host whose endpoint differs writes only the address
-override to `$AGENT_ON_STATE/routes.local.toml`; the file is outside Git and may override `base_url` only:
+Tracked `routes.toml` is the shared route identity and policy. Host-qualified sources that have no universally valid
+transport are declared unavailable. A host activates only endpoints it can actually reach in
+`$AGENT_ON_STATE/routes.local.toml`; the file is outside Git and may override `base_url` and `available` only:
 
 ```toml
 version = 1
 [sources."omlx@morty"]
 base_url = "http://127.0.0.1:1238"
+available = true
 ```
 
 `status`, `sync`, `add`, `qualify`, and both launchers use the effective local address. The effective route hash
-therefore changes with the override, so a qualification from a different endpoint is not treated as current.
+therefore changes with the override, so a qualification from a different endpoint is not treated as current. The
+old `omlx/...` full route names redirect to their `omlx@rick/...` replacements for CLI compatibility only. Historical
+observations and qualifications retain the old identity and are not promoted to the new endpoint.
 
 ### Claude effort
 
@@ -120,29 +133,35 @@ confidence = "configured"
 source = "model chat-template documentation and local CPU render check"
 ```
 
-Source names are arbitrary: `backend = "omlx"` selects the adapter for `omlx`, `omlx@morty`, or any custom name;
+Source names are arbitrary: `backend = "omlx"` selects the adapter for `omlx@rick`, `omlx@morty`, or any custom name;
 `backend = "splash"` and `backend = "openrouter"` document native pass-through. An omitted backend is transparent
 `passthrough` for compatibility and carries no effort-support claim. Each oMLX launch prints an `effort` object and
 keeps a prompt-free, header-free receipt at `$AGENT_ON_STATE/effort/<launch-id>.jsonl` with requested and mapped
 levels. Existing sessions keep their original connection; exit and launch again to gain this behavior.
 
-### Morty from Rick
+### Host-qualified oMLX and Splash
 
-Rick's `omlx@morty` source uses `http://127.0.0.1:18038`, forwarded by the existing SSH host alias `studio2`
-to Morty's loopback `127.0.0.1:1238`. The owned LaunchAgent `ai.clusterops.morty-model-forward` maintains
-this transport. Morty's oMLX stays bound to loopback. The explicit route alias is `morty-qwen`; the 1237
-recovery service is a separate operating decision and is not selected by this source.
+The tracked identities are `omlx@rick`, `omlx@morty`, and `omlx@xz0831`. Their endpoints are host-local state.
+On Rick, the existing `ai.clusterops.morty-model-forward` makes Morty's loopback `127.0.0.1:1238` reachable at
+Rick loopback `127.0.0.1:18038`. Morty's current source cap is 32768 input tokens from its dedicated
+`.omlx-dflash` settings; no 128K qualification is implied. xz0831's current loopback server is keyless and its
+configured input/output caps are 32768. If that server later enables authentication, declare and provision a real
+host key then; a placeholder must not be represented as a credential.
 
     ./bin/agent-on status morty-qwen
     ./bin/claude-on --dry-run morty-qwen
     ./bin/codex-on --dry-run morty-qwen
     launchctl print gui/$(id -u)/ai.clusterops.morty-model-forward
 
-Another checkout or host needs its own reachable source address or an explicitly configured forward;
-installing agent-on does not create this LaunchAgent. The `@morty` source remains remote even though its
-address is loopback, so `sync` never reads Rick's oMLX settings as Morty's configured limits. Its existing
-131072 input / 32768 output operator caps are retained. Catalog reachability, a generated launch profile,
-and each wire's actual qualification are distinct observations.
+Another checkout or host needs its own reachable source address or an explicitly configured forward; installing
+agent-on creates neither a forward nor a model server. `splash@rick` and `splash@morty` are tracked unavailable
+identities for the cluster-owned task runtime. They become launchable only after cluster operations authorizes an
+endpoint and the host activates it. Agent-on consumes that endpoint; it does not reserve GPU resources, start or stop
+Splash, or promote the task runtime to an always-on service.
+
+Authentication and billing are independent declarations. An authenticated local oMLX source can still be `free`,
+while a keyless source is not automatically treated as free. Catalog probes use the selected source key when one is
+declared. Only OpenRouter sources use its spend endpoint.
 
 ## Harnesses
 

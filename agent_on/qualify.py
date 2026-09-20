@@ -470,7 +470,9 @@ def run_qualify(paths: Paths, name: str, *, wire: str = "messages", baseline: bo
     table = load_routes(paths)
     route = table.resolve(name)
     source = table.sources[route.source]
-    paid = source.auth_env is not None
+    if not source.available or source.base_url is None:
+        raise ValueError(f"source {source.name!r} is unavailable on this host; configure routes.local.toml")
+    paid = source.billing != "free"
     price = route.price.per_mtok() if route.price else None
     doc: dict = {"command": "qualify", "copy": describe_copy(paths), "route": route.name, "wire": wire, "refused": None, "gates": {}, "details": {},
                  "probes": {}, "baseline": None, "fingerprint": None, "written": False, "invariants": []}
@@ -486,7 +488,7 @@ def run_qualify(paths: Paths, name: str, *, wire: str = "messages", baseline: bo
         return doc
     key = resolve_secret(paths, source.auth_env, parent) if source.auth_env else None
     wire_obj = Wire(source.base_url, route.wire_model, key, timeout, wire=wire)
-    probe = probe_source(source, timeout=5)
+    probe = probe_source(source, timeout=5, key=key)
     gates = run_gates(wire_obj) if wire == "messages" else run_gates_responses(wire_obj)
     thr = probe_throughput(wire_obj)
     conc = probe_concurrency(wire_obj)

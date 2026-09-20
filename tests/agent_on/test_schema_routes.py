@@ -74,6 +74,13 @@ class ParseTest(unittest.TestCase):
         r = rts["mock/m"].reasoning
         self.assertEqual((r.supported, r.efforts, r.confidence), (True, (), None))
 
+    def test_unavailable_source_may_omit_endpoint_but_available_source_may_not(self):
+        srcs, _, _ = routes('version = 1\n[sources.remote]\navailable = false\nauth_env = "K"\nbilling = "free"\n')
+        self.assertFalse(srcs["remote"].available)
+        self.assertIsNone(srcs["remote"].base_url)
+        self.assertRule("routes.source.shape", 'version = 1\n[sources.remote]\nbilling = "free"\n')
+        self.assertRule("routes.source.shape", 'version = 1\n[sources.remote]\nbase_url = "http://x"\nbilling = "subscription"\n')
+
     def test_omlx_reasoning_effort_map_is_exact_and_round_trips(self):
         head = 'version = 1\n[sources.local]\nbase_url = "http://127.0.0.1:1"\nbackend = "omlx"\n'
         text = head + '[routes."local/m".reasoning]\nefforts = ["low", "high"]\neffort_map = { low = 25, high = 90 }\nsource = "fixture"\n'
@@ -140,17 +147,39 @@ class MergeAndTableTest(unittest.TestCase):
             self.assertEqual(table.sources["paid"].base_url, BASE)
             self.assertEqual(table.sources["mock"].catalog_url(), "http://127.0.0.1:1238/v1/models")
 
+            sb.paths.routes_toml.write_text(
+                'version = 1\n[sources.remote]\navailable = false\nauth_env = "K"\nbilling = "free"\n', encoding="utf-8")
+            sb.paths.local_routes_toml.write_text(
+                'version = 1\n[sources.remote]\navailable = true\nbase_url = "http://127.0.0.1:8000"\n', encoding="utf-8")
+            remote = load_routes(sb.paths).sources["remote"]
+            self.assertTrue(remote.available)
+            self.assertEqual(remote.base_url, "http://127.0.0.1:8000")
+
             sb.paths.local_routes_toml.write_text(
                 'version = 1\n[sources.missing]\nbase_url = "http://127.0.0.1:1"\n', encoding="utf-8")
             with self.assertRaises(SchemaError) as cm:
                 load_routes(sb.paths)
             self.assertEqual(cm.exception.rule, "routes.local.shape")
 
+            sb.paths.routes_toml.write_text(MOCK_ROUTES.format(base=BASE), encoding="utf-8")
             sb.paths.local_routes_toml.write_text(
                 'version = 1\n[sources.mock]\ncatalog = "/other"\n', encoding="utf-8")
             with self.assertRaises(SchemaError) as cm:
                 load_routes(sb.paths)
             self.assertEqual(cm.exception.rule, "routes.local.shape")
+
+    def test_redirect_resolves_to_new_identity_without_creating_an_old_route(self):
+        text = ('version = 1\n[sources.new]\nbase_url = "http://127.0.0.1:1"\n'
+                '[routes."new/model"]\nwire_model = "model"\n'
+                '[redirects]\n"old/model" = "new/model"\n')
+        with Sandbox(text) as sb:
+            table = load_routes(sb.paths)
+            self.assertEqual(table.resolve("old/model").name, "new/model")
+            self.assertNotIn("old/model", table.routes)
+        with self.assertRaises(SchemaError) as cm:
+            routes('version = 1\n[sources.new]\nbase_url = "http://127.0.0.1:1"\n'
+                   '[routes."new/model"]\n[redirects]\n"old/model" = "new/missing"\n')
+        self.assertEqual(cm.exception.rule, "routes.route.name")
 
     def test_effective_sha_tracks_the_source_entry_and_inherited_limits(self):
         # rev-5 P2: the fingerprint must change when the *source* changes, not only the route entry
@@ -188,15 +217,16 @@ class EmitTest(unittest.TestCase):
 class SeedTest(unittest.TestCase):
     """The checkout's routes.toml is data; these assertions are the only place its content is checked in code."""
 
-    def test_seed_loads_and_carries_the_five_sources_and_no_oauth_routes(self):
+    def test_seed_loads_and_carries_host_qualified_sources_and_no_oauth_routes(self):
         text = (REPO / "routes.toml").read_text(encoding="utf-8")
         srcs, rts, _ = routes(text)
-        self.assertEqual(set(srcs), {"openrouter", "omlx", "omlx@morty", "omlx-tp2", "exo"})
+        self.assertEqual(set(srcs), {"openrouter", "omlx", "omlx@rick", "omlx@morty", "omlx@xz0831", "omlx-tp2",
+                                     "splash@rick", "splash@morty", "exo"})
         import re
         self.assertEqual(len(rts), len(re.findall(r'^\[routes\."[^"]+"\]$', text, re.M)))   # every declared block parses; the count lives in the file (D5)
         self.assertGreaterEqual(len(rts), 6)
         self.assertEqual(sum(r.source == "openrouter" for r in rts.values()), 4)
-        self.assertEqual(sum(r.source == "omlx" for r in rts.values()), 2)
+        self.assertEqual(sum(r.source == "omlx@rick" for r in rts.values()), 2)
         self.assertFalse(any("chatgpt" in n or "xai" in n or "gpt-" in n for n in rts))  # D3
         for r in rts.values():
             if r.source == "openrouter":
@@ -205,10 +235,13 @@ class SeedTest(unittest.TestCase):
         for s in srcs.values():
             if s.discover:
                 self.assertIsNotNone(s.limits, f"{s.name}: a discoverable source must declare limits or its routes are uncapped")
-        self.assertEqual(srcs["omlx"].limits.confidence, "configured")
+        self.assertEqual(srcs["omlx@rick"].limits.confidence, "configured")
         self.assertEqual(srcs["openrouter"].auth_env, "OPENROUTER_API_KEY")
         self.assertEqual(srcs["openrouter"].backend, "openrouter")
         self.assertEqual(srcs["omlx@morty"].backend, "omlx")
+        self.assertFalse(srcs["omlx@xz0831"].available)
+        self.assertIsNone(srcs["omlx@xz0831"].auth_env)
+        self.assertFalse(srcs["splash@rick"].available)
 
 
 if __name__ == "__main__":

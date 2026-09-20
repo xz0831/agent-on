@@ -46,6 +46,16 @@ class ProbeTest(unittest.TestCase):
             self.assertIsNone(p.error)
             self.assertTrue(p.checked.endswith("Z"))
 
+    def test_catalog_probe_uses_source_key_and_unavailable_source_does_not_connect(self):
+        with MockSource(catalog=[omlx_entry("a")], catalog_key="catalog-key") as m:
+            source = src("keyed", m.base_url, auth_env="KEY")
+            self.assertFalse(probe_source(source, timeout=3).reachable)
+            self.assertTrue(probe_source(source, timeout=3, key="catalog-key").reachable)
+        unavailable = Source("remote", None, "KEY", "/v1/models", False, None, available=False)
+        probe = probe_source(unavailable, timeout=3, key="catalog-key")
+        self.assertFalse(probe.reachable)
+        self.assertEqual(probe.error, "source is unavailable on this host")
+
     def test_unreachable_source_is_recorded_not_raised(self):
         p = probe_source(src("dead", "http://127.0.0.1:9"), timeout=1)   # port 9: discard, closed on macOS/Linux
         self.assertFalse(p.reachable)

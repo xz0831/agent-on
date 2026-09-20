@@ -8,36 +8,79 @@ base_url = "https://openrouter.ai/api"
 auth_env = "OPENROUTER_API_KEY"
 catalog  = "https://openrouter.ai/api/v1/models"
 backend  = "openrouter"
+billing  = "metered"
 
+# Historical source identity retained as an unavailable tombstone so append-only knowledge and observations keep
+# their original meaning. Known old CLI route names redirect below; no launch resolves to this source.
 [sources.omlx]
-base_url = "http://127.0.0.1:8000"
+available = false
+backend = "omlx"
+billing = "free"
+
+[sources."omlx@rick"]
+available = false
+auth_env = "OMLX_RICK_API_KEY"
 catalog  = "/v1/models"
 discover = true
 backend  = "omlx"
+billing  = "free"
 
-[sources.omlx.limits]
+[sources."omlx@rick".limits]
 input      = 131072
 output     = 32768
 confidence = "configured"
 source     = "~/.omlx/settings.json sampling.max_context_window / sampling.max_tokens (read 2026-09-07)"
 
 [sources."omlx@morty"]
-base_url = "http://127.0.0.1:18038"  # Rick's ai.clusterops.morty-model-forward -> Morty loopback :1238
+available = false
+auth_env = "OMLX_MORTY_API_KEY"
 catalog  = "/v1/models"
 discover = true
 backend  = "omlx"
+billing  = "free"
 
 [sources."omlx@morty".limits]
-input      = 131072
+input      = 32768
+confidence = "configured"
+source     = "Morty /Users/morty/.omlx-dflash/settings.json sampling.max_context_window observed 2026-09-20; output cap not asserted; do not infer Rick's settings through the SSH forward"
+
+[sources."omlx@xz0831"]
+available = false
+catalog  = "/v1/models"
+discover = true
+backend  = "omlx"
+billing  = "free"
+
+[sources."omlx@xz0831".limits]
+input      = 32768
 output     = 32768
-confidence = "owned-policy"
-source     = "operator caps retained on 2026-09-12; remote configured limits are not read from Rick's settings through the SSH forward"
+confidence = "configured"
+source     = "xz0831 ~/.omlx/settings.json sampling.max_context_window / sampling.max_tokens observed 2026-09-20; current loopback service is unauthenticated"
+
+# Splash runtimes remain cluster-owned, task-scoped services. These identities are intentionally unavailable
+# until cluster operations authorizes an endpoint and the host activates it in routes.local.toml.
+[sources."splash@rick"]
+available = false
+auth_env = "SPLASH_RICK_API_KEY"
+catalog = "/v1/models"
+discover = false
+backend = "splash"
+billing = "free"
+
+[sources."splash@morty"]
+available = false
+auth_env = "SPLASH_MORTY_API_KEY"
+catalog = "/v1/models"
+discover = false
+backend = "splash"
+billing = "free"
 
 [sources.omlx-tp2]
 base_url = "http://127.0.0.1:8003"
 catalog  = "/v1/models"
 discover = true
 backend  = "omlx"
+billing  = "free"
 
 [sources.omlx-tp2.limits]
 input      = 131072
@@ -50,6 +93,7 @@ base_url = "http://127.0.0.1:52416"   # exo-shim (com.rick.exo-shim): folds mess
 catalog  = "/v1/models"
 discover = false   # exo's catalog lists downloadable models, not loaded ones (Plan E, 2026-09-09): declare the loaded ones
 backend  = "passthrough"
+billing  = "free"
 
 [sources.exo.limits]
 input      = 131072
@@ -145,11 +189,11 @@ source                  = "openrouter.pricing (2026-09-07); no cache-write price
 
 # ---- oMLX on this machine: limits inherited from [sources.omlx.limits]; free ---------------------------------------
 
-[routes."omlx/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"]
+[routes."omlx@rick/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"]
 wire_model = "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"
 aliases    = ["huihui"]
 
-[routes."omlx/Qwen3.8-27B-Uncensored-8bit"]
+[routes."omlx@rick/Qwen3.8-27B-Uncensored-8bit"]
 wire_model = "Qwen3.8-27B-Uncensored-8bit"
 aliases    = ["uncensored8"]
 
@@ -168,3 +212,9 @@ aliases = ["exoq"]
 [routes."exo/mlx-community/Qwen3-VL-32B-Instruct-4bit"]
 wire_model = "mlx-community/Qwen3-VL-32B-Instruct-4bit"
 aliases = ["exovl"]
+
+# Old full route names remain CLI compatibility redirects only. Observations and qualifications stay under their
+# old identities and are not copied to the host-qualified routes.
+[redirects]
+"omlx/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp" = "omlx@rick/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"
+"omlx/Qwen3.8-27B-Uncensored-8bit" = "omlx@rick/Qwen3.8-27B-Uncensored-8bit"

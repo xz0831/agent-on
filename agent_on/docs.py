@@ -12,9 +12,9 @@ def _lim(l: Limits | None) -> str:
     return f"{l.input or '?'} / {l.output or '?'} ({l.confidence})"
 
 
-def _price(r: Route, keyless: bool) -> str:
+def _price(r: Route, billing: str) -> str:
     if r.price is None:
-        return "free" if keyless else "?"
+        return "free" if billing == "free" else "?"
     p = r.price.per_mtok()
     return f"${p['input']} / ${p['output']} per Mtok"
 
@@ -32,18 +32,18 @@ def render_routes_doc(table: RouteTable) -> str:
     out = [HEADER, "", "Declared in `routes.toml` (L1). Measured values — served, limits verified, cost model, qualification — are in",
            "`agent-on status`, never here. Discovered routes (from `$STATE/routes.discovered.toml`) are state, not",
            "declarations — `agent-on status` shows them.", "", "## Sources", "",
-           "| source | backend | base_url | auth_env | catalog | discover | limits in / out |", "|---|---|---|---|---|---|---|"]
+           "| source | backend | available | base_url | auth_env | billing | catalog | discover | limits in / out |", "|---|---|---|---|---|---|---|---|---|"]
     for name, s in sorted(table.sources.items()):
-        out.append(f"| `{name}` | {s.backend} | {s.base_url} | {s.auth_env or 'none'} | {s.catalog or '—'} | {'yes' if s.discover else 'no'} | {_lim(s.limits)} |")
+        out.append(f"| `{name}` | {s.backend} | {'yes' if s.available else 'host config required'} | {s.base_url or '—'} | {s.auth_env or 'none'} | {s.billing} | {s.catalog or '—'} | {'yes' if s.discover else 'no'} | {_lim(s.limits)} |")
     out += ["", "## Routes", ""]
     for sname in sorted(table.sources):
         routes = sorted((r for r in table.by_source(sname) if r.packaged), key=lambda r: r.name)
         out += [f"### {sname}", "", "| route | aliases | wire model | limits in / out | from | price | reasoning |", "|---|---|---|---|---|---|---|"]
-        keyless = table.sources[sname].auth_env is None
+        billing = table.sources[sname].billing
         for r in routes:
             lim = table.effective_limits(r)
             origin = "route" if r.limits is not None else ("source" if lim else "—")
-            out.append(f"| `{r.name}` | {', '.join(f'`{a}`' for a in r.aliases) or '—'} | {r.wire_model} | {_lim(lim)} | {origin} | {_price(r, keyless)} | {_reasoning(r)} |")
+            out.append(f"| `{r.name}` | {', '.join(f'`{a}`' for a in r.aliases) or '—'} | {r.wire_model} | {_lim(lim)} | {origin} | {_price(r, billing)} | {_reasoning(r)} |")
         if not routes:
             out.append("no packaged routes")
         out.append("")

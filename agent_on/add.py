@@ -10,7 +10,7 @@ from .paths import Paths, describe_copy
 from .schemas.errors import SchemaError
 from .schemas.routes import Limits, Price, Reasoning, Route, Source, load_packaged_routes, parse_routes_text, route_block
 from .sources import Probe, probe_source
-from .state import atomic_write, checkout_locked
+from .state import atomic_write, checkout_locked, resolve_secret
 from .util import utc_now
 
 HOLD_ENV = "AGENT_ON_TEST_HOLD_MS"   # test hook: sleep this long inside the lock after the re-read, to make the lock observable
@@ -18,10 +18,10 @@ HOLD_ENV = "AGENT_ON_TEST_HOLD_MS"   # test hook: sleep this long inside the loc
 
 def route_from_catalog(name: str, source: Source, entry: dict | None, aliases: tuple[str, ...], today: str) -> Route:
     """Limits, reasoning and price from a catalog entry that publishes them (OpenRouter today), with `provider`
-    confidence and the date; a keyless source's route inherits its source limits and carries no price."""
+    confidence and the date; a source not declared metered inherits its source limits and carries no catalog price."""
     src, _, model = name.partition("/")
     limits = reasoning = price = None
-    if entry and source.auth_env:
+    if entry and source.billing == "metered":
         if entry.get("max_input") or entry.get("max_output"):
             limits = Limits(entry.get("max_input"), entry.get("max_output"), "provider",
                             f"{src}.top_provider.context_length / max_completion_tokens ({today})")
@@ -55,7 +55,10 @@ def run_add(paths: Paths, name: str, *, alias: str | None = None, timeout: float
     if name in packaged:
         raise SchemaError("routes.unique", f"{name!r} is already packaged")
     source = srcs[src_name]
-    probe: Probe = probe_source(source, timeout)
+    if not source.available or source.base_url is None:
+        raise ValueError(f"source {source.name!r} is unavailable on this host; configure routes.local.toml")
+    key = resolve_secret(paths, source.auth_env, os.environ) if source.auth_env else None
+    probe: Probe = probe_source(source, timeout, key=key)
     if not probe.reachable:
         served = Result("route.served", "skip", f"{src_name} unreachable ({probe.error}); adding unverified — run `agent-on sync` later", name)
     elif model in probe.catalog:

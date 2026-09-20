@@ -59,6 +59,7 @@ def _message(text: str) -> dict:
 
 class MockSource:
     def __init__(self, catalog: list[dict] | None = None, spend: dict | None = None, expect_key: str | None = None, *,
+                 catalog_key: str | None = None,
                  caching: bool = True, delay_s: float = 0.0, serialize: bool = False, max_context: int | None = None,
                  fail_gates: tuple[str, ...] = (), quirks: tuple[str, ...] = ()):
         bad = set(fail_gates) - (set(GATE_NAMES) | set(RESPONSES_GATE_NAMES))
@@ -70,6 +71,7 @@ class MockSource:
         self.catalog = list(catalog or [])
         self.spend = spend
         self.expect_key = expect_key
+        self.catalog_key = catalog_key
         self.caching, self.delay_s, self.serialize, self.max_context, self.fail_gates = caching, delay_s, serialize, max_context, tuple(fail_gates)
         self.quirks = tuple(quirks)
         self.requests: list[tuple[str, dict]] = []
@@ -273,6 +275,9 @@ class MockSource:
             def do_GET(self):
                 mock.requests.append((self.path, dict(self.headers)))
                 if self.path in ("/v1/models", "/api/v1/models"):
+                    if mock.catalog_key and not (self.headers.get("x-api-key") == mock.catalog_key
+                                                 or self.headers.get("Authorization") == f"Bearer {mock.catalog_key}"):
+                        return self._send(401, {"error": {"message": "bad key"}})
                     return self._send(200, {"object": "list", "data": mock.catalog})
                 if self.path == "/health":
                     return self._send(200, {"status": "healthy"})

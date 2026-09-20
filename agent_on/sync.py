@@ -19,7 +19,8 @@ FREE = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
 def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> dict:
     env = os.environ if env is None else env
     srcs, packaged = load_packaged_routes(paths)
-    probes = probe_all(srcs, timeout)
+    keys = {name: (resolve_secret(paths, src.auth_env, env) if src.auth_env else None) for name, src in srcs.items()}
+    probes = probe_all(srcs, timeout, keys=keys)
     now = utc_now()
 
     # 1. discovered routes: every catalog id of a reachable discover=true source that no packaged route serves
@@ -44,9 +45,9 @@ def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> 
                 configured[name] = got
     spend: dict[str, dict] = {}
     for name, src in srcs.items():
-        if not src.auth_env:
+        if not src.available or src.base_url is None or src.backend != "openrouter" or not src.auth_env:
             continue
-        key = resolve_secret(paths, src.auth_env, env)
+        key = keys[name]
         if key:
             spend[name] = fetch_openrouter_spend(src.base_url, key, timeout)
         else:
@@ -93,10 +94,10 @@ def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> 
             context, basis = compute_context(lim.input if lim else None, r["limits"]["input"])
             if route.price is not None:
                 usd = route.price.per_mtok()
-            elif srcs[route.source].auth_env is None:
-                usd = dict(FREE)                                # nothing bills a keyless source
+            elif srcs[route.source].billing == "free":
+                usd = dict(FREE)                                # free is explicit and independent of authentication
             else:
-                usd = None                                      # a keyed source with no price declared: unknown, not 0
+                usd = None                                      # no declared route price and not explicitly free: unknown, not 0
             r["cost_model"].update({"context": context, "context_basis": basis, "usd_per_mtok": usd})
         for name, sp in spend.items():
             doc["spend"][name] = sp

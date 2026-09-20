@@ -4,6 +4,7 @@ the per-launch run directory (the key, the apiKeyHelper settings file, the launc
 reads the session back into the cost ledger. Nothing here writes `routes.toml` or reads a transcript cost figure."""
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import shlex
@@ -54,6 +55,8 @@ SCRUB_ENV = (
 # CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_MESSAGING_SOCKET/TOKEN, CLAUDE_EFFORT, CLAUDE_PID were
 # all observed inherited on 2026-09-08. The operator's output cap is the one deliberate control that passes (D12).
 PASS_THROUGH = ("CLAUDE_CODE_MAX_OUTPUT_TOKENS",)
+SETTINGS_ROUTE_PATTERNS = ("ANTHROPIC_*", "CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_MAX_*",
+                           "CLAUDE_CODE_USE_*", "*_PROXY")
 
 
 # ---- child environment (§11 item 2) --------------------------------------------------------------------------
@@ -85,6 +88,8 @@ def child_env(parent: dict, table: RouteTable, route: Route, *, context: int | N
         if src.auth_env:
             env.pop(src.auth_env, None)
     source = table.sources[route.source]
+    if not source.available or source.base_url is None:
+        raise ValueError(f"source {source.name!r} is unavailable on this host; configure routes.local.toml")
     env["ANTHROPIC_BASE_URL"] = source.base_url
     if source.auth_env is None:
         env["ANTHROPIC_AUTH_TOKEN"] = PLACEHOLDER_TOKEN
@@ -244,6 +249,69 @@ def extract_user_settings(claude_args: list[str]) -> tuple[list[str], dict | Non
             raise ValueError(f"--settings {value!r} must be a JSON object")
         merged = {**(merged or {}), **obj}
     return remaining, merged
+
+
+def pin_model_args(claude_args: list[str], wire_model: str) -> list[str]:
+    """Pin one Claude process to the route model, ahead of shared settings.
+
+    An identical user ``--model`` is accepted and deduplicated. A different
+    value is refused because the receipt must never name a route while Claude
+    requests another model.
+    """
+    remaining: list[str] = []
+    i = 0
+    while i < len(claude_args):
+        arg = claude_args[i]
+        if arg == "--":
+            remaining.extend(claude_args[i:])
+            break
+        selected = None
+        if arg == "--model":
+            if i + 1 >= len(claude_args):
+                raise ValueError("--model requires a value")
+            selected = claude_args[i + 1]
+            i += 2
+        elif arg.startswith("--model="):
+            selected = arg.partition("=")[2]
+            i += 1
+        else:
+            remaining.append(arg)
+            i += 1
+            continue
+        if selected != wire_model:
+            raise ValueError(f"--model {selected!r} conflicts with route model {wire_model!r}; select a different route")
+    return ["--model", wire_model, *remaining]
+
+
+def settings_route_conflicts(doc: dict) -> list[str]:
+    conflicts: list[str] = []
+    env = doc.get("env") or {}
+    if not isinstance(env, dict):
+        return ["env is not an object"]
+    for key in env:
+        upper = str(key).upper()
+        if any(fnmatch.fnmatchcase(upper, pattern) for pattern in SETTINGS_ROUTE_PATTERNS):
+            conflicts.append(f"env.{key}")
+    if "apiKeyHelper" in doc:
+        conflicts.append("apiKeyHelper")
+    return conflicts
+
+
+def assert_persistent_settings_route_safe(paths: Paths, cwd: str) -> None:
+    candidates = [paths.home / ".claude" / "settings.json", paths.home / ".claude" / "settings.local.json",
+                  Path(cwd) / ".claude" / "settings.json", Path(cwd) / ".claude" / "settings.local.json"]
+    for path in dict.fromkeys(candidates):
+        if not path.exists():
+            continue
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            raise ValueError(f"{path} is not valid JSON: {exc}") from exc
+        if not isinstance(doc, dict):
+            raise ValueError(f"{path} must contain a JSON object")
+        conflicts = settings_route_conflicts(doc)
+        if conflicts:
+            raise ValueError(f"{path} sets route controls {conflicts}; remove them before claude-on so the selected source remains authoritative")
 
 
 # ---- session rules (§9) ----------------------------------------------------------------------------------------
@@ -451,10 +519,10 @@ def spawn(argv: list[str], env: dict, cwd: str) -> int:
         signal.signal(signal.SIGTERM, old_term)
 
 
-def _price_of(route: Route, keyless: bool) -> dict | None:
+def _price_of(route: Route, free: bool) -> dict | None:
     if route.price is not None:
         return route.price.per_mtok()
-    return dict(FREE) if keyless else None
+    return dict(FREE) if free else None
 
 
 @dataclass
@@ -504,11 +572,21 @@ def prologue(paths: Paths, name: str, args: list[str], *, env: dict | None, cwd:
     # the physical path: Claude Code derives the transcript slug from process.cwd(), which resolves symlinks
     # (macOS: /var/… is /private/var/…); the trust entry and the transcript lookup must use the same string
     cwd = os.path.realpath(cwd or os.getcwd())
+    if harness == "claude":
+        assert_persistent_settings_route_safe(paths, cwd)
     table = load_routes(paths)
     route = table.resolve(name)
-    if task_doc and task_doc.pop("to_route") != route.name:
-        raise ValueError(f"launch: route {route.name} is not the handoff's route")
+    if task_doc:
+        requested_task_route = task_doc.pop("to_route")
+        try:
+            expected_task_route = table.resolve(requested_task_route).name
+        except KeyError:
+            expected_task_route = requested_task_route
+        if expected_task_route != route.name:
+            raise ValueError(f"launch: route {route.name} is not the handoff's route")
     source = table.sources[route.source]
+    if not source.available or source.base_url is None:
+        raise ValueError(f"source {source.name!r} is unavailable on this host; set base_url and available = true in {paths.local_routes_toml}")
     observed = read_observed(paths)
     obs_route = observed["routes"].get(route.name)
     warnings: list[str] = []
@@ -517,7 +595,8 @@ def prologue(paths: Paths, name: str, args: list[str], *, env: dict | None, cwd:
     if kview.get("error"):
         warnings.append(f"knowledge unreadable: {kview['error']}")
     # D6: one ≤2 s probe; unreachable → skip + warning, the launch proceeds
-    probe = probe_source(source, timeout=probe_timeout)
+    key = resolve_secret(paths, source.auth_env, parent) if source.auth_env else None
+    probe = probe_source(source, timeout=probe_timeout, key=key)
     if not probe.reachable:
         served = {"id": "route.served", "result": "skip", "reason": f"{route.source} unreachable: {probe.error}", "subject": route.name, "fix": None}
         warnings.append(f"{route.source} did not answer ({probe.error}); launching anyway (D6)")
@@ -536,19 +615,18 @@ def prologue(paths: Paths, name: str, args: list[str], *, env: dict | None, cwd:
     if context is None:                                                            # never synced: the declared cap is still better than
         lim = table.effective_limits(route)                                        # Claude Code's 200k assumption for an unknown model
         context = lim.input if lim else None
-    key = resolve_secret(paths, source.auth_env, parent) if source.auth_env else None
     if source.auth_env and key is None:
         warnings.append(f"no {source.auth_env} in the environment or {paths.env_file}; Claude Code will not be able to authenticate to {route.source}")
-    keyless = source.auth_env is None
-    priced = {r.wire_model: _price_of(r, keyless) for r in table.by_source(route.source)}
-    price = _price_of(route, keyless)
+    free = source.billing == "free"
+    priced = {r.wire_model: _price_of(r, free) for r in table.by_source(route.source)}
+    price = _price_of(route, free)
     priced_models = {m: p for m, p in priced.items() if p is not None}
     swept = sweep_run_dirs(paths)
     launch_id = ulid()
     started = utc_now()
     return LaunchPlan(parent=parent, table=table, route=route, source=source, cwd=cwd, args=args, task_doc=task_doc,
                       obs_route=obs_route, warnings=warnings, traps=traps, served=served, lint=lint, context=context,
-                      key=key, keyless=keyless, price=price, priced_models=priced_models, launch_id=launch_id,
+                      key=key, keyless=source.auth_env is None, price=price, priced_models=priced_models, launch_id=launch_id,
                       started=started, swept=swept)
 
 
@@ -597,10 +675,12 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
     # displace the launcher's apiKeyHelper file. A keyed source therefore extracts it and folds it under ours
     # (write_run_dir); a keyless source has no helper file to displace, so the user's --settings is left untouched.
     stripped_args, user_settings = extract_user_settings(plan.args)
+    if user_settings is not None:
+        conflicts = settings_route_conflicts(user_settings)
+        if conflicts:
+            raise ValueError(f"user --settings sets route controls {conflicts}; claude-on owns routing and credentials")
     settings_merged = plan.key is not None and user_settings is not None
     claude_args = stripped_args if plan.key is not None else plan.args
-    if settings_merged and "apiKeyHelper" in user_settings:
-        plan.warnings.append("user --settings apiKeyHelper replaced by the launcher's credential helper")
     # Native mode deliberately leaves CLAUDE_CONFIG_DIR unset. Claude Code then uses
     # ~/.claude directly, so its picker, --continue, --resume, history, session-env,
     # and auto-memory all address the same store as a normal `claude` launch.
@@ -610,7 +690,7 @@ def run_launch(paths: Paths, name: str, claude_args: list[str], *, harness: str 
         ensure_state(paths)
         config_dir = None
     transcript_root = paths.claude_config_dir if config_dir is not None else paths.home / ".claude"
-    args, session_id, mode = session_args(claude_args)
+    args, session_id, mode = session_args(pin_model_args(claude_args, route.wire_model))
     explicit_effort = explicit_claude_effort(args)
     effort = launch_effort_metadata(source, route)
     effort = {**effort, "explicit_cli_effort": explicit_effort}

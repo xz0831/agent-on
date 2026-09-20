@@ -27,8 +27,8 @@ class Probe:
     identity: str | None = None
 
 
-def is_loopback(url: str) -> bool:
-    return (urlsplit(url).hostname or "") in LOOPBACK_HOSTS
+def is_loopback(url: str | None) -> bool:
+    return bool(url) and (urlsplit(url).hostname or "") in LOOPBACK_HOSTS
 
 
 def http_get_json(url: str, timeout: float, headers: dict | None = None):
@@ -54,13 +54,21 @@ def normalize_catalog(payload) -> dict[str, dict]:
     return out
 
 
-def probe_source(source: Source, timeout: float = 5.0, headers: dict | None = None) -> Probe:
+def auth_headers(key: str | None) -> dict[str, str]:
+    if not key:
+        return {}
+    return {"Authorization": f"Bearer {key}", "x-api-key": key}
+
+
+def probe_source(source: Source, timeout: float = 5.0, headers: dict | None = None, *, key: str | None = None) -> Probe:
     url = source.catalog_url()
     checked = utc_now()
+    if not source.available:
+        return Probe(False, checked, error="source is unavailable on this host")
     if url is None:
         return Probe(False, checked, error="source declares no catalog")
     try:
-        payload = http_get_json(url, timeout, headers)
+        payload = http_get_json(url, timeout, {**auth_headers(key), **(headers or {})})
     except urllib.error.HTTPError as e:
         e.close()
         return Probe(False, checked, error=f"HTTP {e.code} from {url}")
@@ -73,7 +81,7 @@ def probe_source(source: Source, timeout: float = 5.0, headers: dict | None = No
                  identity=f"owned_by={','.join(owners)}" if owners else None)
 
 
-def probe_all(sources: dict[str, Source], timeout: float = 5.0) -> dict[str, Probe]:
+def probe_all(sources: dict[str, Source], timeout: float = 5.0, *, keys: dict[str, str | None] | None = None) -> dict[str, Probe]:
     """Every source concurrently on daemon threads, so any number of stalled resolvers or black-holed hosts
     cannot pin `sync` past one shared window: all probes race against a single deadline set once, at
     timeout + 2 s from the start of this call — not timeout + 2 s per source. A probe that has not returned
@@ -81,7 +89,7 @@ def probe_all(sources: dict[str, Source], timeout: float = 5.0) -> dict[str, Pro
     results: dict[str, Probe] = {}
 
     def run(name: str, src: Source) -> None:
-        results[name] = probe_source(src, timeout)
+        results[name] = probe_source(src, timeout, key=(keys or {}).get(name))
 
     threads = [threading.Thread(target=run, args=(n, s), daemon=True, name=f"probe-{n}") for n, s in sources.items()]
     for t in threads:

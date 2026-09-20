@@ -8,13 +8,17 @@ declarations — `agent-on status` shows them.
 
 ## Sources
 
-| source | backend | base_url | auth_env | catalog | discover | limits in / out |
-|---|---|---|---|---|---|---|
-| `exo` | passthrough | http://127.0.0.1:52416 | none | /v1/models | no | 131072 / 32768 (owned-policy) |
-| `omlx` | omlx | http://127.0.0.1:8000 | none | /v1/models | yes | 131072 / 32768 (configured) |
-| `omlx-tp2` | omlx | http://127.0.0.1:8003 | none | /v1/models | yes | 131072 / 32768 (owned-policy) |
-| `omlx@morty` | omlx | http://127.0.0.1:18038 | none | /v1/models | yes | 131072 / 32768 (owned-policy) |
-| `openrouter` | openrouter | https://openrouter.ai/api | OPENROUTER_API_KEY | https://openrouter.ai/api/v1/models | no | — |
+| source | backend | available | base_url | auth_env | billing | catalog | discover | limits in / out |
+|---|---|---|---|---|---|---|---|---|
+| `exo` | passthrough | yes | http://127.0.0.1:52416 | none | free | /v1/models | no | 131072 / 32768 (owned-policy) |
+| `omlx` | omlx | host config required | — | none | free | — | no | — |
+| `omlx-tp2` | omlx | yes | http://127.0.0.1:8003 | none | free | /v1/models | yes | 131072 / 32768 (owned-policy) |
+| `omlx@morty` | omlx | host config required | — | OMLX_MORTY_API_KEY | free | /v1/models | yes | 32768 / ? (configured) |
+| `omlx@rick` | omlx | host config required | — | OMLX_RICK_API_KEY | free | /v1/models | yes | 131072 / 32768 (configured) |
+| `omlx@xz0831` | omlx | host config required | — | none | free | /v1/models | yes | 32768 / 32768 (configured) |
+| `openrouter` | openrouter | yes | https://openrouter.ai/api | OPENROUTER_API_KEY | metered | https://openrouter.ai/api/v1/models | no | — |
+| `splash@morty` | splash | host config required | — | SPLASH_MORTY_API_KEY | free | /v1/models | no | — |
+| `splash@rick` | splash | host config required | — | SPLASH_RICK_API_KEY | free | /v1/models | no | — |
 
 ## Routes
 
@@ -30,8 +34,7 @@ declarations — `agent-on status` shows them.
 
 | route | aliases | wire model | limits in / out | from | price | reasoning |
 |---|---|---|---|---|---|---|
-| `omlx/Qwen3.8-27B-Uncensored-8bit` | `uncensored8` | Qwen3.8-27B-Uncensored-8bit | 131072 / 32768 (configured) | source | free | — |
-| `omlx/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp` | `huihui` | root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp | 131072 / 32768 (configured) | source | free | — |
+no packaged routes
 
 ### omlx-tp2
 
@@ -43,7 +46,20 @@ no packaged routes
 
 | route | aliases | wire model | limits in / out | from | price | reasoning |
 |---|---|---|---|---|---|---|
-| `omlx@morty/Huihui-Qwen3.8-27B-oQ4e-mtp` | `morty-qwen` | Huihui-Qwen3.8-27B-oQ4e-mtp | 131072 / 32768 (owned-policy) | source | free | — |
+| `omlx@morty/Huihui-Qwen3.8-27B-oQ4e-mtp` | `morty-qwen` | Huihui-Qwen3.8-27B-oQ4e-mtp | 32768 / ? (configured) | source | free | — |
+
+### omlx@rick
+
+| route | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|
+| `omlx@rick/Qwen3.8-27B-Uncensored-8bit` | `uncensored8` | Qwen3.8-27B-Uncensored-8bit | 131072 / 32768 (configured) | source | free | — |
+| `omlx@rick/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp` | `huihui` | root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp | 131072 / 32768 (configured) | source | free | — |
+
+### omlx@xz0831
+
+| route | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|
+no packaged routes
 
 ### openrouter
 
@@ -53,3 +69,15 @@ no packaged routes
 | `openrouter/moonshotai/kimi-k2.7-code` | `kimi` | moonshotai/kimi-k2.7-code | 262144 / 235929 (provider) | route | $0.66 / $3.4 per Mtok | supported |
 | `openrouter/xiaomi/mimo-v2.5` | `mimo` | xiaomi/mimo-v2.5 | 1048576 / 131072 (provider) | route | $0.14 / $0.28 per Mtok | supported |
 | `openrouter/z-ai/glm-5.2` | `glm` | z-ai/glm-5.2 | 1048576 / 131072 (provider) | route | $0.966 / $3.036 per Mtok | supported |
+
+### splash@morty
+
+| route | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|
+no packaged routes
+
+### splash@rick
+
+| route | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|
+no packaged routes

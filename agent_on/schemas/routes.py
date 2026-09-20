@@ -13,8 +13,9 @@ L1_CONFIDENCES = ("provider", "owned-policy", "configured")   # `advertised` and
 SOURCE_BACKENDS = ("passthrough", "omlx", "splash", "openrouter")
 CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
-_SOURCE_KEYS = ("base_url", "auth_env", "catalog", "discover", "backend", "limits")
+_SOURCE_KEYS = ("base_url", "auth_env", "catalog", "discover", "backend", "billing", "available", "limits")
 _ROUTE_KEYS = ("wire_model", "aliases", "limits", "reasoning", "price")
+SOURCE_BILLING = ("free", "metered", "unknown")
 
 
 @dataclass(frozen=True)
@@ -56,24 +57,30 @@ class Reasoning:
 @dataclass(frozen=True)
 class Source:
     name: str
-    base_url: str
+    base_url: str | None
     auth_env: str | None
     catalog: str | None
     discover: bool
     limits: Limits | None
     backend: str = "passthrough"
+    billing: str = "unknown"
+    available: bool = True
 
     def catalog_url(self) -> str | None:
-        if self.catalog is None:
+        if not self.available or self.base_url is None or self.catalog is None:
             return None
         if self.catalog.startswith(("http://", "https://")):
             return self.catalog                                            # absolute: verbatim
         return urljoin(self.base_url.rstrip("/") + "/", self.catalog.lstrip("/"))   # relative: joined
 
     def host(self) -> str:
+        if self.base_url is None:
+            return ""
         return urlsplit(self.base_url).hostname or ""
 
     def port(self) -> int:
+        if self.base_url is None:
+            return 0
         parts = urlsplit(self.base_url)
         return parts.port or (443 if parts.scheme == "https" else 80)
 
@@ -95,8 +102,10 @@ class RouteTable:
     sources: dict[str, Source]
     routes: dict[str, Route]
     shadowed: tuple[str, ...] = ()
+    redirects: dict[str, str] | None = None
 
     def resolve(self, name_or_alias: str) -> Route:
+        name_or_alias = (self.redirects or {}).get(name_or_alias, name_or_alias)
         if name_or_alias in self.routes:
             return self.routes[name_or_alias]
         for r in self.routes.values():
@@ -114,7 +123,7 @@ class RouteTable:
         src = self.sources[route.source]
         lim = self.effective_limits(route)
         doc = {"source": {"base_url": src.base_url, "auth_env": src.auth_env, "catalog": src.catalog,
-                          "backend": src.backend},
+                          "backend": src.backend, "billing": src.billing, "available": src.available},
                "route": {"wire_model": route.wire_model, "limits": lim.as_dict() if lim else None,
                          "reasoning": None if route.reasoning is None else {
                              "supported": route.reasoning.supported, "efforts": list(route.reasoning.efforts),
@@ -221,9 +230,14 @@ def _parse_source(name: str, d) -> Source:
     _no_globs(name, "source")
     if not isinstance(d, dict):
         raise SchemaError("routes.source.shape", f"source {name!r} must be a table")
+    available = d.get("available", True)
+    if not isinstance(available, bool):
+        raise SchemaError("routes.source.shape", f"source {name!r}: available must be boolean")
     base = d.get("base_url")
-    if not isinstance(base, str) or not base.startswith(("http://", "https://")):
+    if base is not None and (not isinstance(base, str) or not base.startswith(("http://", "https://"))):
         raise SchemaError("routes.source.shape", f"source {name!r}: base_url must be an http(s) URL")
+    if available and base is None:
+        raise SchemaError("routes.source.shape", f"source {name!r}: an available source requires base_url")
     for k in ("auth_env", "catalog"):
         if d.get(k) is not None and (not isinstance(d[k], str) or not d[k]):
             raise SchemaError("routes.source.shape", f"source {name!r}: {k} must be a non-empty string")
@@ -235,8 +249,12 @@ def _parse_source(name: str, d) -> Source:
     for k in d:
         if k not in _SOURCE_KEYS:
             raise SchemaError("routes.source.shape", f"source {name!r}: unknown key {k!r}")
+    billing = d.get("billing", "unknown")
+    if billing not in SOURCE_BILLING:
+        raise SchemaError("routes.source.shape", f"source {name!r}: billing must be one of {SOURCE_BILLING}")
     return Source(name, base, d.get("auth_env"), d.get("catalog"), d.get("discover", False),
-                  _parse_limits(d["limits"], f"source {name!r}") if "limits" in d else None, backend)
+                  _parse_limits(d["limits"], f"source {name!r}") if "limits" in d else None,
+                  backend, billing, available)
 
 
 def _parse_route(name: str, d, sources: dict[str, Source], packaged: bool) -> Route:
@@ -277,7 +295,7 @@ def parse_routes_text(text: str, *, packaged: bool, sources: dict[str, Source] |
     if doc.get("version") != 1:
         raise SchemaError("routes.version", f"version must be 1, got {doc.get('version')!r}")
     for k in doc:
-        if k not in ("version", "sources", "routes"):
+        if k not in ("version", "sources", "routes", "redirects"):
             raise SchemaError("routes.version", f"unknown top-level key {k!r}")
     if packaged:
         raw = doc.get("sources")
@@ -287,6 +305,8 @@ def parse_routes_text(text: str, *, packaged: bool, sources: dict[str, Source] |
     else:
         if "sources" in doc:
             raise SchemaError("routes.source.shape", "routes.discovered.toml may not declare sources")
+        if "redirects" in doc:
+            raise SchemaError("routes.route.name", "routes.discovered.toml may not declare redirects")
         srcs = dict(sources or {})
     routes: dict[str, Route] = {}
     seen_alias: dict[str, str] = {}
@@ -309,7 +329,40 @@ def parse_routes_text(text: str, *, packaged: bool, sources: dict[str, Source] |
             raise SchemaError("routes.unique", f"{n!r} and {seen_key[key]!r} both serve {key}")
         seen_key[key] = n
         routes[n] = r
+    if packaged:
+        _parse_redirects(doc.get("redirects"), routes)
     return srcs, routes, tuple(stale)
+
+
+def _parse_redirects(raw, routes: dict[str, Route]) -> dict[str, str]:
+    """Compatibility names for renamed routes.
+
+    Redirects resolve only at the CLI boundary. They are not routes and never
+    carry observations or qualifications to the target identity.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise SchemaError("routes.route.name", "[redirects] must map old route names to current route names")
+    aliases = {a for route in routes.values() for a in route.aliases}
+    out: dict[str, str] = {}
+    for old, new in raw.items():
+        if not isinstance(old, str) or "/" not in old or not isinstance(new, str) or not new:
+            raise SchemaError("routes.route.name", "redirect names and targets must be non-empty route names")
+        if old in routes or old in aliases:
+            raise SchemaError("routes.unique", f"redirect {old!r} collides with a route or alias")
+        if new not in routes:
+            raise SchemaError("routes.route.name", f"redirect {old!r} targets missing route {new!r}")
+        out[old] = new
+    return out
+
+
+def redirects_from_text(text: str, routes: dict[str, Route]) -> dict[str, str]:
+    try:
+        doc = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise SchemaError("routes.version", f"not valid TOML: {e}") from None
+    return _parse_redirects(doc.get("redirects"), routes)
 
 
 def merge_tables(packaged: dict[str, Route], discovered: dict[str, Route]) -> tuple[dict[str, Route], tuple[str, ...]]:
@@ -329,11 +382,11 @@ def merge_tables(packaged: dict[str, Route], discovered: dict[str, Route]) -> tu
 
 
 def apply_source_overrides(text: str, sources: dict[str, Source]) -> dict[str, Source]:
-    """Apply host-local base URLs without making a shared Git checkout host-specific.
+    """Apply host-local source availability and addresses.
 
-    The state file is intentionally narrow: it may only replace ``base_url`` on an
-    already-declared source. Routes, credentials, limits, and source identity remain
-    governed by the tracked routes.toml.
+    The state file is intentionally narrow: it may only replace ``base_url`` and
+    ``available`` on an already-declared source. Routes, credentials, limits, billing,
+    and source identity remain governed by the tracked routes.toml.
     """
     try:
         doc = tomllib.loads(text)
@@ -351,12 +404,18 @@ def apply_source_overrides(text: str, sources: dict[str, Source]) -> dict[str, S
     for name, override in raw.items():
         if name not in out:
             raise SchemaError("routes.local.shape", f"routes.local.toml: source {name!r} is not declared in routes.toml")
-        if not isinstance(override, dict) or set(override) != {"base_url"}:
-            raise SchemaError("routes.local.shape", f"routes.local.toml: source {name!r} may override base_url only")
-        base_url = override["base_url"]
-        if not isinstance(base_url, str) or not base_url.startswith(("http://", "https://")):
+        allowed = {"base_url", "available"}
+        if not isinstance(override, dict) or not override or not set(override) <= allowed:
+            raise SchemaError("routes.local.shape", f"routes.local.toml: source {name!r} may override base_url and available only")
+        base_url = override.get("base_url", out[name].base_url)
+        available = override.get("available", out[name].available)
+        if base_url is not None and (not isinstance(base_url, str) or not base_url.startswith(("http://", "https://"))):
             raise SchemaError("routes.local.shape", f"routes.local.toml: source {name!r} base_url must be an http(s) URL")
-        out[name] = replace(out[name], base_url=base_url)
+        if not isinstance(available, bool):
+            raise SchemaError("routes.local.shape", f"routes.local.toml: source {name!r} available must be boolean")
+        if available and base_url is None:
+            raise SchemaError("routes.local.shape", f"routes.local.toml: available source {name!r} requires base_url")
+        out[name] = replace(out[name], base_url=base_url, available=available)
     return out
 
 
@@ -369,17 +428,21 @@ def load_packaged_routes(paths) -> tuple[dict[str, Source], dict[str, Route]]:
 
 def load_declared_routes(paths) -> RouteTable:
     """Tracked L1 only: no discovered routes and no host-local address overrides."""
-    srcs, packaged, _ = parse_routes_text(paths.routes_toml.read_text(encoding="utf-8"), packaged=True)
-    return RouteTable(srcs, packaged)
+    text = paths.routes_toml.read_text(encoding="utf-8")
+    srcs, packaged, _ = parse_routes_text(text, packaged=True)
+    return RouteTable(srcs, packaged, redirects=redirects_from_text(text, packaged))
 
 
 def load_routes(paths) -> RouteTable:
-    srcs, packaged = load_packaged_routes(paths)
+    packaged_text = paths.routes_toml.read_text(encoding="utf-8")
+    srcs, packaged, _ = parse_routes_text(packaged_text, packaged=True)
+    if paths.local_routes_toml.exists():
+        srcs = apply_source_overrides(paths.local_routes_toml.read_text(encoding="utf-8"), srcs)
     discovered: dict[str, Route] = {}
     if paths.discovered_toml.exists():
         _, discovered, _ = parse_routes_text(paths.discovered_toml.read_text(encoding="utf-8"), packaged=False, sources=srcs)
     routes, shadowed = merge_tables(packaged, discovered)
-    return RouteTable(srcs, routes, shadowed)
+    return RouteTable(srcs, routes, shadowed, redirects_from_text(packaged_text, packaged))
 
 
 # ---- emitting ----------------------------------------------------------------------------------------------------

@@ -18,6 +18,7 @@ MOCK_ROUTES = """version = 1
 base_url = "{base}"
 catalog = "/v1/models"
 discover = true
+billing = "free"
 
 [sources.mock.limits]
 input = 8192
@@ -29,6 +30,8 @@ source = "test fixture"
 base_url = "{base}"
 auth_env = "MOCK_PAID_KEY"
 catalog = "{base}/api/v1/models"
+backend = "openrouter"
+billing = "metered"
 
 [routes."mock/alpha"]
 aliases = ["a"]

@@ -127,15 +127,17 @@ class HarnessEnvTest(unittest.TestCase):
         p.parent.mkdir(exist_ok=True)
         p.write_text(json.dumps(settings), encoding="utf-8")
 
-    def test_denylist_tier_name_and_literal_model(self):
+    def test_denylist_and_models_pinned_by_explicit_cli(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             self.assertEqual(one(sb.paths, "harness.env.clean").result, "skip")
             self.write(sb, {"model": "fable", "env": {"EDITOR": "vim"}})
             r = one(sb.paths, "harness.env.clean")
             self.assertEqual(r.result, "pass")
-            self.assertIn("tier name", r.reason)                                   # rev 6: this machine sets model: fable
+            self.assertIn("explicit --model", r.reason)
             self.write(sb, {"model": "claude-opus-5"})
-            self.assertEqual(one(sb.paths, "harness.env.clean").result, "fail")
+            r = one(sb.paths, "harness.env.clean")
+            self.assertEqual(r.result, "pass")
+            self.assertIn("explicit --model", r.reason)
             self.write(sb, {"env": {"ANTHROPIC_BASE_URL": "http://x"}})
             self.assertEqual(one(sb.paths, "harness.env.clean").result, "fail")
             self.write(sb, {"env": {"HTTPS_PROXY": "http://x"}})

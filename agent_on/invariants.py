@@ -236,18 +236,21 @@ def credential_not_in_child_env(ctx: Context):
     parent = {**markers, "ANTHROPIC_API_KEY": "SECRET-inherited", "ANTHROPIC_AUTH_TOKEN": "SECRET-inherited",
               "OPENAI_API_KEY": "SECRET-inherited", "CODEX_HOME": "SECRET-inherited", "PATH": "/usr/bin"}
     leaks: list[str] = []
+    checked = 0
     for route in ctx.routes.routes.values():
+        if not ctx.routes.sources[route.source].available:
+            continue
         for h in HARNESSES:
+            checked += 1
             env = child_env(parent, ctx.routes, route, context=None, config_dir=Path("/nonexistent"), harness=h)
             leaks += [f"{h}:{route.name}:{k}" for k, v in env.items() if "SECRET-" in str(v)]
     if leaks:
         return fail(f"a credential reached the child environment: {leaks[:5]}")
     names = ", ".join(sorted(markers)) or "none declared"
-    return ok(f"{len(ctx.routes.routes)} routes x {len(HARNESSES)} harnesses: no source credential ({names}) reaches the child environment")
+    return ok(f"{checked} available route/harness pair(s): no source credential ({names}) reaches the child environment")
 
 
 ENV_DENY = ("ANTHROPIC_*", "CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_MAX_*", "*_PROXY")
-TIER_NAMES = ("default", "fable", "opus", "sonnet", "haiku", "opusplan")
 
 
 @invariant("harness.env.clean",
@@ -267,9 +270,7 @@ def harness_env_clean(ctx: Context):
     if "apiKeyHelper" in d:
         return fail("apiKeyHelper is set in the shared settings")
     m = d.get("model")
-    if m is not None and m not in TIER_NAMES:
-        return fail(f"model = {m!r} is a literal model id; it bypasses the tier slots the launcher pins (D7)")
-    return ok("clean" + (f" (model = {m!r} is a tier name; it resolves through the launcher's slots)" if m else ""))
+    return ok("clean" + (f" (model = {m!r} is overridden by the launcher's explicit --model)" if m else ""))
 
 
 @invariant("gate.no_silent_skip",

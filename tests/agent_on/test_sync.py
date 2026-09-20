@@ -152,6 +152,21 @@ source = "remote operator cap"
             run_sync(sb.paths, timeout=3, env={})
             self.assertEqual(read_observed(sb.paths)["spend"]["paid"]["usd_limit"], 10)
 
+    def test_unavailable_openrouter_source_with_a_key_does_not_attempt_spend(self):
+        routes = '''version = 1
+[sources.remote]
+available = false
+auth_env = "REMOTE_KEY"
+backend = "openrouter"
+billing = "metered"
+[routes."remote/model"]
+'''
+        with Sandbox(routes) as sb:
+            report = run_sync(sb.paths, timeout=1, env={"REMOTE_KEY": "secret"})
+            self.assertFalse(report["sources"]["remote"]["reachable"])
+            self.assertEqual(report["sources"]["remote"]["error"], "source is unavailable on this host")
+            self.assertNotIn("remote", report["spend"])
+
 
 if __name__ == "__main__":
     unittest.main()

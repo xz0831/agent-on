@@ -63,7 +63,8 @@ class AddTest(unittest.TestCase):
 
     def test_an_unparseable_catalog_price_is_an_absent_price_not_a_crash(self):
         entry = normalize_catalog({"data": [openrouter_entry("vendor/model-z", prompt="n/a")]})["vendor/model-z"]
-        source = Source("paid", "http://127.0.0.1:9", "MOCK_PAID_KEY", "/v1/models", False, None)
+        source = Source("paid", "http://127.0.0.1:9", "MOCK_PAID_KEY", "/v1/models", False, None,
+                        billing="metered")
         route = route_from_catalog("paid/vendor/model-z", source, entry, (), "2026-09-08")
         self.assertIsNone(route.price)
         self.assertIsNotNone(route.limits)      # the rest of the entry is still read

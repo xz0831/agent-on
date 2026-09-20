@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -42,7 +43,7 @@ class LaunchTest(unittest.TestCase):
             self.assertTrue(argv[1].endswith("/settings.json"))
             self.assertEqual(argv[2], "--session-id")
             self.assertEqual(argv[3], doc["session"]["id"])
-            self.assertEqual(argv[4:], ["-p", "hi"])
+            self.assertEqual(argv[4:], ["--model", "vendor/model-x", "-p", "hi"])
             self.assertEqual(env["ANTHROPIC_DEFAULT_OPUS_MODEL"], "vendor/model-x")
             self.assertEqual(env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "100000")               # declared limit: nothing measured yet
             self.assertEqual(env["CLAUDE_CONFIG_DIR"], str(sb.paths.claude_config_dir))
@@ -136,28 +137,84 @@ class LaunchTest(unittest.TestCase):
             self.assertEqual(doc["last_session"]["session_total"]["turns"], 3)
             self.assertFalse(sb.paths.transcript_path(sid, cwd).exists())
 
-    def test_a_routing_key_in_the_shared_settings_is_warned_about_not_gated(self):
+    def test_native_settings_are_untouched_and_explicit_route_model_wins(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            native_dir = sb.paths.home / ".claude"
+            native_dir.mkdir()
+            settings = native_dir / "settings.json"
+            original = json.dumps({"model": "literal-global-model", "permissions": {"allow": ["Read"]}}).encode()
+            settings.write_bytes(original)
+            doc, out = self.launch(sb, "x", ["-p", "hi"], env={"MOCK_PAID_KEY": "one"}, session_store="native")
+            self.assertEqual(settings.read_bytes(), original)
+            argv = json.loads((out / "argv.json").read_text())
+            self.assertEqual(argv[argv.index("--model") + 1], "vendor/model-x")
+            self.assertNotIn("CLAUDE_CONFIG_DIR", json.loads((out / "env.json").read_text()))
+            self.assertEqual(doc["wire_model"], "vendor/model-x")
+
+    def test_unavailable_source_refuses_before_spawning(self):
+        routes = 'version = 1\n[sources.remote]\navailable = false\nauth_env = "REMOTE_KEY"\nbilling = "free"\n[routes."remote/model"]\n'
+        with Sandbox(routes) as sb:
+            with self.assertRaisesRegex(ValueError, "unavailable on this host"):
+                self.launch(sb, "remote/model", ["-p", "hi"], env={"REMOTE_KEY": "secret"})
+
+    def test_concurrent_processes_keep_distinct_models_keys_and_sessions(self):
+        routes = '''version = 1
+[sources.one]
+base_url = "http://127.0.0.1:1"
+auth_env = "KEY_ONE"
+billing = "free"
+[sources.two]
+base_url = "http://127.0.0.1:2"
+auth_env = "KEY_TWO"
+billing = "free"
+[routes."one/model-a"]
+[routes."two/model-b"]
+'''
+        with Sandbox(routes) as sb:
+            procs = []
+            for route, out_name in (("one/model-a", "out-a"), ("two/model-b", "out-b")):
+                env = {**os.environ, "HOME": str(sb.paths.home), "AGENT_ON_CHECKOUT": str(sb.paths.checkout),
+                       "AGENT_ON_STATE": str(sb.paths.state), "AGENT_ON_CLAUDE_BIN": FAKE,
+                       "FAKE_CLAUDE_OUT": str(sb.root / out_name), "KEY_ONE": "key-one", "KEY_TWO": "key-two",
+                       "PYTHONPATH": str(Path(__file__).resolve().parents[2]) + os.pathsep + os.environ.get("PYTHONPATH", "")}
+                procs.append(subprocess.Popen([sys.executable, "-m", "agent_on", "--json", "launch", route, "-p", "hi"],
+                                              cwd=sb.paths.checkout, env=env, stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE, text=True))
+            results = [p.communicate(timeout=20) for p in procs]
+            self.assertEqual([p.returncode for p in procs], [0, 0], results)
+            docs = [json.loads(stdout) for stdout, _ in results]
+            self.assertNotEqual(docs[0]["session"]["id"], docs[1]["session"]["id"])
+            for out_name, model, key in (("out-a", "model-a", "key-one"), ("out-b", "model-b", "key-two")):
+                out = sb.root / out_name
+                self.assertEqual((out / "helper_key.txt").read_text(), key)
+                child = json.loads((out / "env.json").read_text())
+                self.assertNotIn("KEY_ONE", child)
+                self.assertNotIn("KEY_TWO", child)
+                argv = json.loads((out / "argv.json").read_text())
+                self.assertEqual(argv[argv.index("--model") + 1], model)
+            self.assertEqual(list(sb.paths.run_dir.iterdir()), [])
+
+    def test_a_routing_key_in_persistent_settings_is_refused_before_spawn(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             (sb.paths.home / ".claude").mkdir()
             (sb.paths.home / ".claude" / "settings.json").write_text(json.dumps({"env": {"ANTHROPIC_API_KEY": "sk-shared"}}))
-            doc, out = self.launch(sb, "a", ["-p", "x"])
-            self.assertEqual(doc["exit_code"], 0)                                          # D6: informed, never gated
-            self.assertEqual({i["id"]: i["result"] for i in doc["invariants"]}["harness.env.clean"], "fail")
-            self.assertTrue(any("harness.env.clean" in w for w in doc["warnings"]))
+            with self.assertRaisesRegex(ValueError, "selected source remains authoritative"):
+                self.launch(sb, "a", ["-p", "x"])
 
-    def test_a_user_settings_apiKeyHelper_is_folded_under_the_launchers_and_warned_about(self):
+    def test_a_user_settings_apiKeyHelper_is_refused(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             user_settings = json.dumps({"permissions": {"allow": ["Bash(printenv)"]}, "apiKeyHelper": "echo user"})
+            with self.assertRaisesRegex(ValueError, "claude-on owns routing and credentials"):
+                self.launch(sb, "x", ["-p", "hi", "--settings", user_settings], env={"MOCK_PAID_KEY": "sk-from-env"})
+
+    def test_safe_user_settings_are_folded_under_the_launchers_helper(self):
+        with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
+            user_settings = json.dumps({"permissions": {"allow": ["Bash(printenv)"]}})
             doc, out = self.launch(sb, "x", ["-p", "hi", "--settings", user_settings], env={"MOCK_PAID_KEY": "sk-from-env"})
-            self.assertEqual(doc["exit_code"], 0)
-            argv = json.loads((out / "argv.json").read_text())
-            self.assertEqual(argv.count("--settings"), 1)
             settings = json.loads((out / "settings.json").read_text())
             self.assertEqual(settings["permissions"]["allow"], ["Bash(printenv)"])
-            self.assertTrue(settings["apiKeyHelper"].startswith("cat "))            # ours, not "echo user"
-            self.assertEqual((out / "helper_key.txt").read_text(), "sk-from-env")   # the real key, not "user"
+            self.assertTrue(settings["apiKeyHelper"].startswith("cat "))
             self.assertTrue(doc["settings_merged"])
-            self.assertTrue(any("apiKeyHelper" in w for w in doc["warnings"]))
 
     def test_a_keyless_routes_user_settings_passes_through_untouched(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:

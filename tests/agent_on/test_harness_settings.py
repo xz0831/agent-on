@@ -44,6 +44,28 @@ class ExtractUserSettingsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             harness.extract_user_settings(["--settings", "[]"])
 
+    def test_route_model_is_explicit_and_identical_user_value_is_deduplicated(self):
+        self.assertEqual(harness.pin_model_args(["-p", "x"], "wire/model"),
+                         ["--model", "wire/model", "-p", "x"])
+        self.assertEqual(harness.pin_model_args(["--model=wire/model", "-p", "x"], "wire/model"),
+                         ["--model", "wire/model", "-p", "x"])
+
+    def test_conflicting_or_incomplete_user_model_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "conflicts with route model"):
+            harness.pin_model_args(["--model", "other"], "wire/model")
+        with self.assertRaisesRegex(ValueError, "requires a value"):
+            harness.pin_model_args(["--model"], "wire/model")
+
+    def test_model_like_prompt_data_after_separator_is_not_rewritten(self):
+        self.assertEqual(harness.pin_model_args(["-p", "x", "--", "--model", "prompt-data"], "wire/model"),
+                         ["--model", "wire/model", "-p", "x", "--", "--model", "prompt-data"])
+
+    def test_settings_routing_conflicts_are_narrow(self):
+        self.assertEqual(harness.settings_route_conflicts({"permissions": {"allow": ["Read"]}, "model": "literal"}), [])
+        self.assertEqual(harness.settings_route_conflicts({"env": {"ANTHROPIC_BASE_URL": "http://other"},
+                                                            "apiKeyHelper": "echo wrong"}),
+                         ["env.ANTHROPIC_BASE_URL", "apiKeyHelper"])
+
 
 if __name__ == "__main__":
     unittest.main()
