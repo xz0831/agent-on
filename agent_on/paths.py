@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -125,9 +126,22 @@ def ensure_state(paths: Paths) -> None:
 
 def describe_copy(paths: Paths) -> dict:
     """§7 `copy.*`: which checkout, which commit, dirty or not, where the shim points, which Python, which state root."""
-    def git(*args: str) -> str | None:
+    candidates = [shutil.which("git"), "/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"]
+    git_bin = None
+    for candidate in dict.fromkeys(c for c in candidates if c):
         try:
-            out = subprocess.run(["git", "-C", str(paths.checkout), *args], capture_output=True, text=True, timeout=10)
+            check = subprocess.run([candidate, "--version"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if check.returncode == 0:
+            git_bin = candidate
+            break
+
+    def git(*args: str) -> str | None:
+        if git_bin is None:
+            return None
+        try:
+            out = subprocess.run([git_bin, "-C", str(paths.checkout), *args], capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.TimeoutExpired):
             return None
         return out.stdout.strip() if out.returncode == 0 else None

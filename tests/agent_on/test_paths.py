@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from helpers import REPO  # noqa: E402
@@ -75,6 +76,25 @@ class PathsTest(unittest.TestCase):
             self.assertIsNone(c["commit"])
             self.assertIsNone(c["dirty"])
             self.assertIsNone(c["shim"])
+
+    def test_describe_copy_falls_back_when_the_path_git_cannot_run(self):
+        def run(argv, **kwargs):
+            if argv[0] == "/broken/git":
+                return subprocess.CompletedProcess(argv, 69, "", "license required")
+            if argv[1:] == ["--version"]:
+                return subprocess.CompletedProcess(argv, 0, "git version 2.55.0\n", "")
+            if "rev-parse" in argv:
+                return subprocess.CompletedProcess(argv, 0, "abc1234\n", "")
+            if "status" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            raise AssertionError(argv)
+
+        p = Paths(checkout=Path("/co"), state=Path("/s"), home=Path("/h"))
+        with mock.patch("agent_on.paths.shutil.which", return_value="/broken/git"), \
+             mock.patch("agent_on.paths.subprocess.run", side_effect=run):
+            c = describe_copy(p)
+        self.assertEqual(c["commit"], "abc1234")
+        self.assertFalse(c["dirty"])
 
     def test_launch_paths_and_project_slug(self):
         from agent_on.paths import project_slug
