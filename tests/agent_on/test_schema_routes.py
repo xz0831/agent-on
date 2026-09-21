@@ -264,7 +264,8 @@ class SeedTest(unittest.TestCase):
         self.assertFalse(srcs["splash@rick"].available)
         self.assertFalse(srcs["omlx-tp2"].available)
         self.assertFalse(any(r.aliases for r in rts.values()))
-        self.assertNotIn('openrouter/z-ai/glm-5.2', rts)
+        self.assertFalse(any(r.source == "openrouter" and r.wire_model.lower().endswith("glm-5.2")
+                             for r in rts.values()))
 
 
 if __name__ == "__main__":
