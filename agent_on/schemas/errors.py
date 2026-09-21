@@ -9,11 +9,12 @@ RULES: dict[str, str] = {
     "routes.route.name": "a route name is <source>/<model> and the source is declared",
     "routes.route.shape": "a route table has only wire_model, aliases, limits, reasoning, price",
     "routes.route.wire_model": "wire_model is a non-empty string; it defaults to the name after the first '/'",
+    "routes.retired": "retired GLM-5.2, Qwen3.5 and Qwen3.6 model identities cannot be packaged or added for new launches; historical state is preserved",
     "routes.limits.shape": "limits carry positive-integer input and/or output, a confidence in {provider, owned-policy, configured} and a source string",
     "routes.limits.no_globs": "no source or route key contains '*' or '?' — there are no globs (§6)",
     "routes.reasoning.shape": "reasoning has efforts / provider_efforts (lists of strings), an optional confidence in {provider, owned-policy, configured}, a source string, and an optional supported (bool; defaults to whether any efforts are listed) — it may stand alone when a catalog names only parameters, never invented levels",
     "routes.price.shape": "price has input_usd_per_mtok and output_usd_per_mtok (numbers ≥ 0), optional cache_read/cache_write, and a source string",
-    "routes.alias.shape": "aliases is a list of non-empty strings without '/'",
+    "routes.alias.shape": "aliases is a list of non-empty strings without '/'; full named model families use the complete source/model identity instead",
     "routes.unique": "no two routes share a name, an alias, or (source, wire_model); a discovered route may not reuse a packaged alias",
     "routes.local.shape": "routes.local.toml has version = 1 and may override only base_url for sources already declared in routes.toml",
     # L2 — observed.json (§7)

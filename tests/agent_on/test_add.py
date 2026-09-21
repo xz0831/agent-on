@@ -39,6 +39,13 @@ raise SystemExit(0 if r["written"] else 1)
 
 
 class AddTest(unittest.TestCase):
+    def test_retired_model_refuses_before_probe_or_checkout_edit(self):
+        with Sandbox(MOCK_ROUTES.format(base="http://127.0.0.1:9")) as sb:
+            before = sb.paths.routes_toml.read_bytes()
+            with self.assertRaisesRegex(SchemaError, "routes.retired"):
+                run_add(sb.paths, "mock/Qwen3.6-27B-4bit", timeout=0.1)
+            self.assertEqual(sb.paths.routes_toml.read_bytes(), before)
+
     def test_add_appends_a_block_preserving_the_file_and_fills_from_the_catalog(self):
         with MockSource(catalog=CATALOG) as m, Sandbox("# keep this comment\n" + MOCK_ROUTES.format(base=m.base_url)) as sb:
             before = sb.paths.routes_toml.read_text(encoding="utf-8")

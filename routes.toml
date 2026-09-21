@@ -76,7 +76,7 @@ backend = "splash"
 billing = "free"
 
 [sources.omlx-tp2]
-base_url = "http://127.0.0.1:8003"
+available = false  # no enrolled TP2 endpoint; retain only the source identity and past observations
 catalog  = "/v1/models"
 discover = true
 backend  = "omlx"
@@ -105,7 +105,6 @@ source     = "placeholder cap until S3 measures exo (not installed on 2026-09-07
 
 [routes."openrouter/deepseek/deepseek-v4-pro"]
 wire_model = "deepseek/deepseek-v4-pro"
-aliases    = ["deepseek"]
 
 [routes."openrouter/deepseek/deepseek-v4-pro".limits]
 input      = 1024000
@@ -126,7 +125,6 @@ source                  = "openrouter.pricing (2026-09-07); no cache-write price
 
 [routes."openrouter/moonshotai/kimi-k2.7-code"]
 wire_model = "moonshotai/kimi-k2.7-code"
-aliases    = ["kimi"]
 
 [routes."openrouter/moonshotai/kimi-k2.7-code".limits]
 input      = 262144
@@ -147,7 +145,6 @@ source                  = "openrouter.pricing (2026-09-07); no cache-write price
 
 [routes."openrouter/xiaomi/mimo-v2.5"]
 wire_model = "xiaomi/mimo-v2.5"
-aliases    = ["mimo"]
 
 [routes."openrouter/xiaomi/mimo-v2.5".limits]
 input      = 1048576
@@ -166,52 +163,25 @@ output_usd_per_mtok     = 0.28
 cache_read_usd_per_mtok = 0.0028
 source                  = "openrouter.pricing (2026-09-07); no cache-write price published"
 
-[routes."openrouter/z-ai/glm-5.2"]
-wire_model = "z-ai/glm-5.2"
-aliases    = ["glm"]
-
-[routes."openrouter/z-ai/glm-5.2".limits]
-input      = 1048576
-output     = 131072
-confidence = "provider"
-source     = "openrouter.top_provider.context_length / max_completion_tokens (2026-09-07)"
-
-[routes."openrouter/z-ai/glm-5.2".reasoning]
-supported  = true
-confidence = "provider"
-source     = "openrouter.supported_parameters: reasoning, reasoning_effort (2026-09-07)"
-
-[routes."openrouter/z-ai/glm-5.2".price]
-input_usd_per_mtok      = 0.966
-output_usd_per_mtok     = 3.036
-cache_read_usd_per_mtok = 0.1932
-source                  = "openrouter.pricing (2026-09-07); no cache-write price published"
-
 # ---- oMLX on this machine: limits inherited from [sources.omlx.limits]; free ---------------------------------------
 
 [routes."omlx@rick/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"]
 wire_model = "root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp"
-aliases    = ["huihui"]
 
 [routes."omlx@rick/Qwen3.8-27B-Uncensored-8bit"]
 wire_model = "Qwen3.8-27B-Uncensored-8bit"
-aliases    = ["uncensored8"]
 
 [routes."omlx@morty/Huihui-Qwen3.8-27B-oQ4e-mtp"]
 wire_model = "Huihui-Qwen3.8-27B-oQ4e-mtp"
-aliases    = ["morty-qwen"]
 
 [routes."exo/mlx-community/Llama-3.2-1B-Instruct-4bit"]
 wire_model = "mlx-community/Llama-3.2-1B-Instruct-4bit"
-aliases = ["exo1b"]
 
 [routes."exo/mlx-community/Qwen3-0.6B-8bit"]
 wire_model = "mlx-community/Qwen3-0.6B-8bit"
-aliases = ["exoq"]
 
 [routes."exo/mlx-community/Qwen3-VL-32B-Instruct-4bit"]
 wire_model = "mlx-community/Qwen3-VL-32B-Instruct-4bit"
-aliases = ["exovl"]
 
 # Old full route names remain CLI compatibility redirects only. Observations and qualifications stay under their
 # old identities and are not copied to the host-qualified routes.

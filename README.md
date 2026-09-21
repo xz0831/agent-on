@@ -4,9 +4,8 @@ Run Claude Code on any model from any source that speaks the Anthropic wire — 
 server, or another Mac's oMLX over the tailnet — and keep what each session measured for the next one. Native
 Anthropic backends stay direct; new oMLX Claude launches use a route-pinned loopback adapter for effort only.
 
-    ./bin/claude-on huihui                       # Claude Code on a local oMLX route; the cost line prints first
-    ./bin/claude-on glm -p 'Reply with exactly: OK'
-    ./bin/agent-on status glm                    # declared beside measured: served, limits, cost model, last session, traps
+    ./bin/claude-on 'omlx@rick/Qwen3.8-27B-Uncensored-8bit'  # full family, build, and source; cost line prints first
+    ./bin/agent-on status 'omlx@rick/Qwen3.8-27B-Uncensored-8bit'
 
 The design is `docs/superpowers/specs/2026-09-07-agent-on-design.md`. This README is the operator's page.
 
@@ -35,12 +34,12 @@ enters Claude Code's environment: the launcher writes it to a per-launch 0600 fi
 ## Use
 
     ./bin/claude-on <route|alias> [claude args…]         # launch options (--dry-run, --sonnet, --haiku, --task, --discover) go before the route
-    ./bin/claude-on --dry-run glm                         # environment keys, argv and cost line; spawns nothing
-    ./bin/codex-on huihui                        # Codex CLI on the same route; options before the route, everything after it is Codex's
-    ./bin/agent-on qualify huihui --wire responses   # the six gate analogues on the Responses wire (what Codex speaks)
+    ./bin/claude-on --dry-run 'omlx@rick/Qwen3.8-27B-Uncensored-8bit'  # environment keys, argv and cost line; spawns nothing
+    ./bin/codex-on 'omlx@rick/Qwen3.8-27B-Uncensored-8bit'  # Codex CLI on the same full route
+    ./bin/agent-on qualify 'omlx@rick/Qwen3.8-27B-Uncensored-8bit' --wire responses
     ./bin/agent-on status [route] [--check]               # L1 beside L2; --check evaluates every invariant
     ./bin/agent-on sync                                   # probe every source: served, limits, spend; rewrite routes.discovered.toml
-    ./bin/agent-on add openrouter/<vendor>/<model> --alias <a>
+    ./bin/agent-on add openrouter/<vendor>/<full-model-id>
     ./bin/agent-on qualify <route> [--baseline] [--limits] [--allow-paid]
     ./bin/agent-on learn <kind> --json-record '{…}'       # append a typed record to knowledge/
     ./bin/agent-on learn task create|handoff|complete|show|list|prompt
@@ -53,6 +52,13 @@ Routes are `<source>/<model>` with optional aliases, declared only in `routes.to
 from it (`scripts/routes-doc.py`, checked by `docs.current`). Measured values — served, verified limits, tok/s,
 concurrency, caching, thinking, the last session's cost — live in `~/.local/state/agent-on/observed.json` and are
 shown by `status`, never copied into declarations.
+
+Current public model selectors use the exact `<source>/<model-id>` route, retaining the publisher/build/quantization
+in the ID. Do not use short family aliases such as `qwen27`, `flash-next`, `huihui`, `morty-qwen`, or `glm`.
+`status` and the generated routes page show the complete family name separately from the unchanged backend wire ID.
+Retired `GLM-5.2`, `Qwen3.5`, and `Qwen3.6` model identities cannot be selected for a new launch; existing
+session transcripts and backend model files are not rewritten. The runtime architecture name `qwen3_5` does not
+identify a Qwen3.5 model. A model absent from the source catalog is not made available by naming it here.
 
 One Claude Code process is pinned to one route. Agent-on sets every tier and subagent slot and passes an explicit
 `--model <wire_model>`, so a literal `model` in the user's Claude settings cannot displace the route. A conflicting
@@ -73,8 +79,8 @@ model, exit and relaunch on another route.
 Agent-on keeps sessions isolated by default under `$AGENT_ON_STATE/claude-config`. Select the native store when a
 launch must use the same picker, transcript, history, session environment, and auto-memory as normal Claude Code:
 
-    ./bin/claude-on --session-store native glm --resume <session-uuid>
-    ./bin/claude-on --session-store native glm --continue
+    ./bin/claude-on --session-store native 'omlx@rick/Qwen3.8-27B-Uncensored-8bit' --resume <session-uuid>
+    ./bin/claude-on --session-store native 'omlx@rick/Qwen3.8-27B-Uncensored-8bit' --continue
 
 Native mode leaves `CLAUDE_CONFIG_DIR` unset; Claude Code therefore reads and appends the original
 `~/.claude/projects/...` transcript in place. Do not run the same session concurrently from normal Claude Code and
@@ -151,9 +157,9 @@ Rick loopback `127.0.0.1:18038`. Morty's current source cap is 32768 input token
 configured input/output caps are 32768. If that server later enables authentication, declare and provision a real
 host key then; a placeholder must not be represented as a credential.
 
-    ./bin/agent-on status morty-qwen
-    ./bin/claude-on --dry-run morty-qwen
-    ./bin/codex-on --dry-run morty-qwen
+    ./bin/agent-on status 'omlx@morty/Huihui-Qwen3.8-27B-oQ4e-mtp'
+    ./bin/claude-on --dry-run 'omlx@morty/Huihui-Qwen3.8-27B-oQ4e-mtp'
+    ./bin/codex-on --dry-run 'omlx@morty/Huihui-Qwen3.8-27B-oQ4e-mtp'
     launchctl print gui/$(id -u)/ai.clusterops.morty-model-forward
 
 Another checkout or host needs its own reachable source address or an explicitly configured forward; installing

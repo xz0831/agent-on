@@ -8,7 +8,7 @@ import time
 from .invariants import Result, build_context, evaluate
 from .paths import Paths, describe_copy
 from .schemas.errors import SchemaError
-from .schemas.routes import Limits, Price, Reasoning, Route, Source, load_packaged_routes, parse_routes_text, route_block
+from .schemas.routes import Limits, Price, Reasoning, Route, Source, load_packaged_routes, parse_routes_text, route_block, retired_model_family
 from .sources import Probe, probe_source
 from .state import atomic_write, checkout_locked, resolve_secret
 from .util import utc_now
@@ -52,6 +52,8 @@ def run_add(paths: Paths, name: str, *, alias: str | None = None, timeout: float
     src_name, _, model = name.partition("/")
     if src_name not in srcs or not model:
         raise SchemaError("routes.route.name", f"{name!r} must be <source>/<model> with a declared source (sources: {sorted(srcs)})")
+    if family := retired_model_family(model):
+        raise SchemaError("routes.retired", f"{family} is retired; no new route is written")
     if name in packaged:
         raise SchemaError("routes.unique", f"{name!r} is already packaged")
     source = srcs[src_name]

@@ -13,9 +13,25 @@ L1_CONFIDENCES = ("provider", "owned-policy", "configured")   # `advertised` and
 SOURCE_BACKENDS = ("passthrough", "omlx", "splash", "openrouter")
 CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+_RETIRED_MODEL = re.compile(r"(?<![A-Za-z0-9])(GLM-5\.2|Qwen3\.[56])(?![A-Za-z0-9])", re.I)
+_DISPLAY_FAMILIES = ("Qwen3.8-Flash-Next", "Qwen3.8-27B", "GLM-5.3-Flash", "DeepSeek-V4.1-Flash")
 _SOURCE_KEYS = ("base_url", "auth_env", "catalog", "discover", "backend", "billing", "available", "limits")
 _ROUTE_KEYS = ("wire_model", "aliases", "limits", "reasoning", "price")
 SOURCE_BILLING = ("free", "metered", "unknown")
+
+
+def retired_model_family(model_id: str) -> str | None:
+    """Only retired public model identities; `qwen3_5` is an architecture name, not Qwen3.5."""
+    match = _RETIRED_MODEL.search(model_id)
+    if match is None:
+        return None
+    name = match.group(1)
+    return "GLM-5.2" if name.lower().startswith("glm") else "Qwen3." + name[-1]
+
+
+def display_family(model_id: str) -> str | None:
+    """Full UI family only; never rewrite the provider/publisher/quantized wire ID."""
+    return next((family for family in _DISPLAY_FAMILIES if family.lower() in model_id.lower()), None)
 
 
 @dataclass(frozen=True)
@@ -272,9 +288,13 @@ def _parse_route(name: str, d, sources: dict[str, Source], packaged: bool) -> Ro
     wm = d.get("wire_model", rest)
     if not isinstance(wm, str) or not wm:
         raise SchemaError("routes.route.wire_model", f"route {name!r}: wire_model must be a non-empty string")
+    if packaged and (family := retired_model_family(rest) or retired_model_family(wm)):
+        raise SchemaError("routes.retired", f"route {name!r}: {family} is retired; retain history but do not create new launches")
     aliases = d.get("aliases", [])
     if not isinstance(aliases, list) or not all(isinstance(a, str) and a and "/" not in a for a in aliases):
         raise SchemaError("routes.alias.shape", f"route {name!r}: aliases must be non-empty strings without '/'")
+    if display_family(wm) and aliases:
+        raise SchemaError("routes.alias.shape", f"route {name!r}: use its full source/model identity, not an abbreviated alias")
     reasoning = _parse_reasoning(d["reasoning"], f"route {name!r}") if "reasoning" in d else None
     if reasoning and reasoning.effort_map and sources[src].backend != "omlx":
         raise SchemaError("routes.reasoning.shape", f"route {name!r}: reasoning.effort_map is only used by backend='omlx'")
@@ -441,6 +461,8 @@ def load_routes(paths) -> RouteTable:
     discovered: dict[str, Route] = {}
     if paths.discovered_toml.exists():
         _, discovered, _ = parse_routes_text(paths.discovered_toml.read_text(encoding="utf-8"), packaged=False, sources=srcs)
+        discovered = {name: route for name, route in discovered.items()
+                      if not (retired_model_family(name) or retired_model_family(route.wire_model))}
     routes, shadowed = merge_tables(packaged, discovered)
     return RouteTable(srcs, routes, shadowed, redirects_from_text(packaged_text, packaged))
 

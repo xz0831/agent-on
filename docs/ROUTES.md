@@ -12,7 +12,7 @@ declarations — `agent-on status` shows them.
 |---|---|---|---|---|---|---|---|---|
 | `exo` | passthrough | yes | http://127.0.0.1:52416 | none | free | /v1/models | no | 131072 / 32768 (owned-policy) |
 | `omlx` | omlx | host config required | — | none | free | — | no | — |
-| `omlx-tp2` | omlx | yes | http://127.0.0.1:8003 | none | free | /v1/models | yes | 131072 / 32768 (owned-policy) |
+| `omlx-tp2` | omlx | host config required | — | none | free | /v1/models | yes | 131072 / 32768 (owned-policy) |
 | `omlx@morty` | omlx | host config required | — | OMLX_MORTY_API_KEY | free | /v1/models | yes | 32768 / ? (configured) |
 | `omlx@rick` | omlx | host config required | — | OMLX_RICK_API_KEY | free | /v1/models | yes | 131072 / 32768 (configured) |
 | `omlx@xz0831` | omlx | host config required | — | none | free | /v1/models | yes | 32768 / 32768 (configured) |
@@ -24,60 +24,59 @@ declarations — `agent-on status` shows them.
 
 ### exo
 
-| route | aliases | wire model | limits in / out | from | price | reasoning |
-|---|---|---|---|---|---|---|
-| `exo/mlx-community/Llama-3.2-1B-Instruct-4bit` | `exo1b` | mlx-community/Llama-3.2-1B-Instruct-4bit | 131072 / 32768 (owned-policy) | source | free | — |
-| `exo/mlx-community/Qwen3-0.6B-8bit` | `exoq` | mlx-community/Qwen3-0.6B-8bit | 131072 / 32768 (owned-policy) | source | free | — |
-| `exo/mlx-community/Qwen3-VL-32B-Instruct-4bit` | `exovl` | mlx-community/Qwen3-VL-32B-Instruct-4bit | 131072 / 32768 (owned-policy) | source | free | — |
+| route | full family | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|---|
+| `exo/mlx-community/Llama-3.2-1B-Instruct-4bit` | — | — | mlx-community/Llama-3.2-1B-Instruct-4bit | 131072 / 32768 (owned-policy) | source | free | — |
+| `exo/mlx-community/Qwen3-0.6B-8bit` | — | — | mlx-community/Qwen3-0.6B-8bit | 131072 / 32768 (owned-policy) | source | free | — |
+| `exo/mlx-community/Qwen3-VL-32B-Instruct-4bit` | — | — | mlx-community/Qwen3-VL-32B-Instruct-4bit | 131072 / 32768 (owned-policy) | source | free | — |
 
 ### omlx
 
-| route | aliases | wire model | limits in / out | from | price | reasoning |
-|---|---|---|---|---|---|---|
+| route | full family | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|---|
 no packaged routes
 
 ### omlx-tp2
 
-| route | aliases | wire model | limits in / out | from | price | reasoning |
-|---|---|---|---|---|---|---|
+| route | full family | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|---|
 no packaged routes
 
 ### omlx@morty
 
-| route | aliases | wire model | limits in / out | from | price | reasoning |
-|---|---|---|---|---|---|---|
-| `omlx@morty/Huihui-Qwen3.8-27B-oQ4e-mtp` | `morty-qwen` | Huihui-Qwen3.8-27B-oQ4e-mtp | 32768 / ? (configured) | source | free | — |
+| route | full family | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|---|
+| `omlx@morty/Huihui-Qwen3.8-27B-oQ4e-mtp` | Qwen3.8-27B | — | Huihui-Qwen3.8-27B-oQ4e-mtp | 32768 / ? (configured) | source | free | — |
 
 ### omlx@rick
 
-| route | aliases | wire model | limits in / out | from | price | reasoning |
-|---|---|---|---|---|---|---|
-| `omlx@rick/Qwen3.8-27B-Uncensored-8bit` | `uncensored8` | Qwen3.8-27B-Uncensored-8bit | 131072 / 32768 (configured) | source | free | — |
-| `omlx@rick/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp` | `huihui` | root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp | 131072 / 32768 (configured) | source | free | — |
+| route | full family | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|---|
+| `omlx@rick/Qwen3.8-27B-Uncensored-8bit` | Qwen3.8-27B | — | Qwen3.8-27B-Uncensored-8bit | 131072 / 32768 (configured) | source | free | — |
+| `omlx@rick/root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp` | Qwen3.8-27B | — | root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp | 131072 / 32768 (configured) | source | free | — |
 
 ### omlx@xz0831
 
-| route | aliases | wire model | limits in / out | from | price | reasoning |
-|---|---|---|---|---|---|---|
+| route | full family | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|---|
 no packaged routes
 
 ### openrouter
 
-| route | aliases | wire model | limits in / out | from | price | reasoning |
-|---|---|---|---|---|---|---|
-| `openrouter/deepseek/deepseek-v4-pro` | `deepseek` | deepseek/deepseek-v4-pro | 1024000 / 384000 (provider) | route | $0.63684 / $1.27368 per Mtok | supported |
-| `openrouter/moonshotai/kimi-k2.7-code` | `kimi` | moonshotai/kimi-k2.7-code | 262144 / 235929 (provider) | route | $0.66 / $3.4 per Mtok | supported |
-| `openrouter/xiaomi/mimo-v2.5` | `mimo` | xiaomi/mimo-v2.5 | 1048576 / 131072 (provider) | route | $0.14 / $0.28 per Mtok | supported |
-| `openrouter/z-ai/glm-5.2` | `glm` | z-ai/glm-5.2 | 1048576 / 131072 (provider) | route | $0.966 / $3.036 per Mtok | supported |
+| route | full family | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|---|
+| `openrouter/deepseek/deepseek-v4-pro` | — | — | deepseek/deepseek-v4-pro | 1024000 / 384000 (provider) | route | $0.63684 / $1.27368 per Mtok | supported |
+| `openrouter/moonshotai/kimi-k2.7-code` | — | — | moonshotai/kimi-k2.7-code | 262144 / 235929 (provider) | route | $0.66 / $3.4 per Mtok | supported |
+| `openrouter/xiaomi/mimo-v2.5` | — | — | xiaomi/mimo-v2.5 | 1048576 / 131072 (provider) | route | $0.14 / $0.28 per Mtok | supported |
 
 ### splash@morty
 
-| route | aliases | wire model | limits in / out | from | price | reasoning |
-|---|---|---|---|---|---|---|
+| route | full family | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|---|
 no packaged routes
 
 ### splash@rick
 
-| route | aliases | wire model | limits in / out | from | price | reasoning |
-|---|---|---|---|---|---|---|
+| route | full family | aliases | wire model | limits in / out | from | price | reasoning |
+|---|---|---|---|---|---|---|---|
 no packaged routes

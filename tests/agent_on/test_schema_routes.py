@@ -11,7 +11,8 @@ import unittest  # noqa: E402
 
 from agent_on.schemas.errors import RULES, SchemaError  # noqa: E402
 from agent_on.schemas.routes import (  # noqa: E402
-    Route, discovered_text, load_routes, merge_tables, parse_routes_text, route_block,
+    Route, discovered_text, display_family, load_routes, merge_tables, parse_routes_text,
+    retired_model_family, route_block,
 )
 
 BASE = "http://127.0.0.1:1"
@@ -80,6 +81,40 @@ class ParseTest(unittest.TestCase):
         self.assertIsNone(srcs["remote"].base_url)
         self.assertRule("routes.source.shape", 'version = 1\n[sources.remote]\nbilling = "free"\n')
         self.assertRule("routes.source.shape", 'version = 1\n[sources.remote]\nbase_url = "http://x"\nbilling = "subscription"\n')
+
+    def test_full_family_display_keeps_exact_wire_identity_and_retires_models_not_architectures(self):
+        head = 'version = 1\n[sources.mock]\nbase_url = "http://127.0.0.1:1"\n'
+        examples = (
+            ('root4k--Huihui-Qwen3.8-27B-abliterated-oQ4e-mtp', 'Qwen3.8-27B'),
+            ('Jundot/Qwen3.8-Flash-Next-oQ4e-mtp', 'Qwen3.8-Flash-Next'),
+            ('GLM-5.3-Flash-Alis-4bit', 'GLM-5.3-Flash'),
+            ('Jundot/DeepSeek-V4.1-Flash-oQ4e-mtp', 'DeepSeek-V4.1-Flash'),
+        )
+        for wire, family in examples:
+            with self.subTest(wire=wire):
+                self.assertEqual(display_family(wire), family)
+                _, declared, _ = routes(head + f'[routes."mock/{wire}"]\nwire_model = "{wire}"\n')
+                self.assertEqual(declared[f'mock/{wire}'].wire_model, wire)
+                self.assertRule("routes.alias.shape", head + f'[routes."mock/{wire}"]\naliases = ["qwen27"]\n')
+        for retired in ('GLM-5.2', 'Qwen3.5-27B-4bit', 'Qwen3.6-27B-4bit'):
+            with self.subTest(retired=retired):
+                self.assertIsNotNone(retired_model_family(retired))
+                self.assertRule("routes.retired", head + f'[routes."mock/{retired}"]\n')
+        self.assertIsNone(retired_model_family('qwen3_5'))
+        self.assertIsNone(retired_model_family('qwen3_5_moe'))
+        self.assertIsNone(retired_model_family('Qwen3.8-Flash-Next-qwen3_5-backend'))
+
+    def test_retired_discovered_routes_are_inert_without_rewriting_the_state_file(self):
+        head = 'version = 1\n[sources.mock]\nbase_url = "http://127.0.0.1:1"\n'
+        with Sandbox(head) as sb:
+            sb.paths.state.mkdir()
+            raw = 'version = 1\n[routes."mock/Qwen3.6-27B-4bit"]\n[routes."mock/GLM-5.3-Flash-Alis-4bit"]\n'
+            sb.paths.discovered_toml.write_text(raw)
+            table = load_routes(sb.paths)
+            self.assertEqual(set(table.routes), {'mock/GLM-5.3-Flash-Alis-4bit'})
+            with self.assertRaises(KeyError):
+                table.resolve('mock/Qwen3.6-27B-4bit')
+            self.assertEqual(sb.paths.discovered_toml.read_text(), raw)
 
     def test_omlx_reasoning_effort_map_is_exact_and_round_trips(self):
         head = 'version = 1\n[sources.local]\nbase_url = "http://127.0.0.1:1"\nbackend = "omlx"\n'
@@ -225,7 +260,7 @@ class SeedTest(unittest.TestCase):
         import re
         self.assertEqual(len(rts), len(re.findall(r'^\[routes\."[^"]+"\]$', text, re.M)))   # every declared block parses; the count lives in the file (D5)
         self.assertGreaterEqual(len(rts), 6)
-        self.assertEqual(sum(r.source == "openrouter" for r in rts.values()), 4)
+        self.assertEqual(sum(r.source == "openrouter" for r in rts.values()), 3)
         self.assertEqual(sum(r.source == "omlx@rick" for r in rts.values()), 2)
         self.assertFalse(any("chatgpt" in n or "xai" in n or "gpt-" in n for n in rts))  # D3
         for r in rts.values():
@@ -242,6 +277,9 @@ class SeedTest(unittest.TestCase):
         self.assertFalse(srcs["omlx@xz0831"].available)
         self.assertIsNone(srcs["omlx@xz0831"].auth_env)
         self.assertFalse(srcs["splash@rick"].available)
+        self.assertFalse(srcs["omlx-tp2"].available)
+        self.assertFalse(any(r.aliases for r in rts.values()))
+        self.assertFalse(any(retired_model_family(r.wire_model) for r in rts.values()))
 
 
 if __name__ == "__main__":

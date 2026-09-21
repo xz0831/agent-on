@@ -10,6 +10,7 @@ from .invariants import build_context, evaluate, skipped_ids
 from .knowledge import knowledge_view
 from .paths import Paths, describe_copy
 from .schemas.observed import WIRES
+from .schemas.routes import display_family
 from .state import update_observed
 from .util import utc_now
 
@@ -21,7 +22,8 @@ def fmt(v) -> str:
 def route_view(table, observed: dict, route) -> dict:
     lim = table.effective_limits(route)
     declared = {"source": route.source, "source_backend": table.sources[route.source].backend,
-                "wire_model": route.wire_model, "aliases": list(route.aliases), "packaged": route.packaged,
+                "wire_model": route.wire_model, "family": display_family(route.wire_model),
+                "aliases": list(route.aliases), "packaged": route.packaged,
                 "limits": lim.as_dict() if lim else None,
                 "limits_from": "route" if route.limits is not None else ("source" if lim else None),
                 "price": route.price.per_mtok() if route.price else None,
@@ -74,7 +76,7 @@ def render_text(doc: dict) -> str:
         lim = d["limits"] or {}
         cm = o.get("cost_model") or {}
         lines.append(f"route {n}" + (f" [{', '.join(d['aliases'])}]" if d["aliases"] else "")
-                     + f": wire={d['wire_model']} declared_in={lim.get('input') or '?'} ({lim.get('confidence') or '-'})"
+                     + f": family={d['family'] or '—'} wire={d['wire_model']} declared_in={lim.get('input') or '?'} ({lim.get('confidence') or '-'})"
                      + f" ctx={cm.get('context') or '?'} ({cm.get('context_basis') or '-'}) served={fmt(o.get('served'))}"
                      + f" checked={o.get('checked') or '-'}")
         if v["observed"]:

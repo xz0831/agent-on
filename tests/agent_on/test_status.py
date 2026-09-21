@@ -19,6 +19,20 @@ BASE = "http://127.0.0.1:1"
 
 
 class StatusTest(unittest.TestCase):
+    def test_status_displays_full_family_separately_from_exact_wire_model(self):
+        routes = '''version = 1
+[sources.local]
+base_url = "http://127.0.0.1:1"
+[routes."local/Huihui-Qwen3.8-27B-oQ4e-mtp"]
+wire_model = "Huihui-Qwen3.8-27B-oQ4e-mtp"
+'''
+        with Sandbox(routes) as sb:
+            doc = build_status(sb.paths)
+            item = doc["routes"]["local/Huihui-Qwen3.8-27B-oQ4e-mtp"]["declared"]
+            self.assertEqual(item["family"], "Qwen3.8-27B")
+            self.assertEqual(item["wire_model"], "Huihui-Qwen3.8-27B-oQ4e-mtp")
+            self.assertIn("family=Qwen3.8-27B wire=Huihui-Qwen3.8-27B-oQ4e-mtp", render_text(doc))
+
     def test_declared_beside_observed_before_any_sync(self):
         with Sandbox(MOCK_ROUTES.format(base=BASE)) as sb:
             doc = build_status(sb.paths)

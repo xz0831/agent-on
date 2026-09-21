@@ -325,7 +325,6 @@ base_url = "{base}"
 catalog = "/v1/models"
 backend = "omlx"
 [routes."local/DeepSeek-V4.1-Flash"]
-aliases = ["ds"]
 '''
 
     def test_new_omlx_launch_uses_loopback_and_reports_metadata(self):
@@ -334,7 +333,7 @@ aliases = ["ds"]
             with Sandbox(self.ROUTES.format(base=upstream.url)) as sb:
                 out = sb.root / "child"
                 env = {"PATH": "/usr/bin:/bin", "FAKE_CLAUDE_OUT": str(out)}
-                doc = harness.run_launch(sb.paths, "ds", ["-p", "hi"], env=env, claude_bin=FAKE,
+                doc = harness.run_launch(sb.paths, "local/DeepSeek-V4.1-Flash", ["-p", "hi"], env=env, claude_bin=FAKE,
                                          cwd=str(sb.root), probe_timeout=1, announce=False)
                 child = json.loads((out / "env.json").read_text())
                 self.assertRegex(child["ANTHROPIC_BASE_URL"], r"^http://127\.0\.0\.1:\d+$")
@@ -353,7 +352,7 @@ aliases = ["ds"]
             with Sandbox(self.ROUTES.format(base=upstream.url)) as sb:
                 with mock.patch.object(harness, "spawn", side_effect=RuntimeError("fixture spawn failure")):
                     with self.assertRaisesRegex(RuntimeError, "fixture spawn failure"):
-                        harness.run_launch(sb.paths, "ds", ["-p", "hi"], env={"PATH": "/usr/bin:/bin"},
+                        harness.run_launch(sb.paths, "local/DeepSeek-V4.1-Flash", ["-p", "hi"], env={"PATH": "/usr/bin:/bin"},
                                            claude_bin=FAKE, cwd=str(sb.root), probe_timeout=1, announce=False)
                 self.assertEqual(list(sb.paths.run_dir.iterdir()), [])
         finally:
@@ -371,7 +370,8 @@ aliases = ["ds"]
 
                 with mock.patch.object(harness, "OmlxEffortAdapter", side_effect=reject):
                     with self.assertRaisesRegex(ValueError, "conflicting effort profiles"):
-                        harness.run_launch(sb.paths, "ds", ["-p", "hi"], sonnet="ds", haiku="ds",
+                        harness.run_launch(sb.paths, "local/DeepSeek-V4.1-Flash", ["-p", "hi"],
+                                           sonnet="local/DeepSeek-V4.1-Flash", haiku="local/DeepSeek-V4.1-Flash",
                                            env={"PATH": "/usr/bin:/bin"}, claude_bin=FAKE, cwd=str(sb.root),
                                            probe_timeout=1, announce=False)
                 self.assertEqual(len(seen), 3)
@@ -435,12 +435,11 @@ base_url = "{upstream.url}"
 catalog = "/v1/models"
 backend = "{backend}"
 [routes."native/DeepSeek-V4.1-Flash"]
-aliases = ["native"]
 '''
                     with Sandbox(text) as sb:
                         out = sb.root / "child"
                         env = {"PATH": "/usr/bin:/bin", "FAKE_CLAUDE_OUT": str(out)}
-                        doc = harness.run_launch(sb.paths, "native", ["-p", "hi"], env=env, claude_bin=FAKE,
+                        doc = harness.run_launch(sb.paths, "native/DeepSeek-V4.1-Flash", ["-p", "hi"], env=env, claude_bin=FAKE,
                                                  cwd=str(sb.root), probe_timeout=1, announce=False)
                         child = json.loads((out / "env.json").read_text())
                         self.assertEqual(child["ANTHROPIC_BASE_URL"], upstream.url)
