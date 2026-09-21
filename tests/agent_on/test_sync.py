@@ -20,16 +20,6 @@ SPEND = {"usage": 1.5, "limit": 10, "limit_reset": "daily", "limit_remaining": 8
 
 
 class SyncTest(unittest.TestCase):
-    def test_retired_catalog_models_are_not_discovered_but_full_current_id_is(self):
-        catalog = [omlx_entry("Qwen3.6-27B-4bit"), omlx_entry("Qwen3.8-27B-Alis-4bit")]
-        routes = 'version = 1\n[sources.mock]\nbase_url = "{base}"\ncatalog = "/v1/models"\ndiscover = true\n'
-        with MockSource(catalog=catalog) as m, Sandbox(routes.format(base=m.base_url)) as sb:
-            report = run_sync(sb.paths, timeout=3, env={})
-            self.assertEqual(report["discovered"], ["mock/Qwen3.8-27B-Alis-4bit"])
-            table = load_routes(sb.paths)
-            self.assertNotIn("mock/Qwen3.6-27B-4bit", table.routes)
-            self.assertEqual(table.routes["mock/Qwen3.8-27B-Alis-4bit"].wire_model, "Qwen3.8-27B-Alis-4bit")
-
     def test_sync_measures_served_limits_discovery_orphans_and_spend(self):
         with MockSource(catalog=CATALOG, spend=SPEND, expect_key="k-1") as m, Sandbox(MOCK_ROUTES.format(base=m.base_url)) as sb:
             settings = sb.paths.home / ".omlx" / "settings.json"

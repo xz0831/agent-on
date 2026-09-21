@@ -56,9 +56,10 @@ shown by `status`, never copied into declarations.
 Current public model selectors use the exact `<source>/<model-id>` route, retaining the publisher/build/quantization
 in the ID. Do not use short family aliases such as `qwen27`, `flash-next`, `huihui`, `morty-qwen`, or `glm`.
 `status` and the generated routes page show the complete family name separately from the unchanged backend wire ID.
-Retired `GLM-5.2`, `Qwen3.5`, and `Qwen3.6` model identities cannot be selected for a new launch; existing
-session transcripts and backend model files are not rewritten. The runtime architecture name `qwen3_5` does not
-identify a Qwen3.5 model. A model absent from the source catalog is not made available by naming it here.
+Retired `GLM-5.2`, `Qwen3.5`, and `Qwen3.6` routes were removed from the current declarations and host discovery
+state; this is not a permanent ban on a future owner-approved installation. Existing session transcripts and backend
+model files are not rewritten. The runtime architecture name `qwen3_5` does not identify a Qwen3.5 model. A model
+absent from the source catalog is not made available by naming it here.
 
 One Claude Code process is pinned to one route. Agent-on sets every tier and subagent slot and passes an explicit
 `--model <wire_model>`, so a literal `model` in the user's Claude settings cannot displace the route. A conflicting

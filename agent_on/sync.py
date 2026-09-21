@@ -8,7 +8,7 @@ import os
 from .invariants import build_context, evaluate
 from .paths import Paths, describe_copy
 from .schemas.observed import compute_context, empty_route, empty_source
-from .schemas.routes import Route, discovered_text, load_packaged_routes, load_routes, retired_model_family
+from .schemas.routes import Route, discovered_text, load_packaged_routes, load_routes
 from .sources import fetch_openrouter_spend, omlx_settings_path, probe_all, read_configured_limits
 from .state import resolve_secret, update_observed, write_discovered
 from .util import utc_now
@@ -30,8 +30,6 @@ def run_sync(paths: Paths, *, timeout: float = 5.0, env: dict | None = None) -> 
         if not src.discover or not probes[name].reachable:
             continue
         for model_id in sorted(probes[name].catalog):
-            if retired_model_family(model_id):
-                continue
             if (name, model_id) not in packaged_keys:
                 discovered.append(Route(f"{name}/{model_id}", name, model_id, (), None, None, None, packaged=False))
     write_discovered(paths, discovered_text(discovered, now))
